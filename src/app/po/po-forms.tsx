@@ -101,7 +101,7 @@ export function CreatePoForm({
           <input className={inputClass} min="0.0001" name="orderedQty" required step="0.0001" type="number" />
         </label>
         <label className={labelClass}>
-          Unit
+          Price
           <input className={inputClass} min="0" name="unitPrice" step="0.0001" type="number" />
         </label>
         <label className={labelClass}>
@@ -134,7 +134,7 @@ export function AddPoItemForm({ poId }: { poId: string }) {
         <input className={inputClass} name="sku" placeholder="SKU" required />
         <input className={inputClass} name="productTitle" placeholder="Product" />
         <input className={inputClass} min="0.0001" name="orderedQty" placeholder="Qty" required step="0.0001" type="number" />
-        <input className={inputClass} min="0" name="unitPrice" placeholder="Unit" step="0.0001" type="number" />
+        <input className={inputClass} min="0" name="unitPrice" placeholder="Price" step="0.0001" type="number" />
         <button className={buttonClass} disabled={pending} type="submit">
           Add line
         </button>

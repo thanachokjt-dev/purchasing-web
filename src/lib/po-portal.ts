@@ -99,6 +99,12 @@ type ProductVariantImageRow = {
     | null;
 };
 
+type InventorySnapshotRow = {
+  sku: string | null;
+  on_hand: number | string | null;
+  snapshot_date: string | null;
+};
+
 type PoPortalSupplierOption = {
   supplierCode: string;
   supplierName: string;
@@ -109,6 +115,7 @@ type PoPortalSupplierOption = {
 type PortalItem = PoPortalItem & {
   imageUrl?: string | null;
   itemUuid?: string;
+  onHand?: number;
 };
 
 type PortalOrder = {
@@ -207,6 +214,32 @@ function mapSupabaseItem(
 function productImageUrl(row: ProductVariantImageRow) {
   const product = Array.isArray(row.products) ? row.products[0] : row.products;
   return row.variant_image_url ?? product?.product_image_url ?? null;
+}
+
+function latestOnHandBySku(rows: InventorySnapshotRow[]) {
+  const latestDateBySku = new Map<string, string>();
+  const onHandBySku = new Map<string, number>();
+
+  for (const row of rows) {
+    const sku = row.sku?.trim();
+    const snapshotDate = row.snapshot_date;
+    if (!sku || !snapshotDate) {
+      continue;
+    }
+
+    const latestDate = latestDateBySku.get(sku);
+    if (!latestDate || snapshotDate > latestDate) {
+      latestDateBySku.set(sku, snapshotDate);
+      onHandBySku.set(sku, numeric(row.on_hand));
+      continue;
+    }
+
+    if (snapshotDate === latestDate) {
+      onHandBySku.set(sku, (onHandBySku.get(sku) ?? 0) + numeric(row.on_hand));
+    }
+  }
+
+  return onHandBySku;
 }
 
 function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[]): PortalOrder {
@@ -512,7 +545,7 @@ export async function getPoPortalDetailData(poId: string) {
       order,
       items: poPortalItems
         .filter((item) => item.poId === poId)
-        .map((item) => ({ ...item, imageUrl: null, itemUuid: undefined })),
+        .map((item) => ({ ...item, imageUrl: null, itemUuid: undefined, onHand: 0 })),
       receipts: [],
       statusEvents: [],
     };
@@ -593,6 +626,18 @@ export async function getPoPortalDetailData(poId: string) {
       .map((row) => [row.sku, productImageUrl(row)]),
   );
 
+  const inventoryRows =
+    skus.length > 0
+      ? await supabase
+          .from("inventory_snapshots")
+          .select("sku,on_hand,snapshot_date")
+          .in("sku", skus)
+          .order("snapshot_date", { ascending: false })
+      : { data: [] };
+  const onHandBySku = latestOnHandBySku(
+    (inventoryRows.data ?? []) as unknown as InventorySnapshotRow[],
+  );
+
   const { data: receiptTotals } = await supabase
     .from("po_item_receipt_totals")
     .select("po_item_uuid,workflow_received_qty,total_received_qty,outstanding_qty")
@@ -604,7 +649,10 @@ export async function getPoPortalDetailData(poId: string) {
       .map((row) => [row.po_item_uuid, row]),
   );
   const items = supabaseItems.map((item) =>
-    mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(item.sku ?? "")),
+    ({
+      ...mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(item.sku ?? "")),
+      onHand: onHandBySku.get(item.sku ?? "") ?? 0,
+    }),
   );
 
   const receipts =

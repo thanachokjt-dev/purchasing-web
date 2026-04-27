@@ -342,6 +342,14 @@ export async function changePoStatusAction(
         throw new Error(orderUpdateError.message);
       }
 
+      const { error: lineUpdateError } = await supabase
+        .from("po_items")
+        .update({ line_status: toStatus, updated_at: new Date().toISOString() })
+        .eq("po_id", poId);
+      if (lineUpdateError) {
+        throw new Error(lineUpdateError.message);
+      }
+
       await supabase.from("po_status_events").insert({
         po_id: poId,
         from_status: order.work_status ?? null,

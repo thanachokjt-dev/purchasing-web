@@ -208,13 +208,12 @@ export default async function PoDetailPage({
               <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                 <tr>
                   <th className="px-4 py-3 font-semibold">Line</th>
-                  <th className="px-4 py-3 font-semibold">SKU</th>
                   <th className="px-4 py-3 font-semibold">Product</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 text-right font-semibold">Qty</th>
+                  <th className="px-4 py-3 text-right font-semibold">On-hand</th>
                   <th className="px-4 py-3 text-right font-semibold">Received</th>
                   <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
-                  <th className="px-4 py-3 font-semibold">Update</th>
                   <th className="px-4 py-3 font-semibold">Receive Qty</th>
                 </tr>
               </thead>
@@ -222,9 +221,8 @@ export default async function PoDetailPage({
                 {data.items.map((item) => (
                   <tr key={item.poItemId || item.itemUuid || `${item.poId}-${item.lineNo}`}>
                     <td className="px-4 py-3 font-mono text-xs">{item.lineNo || "-"}</td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{item.sku}</td>
                     <td className="px-4 py-3">
-                      <div className="flex min-w-[260px] items-center gap-3">
+                      <div className="flex min-w-[360px] items-center gap-3">
                         <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
                           {item.imageUrl ? (
                             <Image
@@ -242,6 +240,17 @@ export default async function PoDetailPage({
                         <div>
                           <p className="font-medium">{item.productTitle}</p>
                           <p className="mt-1 text-xs text-[#6b7785]">{item.variantTitle || item.fullName}</p>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <span className="rounded-md bg-[#f3f5f7] px-2 py-1 font-mono text-[#364252]">
+                              {item.sku}
+                            </span>
+                            <span className="rounded-md bg-[#eef4f8] px-2 py-1 font-semibold text-[#255f85]">
+                              on-hand {formatNumber(item.onHand ?? 0)}
+                            </span>
+                            <span className="rounded-md bg-[#f7f2e9] px-2 py-1 font-semibold text-[#73510d]">
+                              price {formatCurrency(item.unitPrice, item.currency)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -251,16 +260,12 @@ export default async function PoDetailPage({
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right font-mono">{formatNumber(item.qty)}</td>
+                    <td className="px-4 py-3 text-right font-mono font-semibold text-[#255f85]">
+                      {formatNumber(item.onHand ?? 0)}
+                    </td>
                     <td className="px-4 py-3 text-right font-mono">{formatNumber(item.receivedQty)}</td>
                     <td className="px-4 py-3 text-right font-mono font-semibold text-[#1f6b3d]">
                       {formatNumber(item.outstandingQty)}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {data.source === "supabase" ? (
-                        <StatusActionForm currentStatus={item.status} itemUuid={item.itemUuid} poId={item.poId} />
-                      ) : (
-                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
-                      )}
                     </td>
                     <td className="px-4 py-3 align-top">
                       {data.source === "supabase" ? (
