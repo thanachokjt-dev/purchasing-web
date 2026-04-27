@@ -68,6 +68,7 @@ type DecisionControlRow = {
   main_name_override: string | null;
   supplier_override: string | null;
   tags_override: string[] | null;
+  demand_index_override: number | string | null;
   safety_days: number | string | null;
   lead_time_days: number | string | null;
   order_cycle_days: number | string | null;
@@ -89,11 +90,15 @@ export type PurchasingDecisionLine = {
   onHandUnits: number;
   totalSale: number;
   demandIndexHm: number;
+  calculatedDemandIndexHm: number;
+  demandIndexOverride: number | null;
   safetyDays: number;
   leadTimeDays: number;
   orderCycleDays: number;
   planningDays: number;
   ropUnits: number;
+  ropUnitsRaw: number;
+  ropUnitsRounded: number;
   manualRopUnits: number | null;
   coversSalesDuration: number | null;
   week: number;
@@ -186,6 +191,23 @@ function harmonicMean(values: number[]) {
   return positive.length / positive.reduce((sum, value) => sum + 1 / value, 0);
 }
 
+function optionalNumber(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function roundUpToTen(value: number) {
+  if (value <= 0) {
+    return 0;
+  }
+
+  return Math.ceil(value / 10) * 10;
+}
+
 async function fetchAll<T>(
   label: string,
   queryForRange: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
@@ -235,7 +257,7 @@ async function fetchControls(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("purchasing_decision_controls")
     .select(
-      "sku,product_name_override,main_name_override,supplier_override,tags_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+      "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
     );
 
   if (error) {
@@ -529,21 +551,24 @@ export async function getPurchasingDecisionData({
       sold30: 0,
       sold90: 0,
     };
-    const demandIndexHm = harmonicMean([
+    const calculatedDemandIndexHm = harmonicMean([
       sales.sold7 / 7,
       sales.sold30 / 30,
       sales.sold90 / 90,
     ]);
+    const demandIndexOverride = optionalNumber(control?.demand_index_override);
+    const demandIndexHm = demandIndexOverride ?? calculatedDemandIndexHm;
     const safetyDays = optionalInteger(control?.safety_days) ?? DEFAULT_SAFETY_DAYS;
     const leadTimeDays =
       optionalInteger(control?.lead_time_days) ?? DEFAULT_LEAD_TIME_DAYS;
     const orderCycleDays =
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
-    const calculatedRopUnits = Math.ceil(demandIndexHm * planningDays);
+    const ropUnitsRaw = Math.max(0, Math.ceil(demandIndexHm * planningDays));
+    const ropUnitsRounded = roundUpToTen(ropUnitsRaw);
     const manualRopUnits = optionalInteger(control?.manual_rop_units);
     const targetCoverageDays = optionalInteger(control?.target_coverage_days);
-    const ropUnits = manualRopUnits ?? calculatedRopUnits;
+    const ropUnits = manualRopUnits ?? ropUnitsRounded;
     const onHandUnits = stockBySku.get(sku) ?? 0;
     const incoming = incomingBySku.get(sku) ?? { active: 0, pending: 0 };
     const coversSalesDuration =
@@ -565,11 +590,15 @@ export async function getPurchasingDecisionData({
         onHandUnits,
         totalSale: sales.total,
         demandIndexHm,
+        calculatedDemandIndexHm,
+        demandIndexOverride,
         safetyDays,
         leadTimeDays,
         orderCycleDays,
         planningDays,
         ropUnits,
+        ropUnitsRaw,
+        ropUnitsRounded,
         manualRopUnits,
         coversSalesDuration,
         week: Math.ceil(ropUnits / 4),

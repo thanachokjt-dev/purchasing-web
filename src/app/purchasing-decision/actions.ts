@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { parseDecisionTags } from "@/lib/purchasing-decision-data";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -35,6 +36,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const mainNames = formData.getAll("mainName");
   const suppliers = formData.getAll("supplier");
   const tags = formData.getAll("tags");
+  const demandIndexes = formData.getAll("demandIndexHm");
   const safetyDays = formData.getAll("safetyDays");
   const leadTimeDays = formData.getAll("leadTimeDays");
   const orderCycleDays = formData.getAll("orderCycleDays");
@@ -57,6 +59,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         main_name_override: nullableText(textAt(mainNames, index)),
         supplier_override: nullableText(textAt(suppliers, index)),
         tags_override: parseDecisionTags(textAt(tags, index)),
+        demand_index_override: nullableNumber(textAt(demandIndexes, index)),
         safety_days: nullableNumber(textAt(safetyDays, index)),
         lead_time_days: nullableNumber(textAt(leadTimeDays, index)),
         order_cycle_days: nullableNumber(textAt(orderCycleDays, index)),
@@ -81,4 +84,144 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   revalidatePath("/purchasing-decision");
   revalidatePath("/");
   revalidatePath("/po");
+}
+
+function generatedPoId() {
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  return `PO-${stamp}`;
+}
+
+function numberFromMap(
+  map: Map<string, string>,
+  sku: string,
+  label: string,
+  fallback = 0,
+) {
+  const raw = map.get(sku)?.trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} for ${sku} must be 0 or greater`);
+  }
+  return parsed;
+}
+
+function textMap(skus: string[], values: FormDataEntryValue[]) {
+  const map = new Map<string, string>();
+  skus.forEach((sku, index) => map.set(sku, textAt(values, index)));
+  return map;
+}
+
+export async function createPoFromDecisionAction(formData: FormData) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    return;
+  }
+
+  const selectedSkus = Array.from(
+    new Set(formData.getAll("selectedSku").map((value) => String(value).trim()).filter(Boolean)),
+  );
+  if (!selectedSkus.length) {
+    return;
+  }
+
+  const allSkus = formData.getAll("poSku").map((value) => String(value).trim());
+  const productBySku = textMap(allSkus, formData.getAll("poProductName"));
+  const supplierBySku = textMap(allSkus, formData.getAll("poSupplier"));
+  const unitPriceBySku = textMap(allSkus, formData.getAll("poUnitPrice"));
+  const rawQtyBySku = textMap(allSkus, formData.getAll("poRawQty"));
+  const roundedQtyBySku = textMap(allSkus, formData.getAll("poRoundedQty"));
+
+  const selectedSuppliers = new Set(
+    selectedSkus.map((sku) => supplierBySku.get(sku)).filter(Boolean),
+  );
+  if (selectedSuppliers.size !== 1) {
+    throw new Error("Select SKUs from one supplier before creating a PO");
+  }
+
+  const supplierName = Array.from(selectedSuppliers)[0] ?? "";
+  const { data: supplier, error: supplierError } = await supabase
+    .from("po_suppliers")
+    .select("supplier_code,supplier_name,currency,payment_terms")
+    .ilike("supplier_name", supplierName)
+    .limit(1)
+    .maybeSingle();
+
+  if (supplierError) {
+    throw new Error(supplierError.message);
+  }
+  if (!supplier) {
+    throw new Error(`Supplier ${supplierName} is not mapped in PO suppliers`);
+  }
+
+  const poId = generatedPoId();
+  const today = new Date().toISOString().slice(0, 10);
+  const currency = supplier.currency ?? "THB";
+  const items = selectedSkus.map((sku, index) => {
+    const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
+    const orderedQty =
+      qtyChoice === "raw"
+        ? numberFromMap(rawQtyBySku, sku, "Raw qty")
+        : numberFromMap(roundedQtyBySku, sku, "Rounded qty");
+    const unitPrice = numberFromMap(unitPriceBySku, sku, "Unit price");
+    const productTitle = productBySku.get(sku) || sku;
+
+    return {
+      po_item_id: `${poId}-${index + 1}`,
+      po_id: poId,
+      line_no: String(index + 1),
+      sku,
+      product_title_snapshot: productTitle,
+      variant_title_snapshot: null,
+      ordered_qty: orderedQty,
+      unit_price: unitPrice,
+      freight_unit_cost: 0,
+      landed_unit_cost: unitPrice,
+      line_amount: orderedQty * unitPrice,
+      currency,
+      remark: qtyChoice === "raw" ? "Created from Purchasing Decision raw qty" : "Created from Purchasing Decision rounded qty",
+      full_name: productTitle,
+      line_status: "draft",
+      source: "purchasing_decision",
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  const poAmount = items.reduce((sum, item) => sum + item.line_amount, 0);
+  const { error: orderError } = await supabase.from("po_orders").insert({
+    po_id: poId,
+    po_title: `${supplierName} reorder ${today}`,
+    po_date: today,
+    work_status: "draft",
+    supplier_code: supplier.supplier_code,
+    supplier_name_snapshot: supplier.supplier_name,
+    currency,
+    po_amount_foreign: poAmount,
+    po_amount_thb: currency === "THB" ? poAmount : 0,
+    payment_terms_snapshot: supplier.payment_terms,
+    source: "purchasing_decision",
+    updated_at: new Date().toISOString(),
+  });
+  if (orderError) {
+    throw new Error(orderError.message);
+  }
+
+  const { error: itemError } = await supabase.from("po_items").insert(items);
+  if (itemError) {
+    await supabase.from("po_orders").delete().eq("po_id", poId);
+    throw new Error(itemError.message);
+  }
+
+  await supabase.from("po_status_events").insert({
+    po_id: poId,
+    to_status: "draft",
+    note: `Created from Purchasing Decision (${selectedSkus.length} SKUs)`,
+  });
+
+  revalidatePath("/purchasing-decision");
+  revalidatePath("/po");
+  redirect(`/po/${encodeURIComponent(poId)}`);
 }

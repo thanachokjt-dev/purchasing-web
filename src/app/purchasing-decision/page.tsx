@@ -1,8 +1,15 @@
 import { ArrowLeft, EyeOff, Filter, Save, SlidersHorizontal } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { savePurchasingDecisionAction } from "@/app/purchasing-decision/actions";
-import { DecisionSaveButton } from "@/app/purchasing-decision/decision-form";
+import {
+  createPoFromDecisionAction,
+  savePurchasingDecisionAction,
+} from "@/app/purchasing-decision/actions";
+import {
+  DecisionCreatePoButton,
+  DecisionSaveButton,
+  SelectionButtons,
+} from "@/app/purchasing-decision/decision-form";
 import {
   decisionTagsText,
   getPurchasingDecisionData,
@@ -33,6 +40,10 @@ function formatDecimal(value: number, digits = 2) {
 
 function coverageText(value: number | null) {
   return value === null ? "-" : `${formatNumber(Math.floor(value))}d`;
+}
+
+function qtyValue(value: number) {
+  return Number.isFinite(value) ? String(value) : "0";
 }
 
 function alertLabel(status: string) {
@@ -199,25 +210,29 @@ export default async function PurchasingDecisionPage({
             </div>
           </div>
 
+          <form action={createPoFromDecisionAction} id="decision-create-po-form" />
           <form action={savePurchasingDecisionAction}>
             <div className="flex items-center justify-between gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-5 py-3">
               <div className="inline-flex items-center gap-2 text-sm font-medium text-[#52606d]">
                 <SlidersHorizontal size={16} />
                 Showing {formatNumber(data.lines.length)} rows
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <SelectionButtons />
                 <span className="inline-flex items-center gap-2 rounded-md bg-[#eef4f8] px-3 py-2 text-xs font-semibold text-[#255f85]">
                   <Save size={14} />
                   One save for visible rows
                 </span>
                 <DecisionSaveButton />
+                <DecisionCreatePoButton />
               </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[2100px] text-left text-sm">
+              <table className="min-w-[2360px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
+                    <th className="px-3 py-3 font-semibold">Pick</th>
                     <th className="px-3 py-3 font-semibold">SKU</th>
                     <th className="px-3 py-3 font-semibold">Product</th>
                     <th className="px-3 py-3 font-semibold">Main name</th>
@@ -229,7 +244,9 @@ export default async function PurchasingDecisionPage({
                     <th className="px-3 py-3 text-right font-semibold">Safety</th>
                     <th className="px-3 py-3 text-right font-semibold">Lead</th>
                     <th className="px-3 py-3 text-right font-semibold">Cycle</th>
-                    <th className="px-3 py-3 text-right font-semibold">ROP</th>
+                    <th className="px-3 py-3 text-right font-semibold">Raw qty</th>
+                    <th className="px-3 py-3 text-right font-semibold">Round 10</th>
+                    <th className="px-3 py-3 font-semibold">Use</th>
                     <th className="px-3 py-3 text-right font-semibold">Cover</th>
                     <th className="px-3 py-3 text-right font-semibold">Week</th>
                     <th className="px-3 py-3 text-right font-semibold">Month</th>
@@ -244,6 +261,47 @@ export default async function PurchasingDecisionPage({
                 <tbody className="divide-y divide-[#edf1f5]">
                   {data.lines.map((line) => (
                     <tr className={line.hidden ? "bg-[#fbfcfd]" : "bg-white"} key={line.sku}>
+                      <td className="px-3 py-3 align-top">
+                        <input
+                          className="size-4 accent-[#172026]"
+                          data-decision-select="sku"
+                          form="decision-create-po-form"
+                          name="selectedSku"
+                          type="checkbox"
+                          value={line.sku}
+                        />
+                        <input form="decision-create-po-form" name="poSku" type="hidden" value={line.sku} />
+                        <input
+                          form="decision-create-po-form"
+                          name="poProductName"
+                          type="hidden"
+                          value={line.productName}
+                        />
+                        <input
+                          form="decision-create-po-form"
+                          name="poSupplier"
+                          type="hidden"
+                          value={line.supplier}
+                        />
+                        <input
+                          form="decision-create-po-form"
+                          name="poUnitPrice"
+                          type="hidden"
+                          value={qtyValue(line.unitPrice)}
+                        />
+                        <input
+                          form="decision-create-po-form"
+                          name="poRawQty"
+                          type="hidden"
+                          value={qtyValue(line.ropUnitsRaw)}
+                        />
+                        <input
+                          form="decision-create-po-form"
+                          name="poRoundedQty"
+                          type="hidden"
+                          value={qtyValue(line.ropUnitsRounded)}
+                        />
+                      </td>
                       <td className="px-3 py-3 align-top">
                         <input name="sku" type="hidden" value={line.sku} />
                         <p className="font-mono text-xs font-semibold text-[#42505c]">
@@ -298,7 +356,20 @@ export default async function PurchasingDecisionPage({
                       </td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.onHandUnits)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
-                      <td className={readOnlyMetricClass}>{formatDecimal(line.demandIndexHm)}</td>
+                      <td className="px-3 py-3 align-top">
+                        <input
+                          className={compactInputClass}
+                          defaultValue={formatDecimal(line.demandIndexHm, 4)}
+                          min="0"
+                          name="demandIndexHm"
+                          step="0.0001"
+                          title={`Calculated ${formatDecimal(line.calculatedDemandIndexHm, 4)}`}
+                          type="number"
+                        />
+                        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+                          calc {formatDecimal(line.calculatedDemandIndexHm, 2)}
+                        </p>
+                      </td>
                       <td className="px-3 py-3 align-top">
                         <input
                           className={compactInputClass}
@@ -326,15 +397,42 @@ export default async function PurchasingDecisionPage({
                           type="number"
                         />
                       </td>
-                      <td className="px-3 py-3 align-top">
+                      <td className={readOnlyMetricClass}>
+                        {formatNumber(line.ropUnitsRaw)}
+                      </td>
+                      <td className="px-3 py-3 align-top text-right">
                         <input
                           className={compactInputClass}
-                          defaultValue={line.manualRopUnits ?? ""}
+                          defaultValue={line.manualRopUnits ?? line.ropUnitsRounded}
                           min="0"
                           name="manualRopUnits"
-                          placeholder={String(line.ropUnits)}
+                          placeholder={String(line.ropUnitsRounded)}
                           type="number"
                         />
+                      </td>
+                      <td className="px-3 py-3 align-top">
+                        <div className="grid gap-1 text-xs text-[#52606d]">
+                          <label className="flex items-center gap-2">
+                            <input
+                              defaultChecked={false}
+                              form="decision-create-po-form"
+                              name={`qtyChoice:${line.sku}`}
+                              type="radio"
+                              value="raw"
+                            />
+                            Raw
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              defaultChecked
+                              form="decision-create-po-form"
+                              name={`qtyChoice:${line.sku}`}
+                              type="radio"
+                              value="rounded"
+                            />
+                            Round 10
+                          </label>
+                        </div>
                       </td>
                       <td className={readOnlyMetricClass}>{coverageText(line.coversSalesDuration)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.week)}</td>
