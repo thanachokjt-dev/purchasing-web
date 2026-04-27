@@ -59,6 +59,18 @@ function nonNegativeNumber(formData: FormData, name: string) {
   return value;
 }
 
+function nonNegativeTextNumber(value: string, label: string) {
+  if (!value.trim()) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be 0 or greater`);
+  }
+  return parsed;
+}
+
 function normalizeStatus(value: string) {
   return value.trim().toLowerCase();
 }
@@ -81,6 +93,53 @@ function refreshPoViews(poId?: string | null) {
   revalidatePath("/");
   if (poId) {
     revalidatePath(`/po/${encodeURIComponent(poId)}`);
+  }
+}
+
+async function recalculatePoAmount(poId: string) {
+  const supabase = actionClient();
+  const { data: items, error: itemError } = await supabase
+    .from("po_items")
+    .select("ordered_qty,unit_price,freight_unit_cost,currency")
+    .eq("po_id", poId);
+
+  if (itemError) {
+    throw new Error(itemError.message);
+  }
+
+  const totals = ((items ?? []) as Array<{
+    ordered_qty: number | string | null;
+    unit_price: number | string | null;
+    freight_unit_cost?: number | string | null;
+    currency: string | null;
+  }>).reduce(
+    (sum, item) => {
+      const qty = Number(item.ordered_qty ?? 0);
+      const unitPrice = Number(item.unit_price ?? 0);
+      const freightUnitCost = Number(item.freight_unit_cost ?? 0);
+      const landedAmount = qty * (unitPrice + freightUnitCost);
+      return {
+        amountForeign: sum.amountForeign + landedAmount,
+        amountThb:
+          (item.currency ?? "THB") === "THB"
+            ? sum.amountThb + landedAmount
+            : sum.amountThb,
+      };
+    },
+    { amountForeign: 0, amountThb: 0 },
+  );
+
+  const { error: orderUpdateError } = await supabase
+    .from("po_orders")
+    .update({
+      po_amount_foreign: totals.amountForeign,
+      po_amount_thb: totals.amountThb,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("po_id", poId);
+
+  if (orderUpdateError) {
+    throw new Error(orderUpdateError.message);
   }
 }
 
@@ -603,5 +662,188 @@ export async function batchReceivePoItemsAction(
     );
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Batch receive failed");
+  }
+}
+
+export async function updatePoDraftLinesAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const itemUuids = formData.getAll("itemUuid").map((value) => String(value).trim());
+    const skus = formData.getAll("sku").map((value) => String(value).trim());
+    const productTitles = formData.getAll("productTitle").map((value) => String(value).trim());
+    const qtyValues = formData.getAll("orderedQty").map((value) => String(value).trim());
+    const priceValues = formData.getAll("unitPrice").map((value) => String(value).trim());
+    const freightValues = formData.getAll("freightUnitCost").map((value) => String(value).trim());
+    const remarkValues = formData.getAll("remark").map((value) => String(value).trim());
+
+    if (!itemUuids.length) {
+      throw new Error("No PO lines to update");
+    }
+
+    for (const [index, itemUuid] of itemUuids.entries()) {
+      if (!itemUuid) {
+        continue;
+      }
+
+      const sku = skus[index] ?? "";
+      if (!sku) {
+        throw new Error(`Line ${index + 1} SKU is required`);
+      }
+
+      const orderedQty = nonNegativeTextNumber(qtyValues[index] ?? "", `Line ${index + 1} qty`);
+      const unitPrice = nonNegativeTextNumber(priceValues[index] ?? "", `Line ${index + 1} price`);
+      const freightUnitCost = nonNegativeTextNumber(
+        freightValues[index] ?? "",
+        `Line ${index + 1} freight`,
+      );
+      const landedUnitCost = unitPrice + freightUnitCost;
+
+      const { error } = await supabase
+        .from("po_items")
+        .update({
+          sku,
+          product_title_snapshot: productTitles[index] || sku,
+          full_name: productTitles[index] || sku,
+          ordered_qty: orderedQty,
+          unit_price: unitPrice,
+          freight_unit_cost: freightUnitCost,
+          landed_unit_cost: landedUnitCost,
+          line_amount: orderedQty * unitPrice,
+          remark: remarkValues[index] || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", itemUuid)
+        .eq("po_id", poId);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
+    await recalculatePoAmount(poId);
+    refreshPoViews(poId);
+    return success(`Saved draft details for ${itemUuids.length} lines`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Save draft failed");
+  }
+}
+
+export async function allocatePoLandedCostAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const freightTotal = nonNegativeNumber(formData, "freightTotal");
+    const otherLandedCostTotal = nonNegativeNumber(formData, "otherLandedCostTotal");
+    const landedCostNote = optionalText(formData, "landedCostNote");
+    const totalLandedCost = freightTotal + otherLandedCostTotal;
+
+    const { data: items, error: itemReadError } = await supabase
+      .from("po_items")
+      .select("id,ordered_qty,unit_price")
+      .eq("po_id", poId);
+
+    if (itemReadError) {
+      throw new Error(itemReadError.message);
+    }
+
+    const lines = (items ?? []) as Array<{
+      id: string;
+      ordered_qty: number | string | null;
+      unit_price: number | string | null;
+    }>;
+    const totalQty = lines.reduce((sum, item) => sum + Number(item.ordered_qty ?? 0), 0);
+
+    if (totalQty <= 0) {
+      throw new Error("PO quantity must be greater than 0 before allocation");
+    }
+
+    const freightUnitCost = totalLandedCost / totalQty;
+
+    for (const item of lines) {
+      const unitPrice = Number(item.unit_price ?? 0);
+      const { error } = await supabase
+        .from("po_items")
+        .update({
+          freight_unit_cost: freightUnitCost,
+          landed_unit_cost: unitPrice + freightUnitCost,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", item.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
+    const { error: orderUpdateError } = await supabase
+      .from("po_orders")
+      .update({
+        freight_total: freightTotal,
+        other_landed_cost_total: otherLandedCostTotal,
+        landed_cost_note: landedCostNote,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("po_id", poId);
+
+    if (orderUpdateError) {
+      throw new Error(orderUpdateError.message);
+    }
+
+    await recalculatePoAmount(poId);
+    refreshPoViews(poId);
+    return success(`Allocated ${totalLandedCost.toFixed(2)} across ${totalQty} units`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Allocate landed cost failed");
+  }
+}
+
+export async function addPoPaymentAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const amount = nonNegativeNumber(formData, "amount");
+
+    const { data: order, error: orderError } = await supabase
+      .from("po_orders")
+      .select("currency")
+      .eq("po_id", poId)
+      .maybeSingle();
+
+    if (orderError) {
+      throw new Error(orderError.message);
+    }
+    if (!order) {
+      throw new Error(`PO ${poId} does not exist`);
+    }
+
+    const { error } = await supabase.from("po_payments").insert({
+      po_id: poId,
+      payment_date: optionalText(formData, "paymentDate") ?? new Date().toISOString().slice(0, 10),
+      payment_type: optionalText(formData, "paymentType") ?? "deposit",
+      amount,
+      currency: optionalText(formData, "currency") ?? order.currency ?? "THB",
+      paid_by: optionalText(formData, "paidBy"),
+      reference: optionalText(formData, "reference"),
+      note: optionalText(formData, "note"),
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    refreshPoViews(poId);
+    return success(`Recorded payment ${amount}`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Add payment failed");
   }
 }

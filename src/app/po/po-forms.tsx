@@ -3,10 +3,13 @@
 import { useActionState, useMemo, useState } from "react";
 import {
   addPoItemAction,
+  addPoPaymentAction,
+  allocatePoLandedCostAction,
   batchReceivePoItemsAction,
   changePoStatusAction,
   createPoAction,
   receivePoItemAction,
+  updatePoDraftLinesAction,
   type PoActionState,
 } from "@/app/po/actions";
 
@@ -30,6 +33,20 @@ type CatalogItemOption = {
   lastLandedUnitCost: number;
   lastPoId: string;
   searchText: string;
+};
+
+type DraftLineItem = {
+  itemUuid?: string;
+  lineNo: string;
+  sku: string;
+  productTitle: string;
+  qty: number;
+  unitPrice: number;
+  freightUnitCost?: number;
+  landedUnitCost?: number;
+  lineAmount: number;
+  currency: string;
+  remark: string;
 };
 
 const initialState: PoActionState = { ok: false, message: "" };
@@ -314,6 +331,227 @@ export function AddPoItemForm({ poId }: { poId: string }) {
           Add line
         </button>
       </div>
+      <ActionMessage state={state} />
+    </form>
+  );
+}
+
+export function PoDraftLinesForm({
+  items,
+  poId,
+}: {
+  items: DraftLineItem[];
+  poId: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    updatePoDraftLinesAction,
+    initialState,
+  );
+
+  return (
+    <form action={formAction}>
+      <input name="poId" type="hidden" value={poId} />
+      <div className="overflow-x-auto">
+        <table className="min-w-[1250px] text-left text-sm">
+          <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+            <tr>
+              <th className="px-4 py-3 font-semibold">Line</th>
+              <th className="px-4 py-3 font-semibold">SKU</th>
+              <th className="px-4 py-3 font-semibold">Product</th>
+              <th className="px-4 py-3 text-right font-semibold">Qty</th>
+              <th className="px-4 py-3 text-right font-semibold">Unit</th>
+              <th className="px-4 py-3 text-right font-semibold">Freight/unit</th>
+              <th className="px-4 py-3 text-right font-semibold">Landed/unit</th>
+              <th className="px-4 py-3 text-right font-semibold">Line amount</th>
+              <th className="px-4 py-3 font-semibold">Remark</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#edf1f5]">
+            {items.map((item) => (
+              <tr key={item.itemUuid ?? `${poId}-${item.lineNo}`}>
+                <td className="px-4 py-3 font-mono text-xs">{item.lineNo || "-"}</td>
+                <td className="min-w-[170px] px-4 py-3">
+                  <input name="itemUuid" type="hidden" value={item.itemUuid ?? ""} />
+                  <input className={inputClass} defaultValue={item.sku} name="sku" required />
+                </td>
+                <td className="min-w-[280px] px-4 py-3">
+                  <input
+                    className={inputClass}
+                    defaultValue={item.productTitle}
+                    name="productTitle"
+                  />
+                </td>
+                <td className="px-4 py-3">
+                  <input
+                    className={`${inputClass} text-right font-mono`}
+                    defaultValue={item.qty}
+                    min="0"
+                    name="orderedQty"
+                    step="0.0001"
+                    type="number"
+                  />
+                </td>
+                <td className="px-4 py-3">
+                  <input
+                    className={`${inputClass} text-right font-mono`}
+                    defaultValue={item.unitPrice}
+                    min="0"
+                    name="unitPrice"
+                    step="0.0001"
+                    type="number"
+                  />
+                </td>
+                <td className="px-4 py-3">
+                  <input
+                    className={`${inputClass} text-right font-mono`}
+                    defaultValue={item.freightUnitCost ?? 0}
+                    min="0"
+                    name="freightUnitCost"
+                    step="0.0001"
+                    type="number"
+                  />
+                </td>
+                <td className="px-4 py-3 text-right font-mono">
+                  {(item.landedUnitCost ?? item.unitPrice + (item.freightUnitCost ?? 0)).toFixed(2)}
+                </td>
+                <td className="px-4 py-3 text-right font-mono">
+                  {item.lineAmount.toFixed(2)} {item.currency}
+                </td>
+                <td className="min-w-[220px] px-4 py-3">
+                  <input className={inputClass} defaultValue={item.remark} name="remark" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex flex-col gap-3 border-t border-[#e2e7ed] p-5 sm:flex-row sm:items-center sm:justify-between">
+        <ActionMessage state={state} />
+        <button className={buttonClass} disabled={pending} type="submit">
+          {pending ? "Saving..." : "Save Draft Details"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export function LandedCostAllocationForm({
+  currency,
+  freightTotal,
+  landedCostNote,
+  otherLandedCostTotal,
+  poId,
+}: {
+  currency: string;
+  freightTotal: number;
+  landedCostNote: string;
+  otherLandedCostTotal: number;
+  poId: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    allocatePoLandedCostAction,
+    initialState,
+  );
+
+  return (
+    <form action={formAction} className="grid gap-3">
+      <input name="poId" type="hidden" value={poId} />
+      <div className="grid gap-3 md:grid-cols-[1fr_1fr_1.5fr_auto]">
+        <label className={labelClass}>
+          Freight total
+          <input
+            className={inputClass}
+            defaultValue={freightTotal || ""}
+            min="0"
+            name="freightTotal"
+            placeholder={currency}
+            step="0.0001"
+            type="number"
+          />
+        </label>
+        <label className={labelClass}>
+          Other landed cost
+          <input
+            className={inputClass}
+            defaultValue={otherLandedCostTotal || ""}
+            min="0"
+            name="otherLandedCostTotal"
+            placeholder={currency}
+            step="0.0001"
+            type="number"
+          />
+        </label>
+        <label className={labelClass}>
+          Note
+          <input
+            className={inputClass}
+            defaultValue={landedCostNote}
+            name="landedCostNote"
+            placeholder="Invoice, shipping, duty, allocation basis"
+          />
+        </label>
+        <button className={buttonClass} disabled={pending} type="submit">
+          {pending ? "Allocating..." : "Allocate"}
+        </button>
+      </div>
+      <ActionMessage state={state} />
+    </form>
+  );
+}
+
+export function AddPaymentForm({
+  currency,
+  poId,
+  today,
+}: {
+  currency: string;
+  poId: string;
+  today: string;
+}) {
+  const [state, formAction, pending] = useActionState(addPoPaymentAction, initialState);
+
+  return (
+    <form action={formAction} className="grid gap-3">
+      <input name="poId" type="hidden" value={poId} />
+      <div className="grid gap-3 lg:grid-cols-[0.8fr_0.8fr_0.8fr_0.7fr_1fr_1fr_auto]">
+        <label className={labelClass}>
+          Date
+          <input className={inputClass} defaultValue={today} name="paymentDate" type="date" />
+        </label>
+        <label className={labelClass}>
+          Type
+          <select className={inputClass} defaultValue="deposit" name="paymentType">
+            <option value="deposit">deposit</option>
+            <option value="before_ship">before_ship</option>
+            <option value="after_received">after_received</option>
+            <option value="balance">balance</option>
+            <option value="other">other</option>
+          </select>
+        </label>
+        <label className={labelClass}>
+          Amount
+          <input className={inputClass} min="0" name="amount" required step="0.0001" type="number" />
+        </label>
+        <label className={labelClass}>
+          Currency
+          <input className={inputClass} defaultValue={currency} name="currency" />
+        </label>
+        <label className={labelClass}>
+          Paid by
+          <input className={inputClass} name="paidBy" placeholder="Name" />
+        </label>
+        <label className={labelClass}>
+          Reference
+          <input className={inputClass} name="reference" placeholder="Slip / invoice" />
+        </label>
+        <button className={buttonClass} disabled={pending} type="submit">
+          {pending ? "Saving..." : "Add Payment"}
+        </button>
+      </div>
+      <label className={labelClass}>
+        Note
+        <input className={inputClass} name="note" placeholder="Payment note" />
+      </label>
       <ActionMessage state={state} />
     </form>
   );

@@ -3,9 +3,12 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
 import {
+  AddPaymentForm,
   AddPoItemForm,
   BatchReceiveFormBar,
   BatchReceiveLineFields,
+  LandedCostAllocationForm,
+  PoDraftLinesForm,
   PrintPageButton,
   StatusActionForm,
 } from "@/app/po/po-forms";
@@ -32,6 +35,16 @@ const formatDateTime = (value: string | null) => {
     timeStyle: "short",
     timeZone: "Asia/Bangkok",
   }).format(new Date(value));
+};
+const formatDate = (value: string | null) => {
+  if (!value) {
+    return "No date";
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeZone: "Asia/Bangkok",
+  }).format(new Date(`${value}T00:00:00`));
 };
 
 const statusClass = (status: string) => {
@@ -134,8 +147,13 @@ export default async function PoDetailPage({
   }
 
   const order = data.order;
+  const today = new Date().toISOString().slice(0, 10);
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const matrix = quoteMatrixRows(data.items);
+  const paidTotal = data.payments.reduce(
+    (sum, payment) => sum + Number(payment.amount ?? 0),
+    0,
+  );
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -200,7 +218,7 @@ export default async function PoDetailPage({
               value: formatNumber(order.outstandingQty),
             },
             {
-              detail: order.currency,
+              detail: `paid ${formatCurrency(paidTotal, order.currency)}`,
               icon: ClipboardList,
               label: "Amount",
               value: formatCurrency(order.poAmountForeign, order.currency),
@@ -257,7 +275,10 @@ export default async function PoDetailPage({
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Add Line</h2>
-              <p className="mt-1 text-sm text-[#667380]">Adds a draft line to this PO.</p>
+              <p className="mt-1 text-sm text-[#667380]">
+                Adds another draft line to this PO. Use Save Draft Details below
+                to refine qty, costs, and remarks in one pass.
+              </p>
             </div>
             <div className="p-5">
               {data.source === "supabase" ? (
@@ -270,6 +291,57 @@ export default async function PoDetailPage({
             </div>
           </div>
         </section>
+
+        {data.source === "supabase" ? (
+          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+            <div className="border-b border-[#e2e7ed] p-5">
+              <h2 className="text-lg font-semibold">Draft Line Details</h2>
+              <p className="mt-1 text-sm text-[#667380]">
+                Edit SKU, product name, order qty, unit price, freight/unit, and
+                remarks while the PO is still open. This keeps the draft in one PO
+                even when supplier details arrive in pieces.
+              </p>
+            </div>
+            <PoDraftLinesForm items={data.items} poId={order.poId} />
+          </section>
+        ) : null}
+
+        {data.source === "supabase" ? (
+          <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+            <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+              <div className="border-b border-[#e2e7ed] p-5">
+                <h2 className="text-lg font-semibold">Landed Cost Allocation</h2>
+                <p className="mt-1 text-sm text-[#667380]">
+                  Enter imported landed cost once the invoice/shipping total is known.
+                  The system divides it by total ordered qty and updates freight/unit
+                  across all lines.
+                </p>
+              </div>
+              <div className="p-5">
+                <LandedCostAllocationForm
+                  currency={order.currency}
+                  freightTotal={order.freightTotal}
+                  landedCostNote={order.landedCostNote}
+                  otherLandedCostTotal={order.otherLandedCostTotal}
+                  poId={order.poId}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+              <div className="border-b border-[#e2e7ed] p-5">
+                <h2 className="text-lg font-semibold">Payment Log</h2>
+                <p className="mt-1 text-sm text-[#667380]">
+                  Record deposits, before-shipment, after-received, and balance
+                  payments without changing PO status.
+                </p>
+              </div>
+              <div className="p-5">
+                <AddPaymentForm currency={order.currency} poId={order.poId} today={today} />
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
           <div className="border-b border-[#e2e7ed] p-5">
@@ -438,6 +510,34 @@ export default async function PoDetailPage({
         <section className="grid gap-6 xl:grid-cols-2">
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
+              <h2 className="text-lg font-semibold">Payment History</h2>
+              <p className="mt-1 text-sm text-[#667380]">
+                Total recorded: {formatCurrency(paidTotal, order.currency)}
+              </p>
+            </div>
+            <div className="divide-y divide-[#edf1f5]">
+              {data.payments.length > 0 ? (
+                data.payments.map((payment) => (
+                  <div className="grid gap-1 p-5 text-sm" key={payment.id}>
+                    <p className="font-mono font-semibold">
+                      {formatCurrency(Number(payment.amount ?? 0), payment.currency ?? order.currency)}
+                    </p>
+                    <p className="text-[#667380]">
+                      {formatDate(payment.payment_date)} / {payment.payment_type || "payment"}
+                      {payment.paid_by ? ` / ${payment.paid_by}` : ""}
+                    </p>
+                    {payment.reference ? <p>Ref: {payment.reference}</p> : null}
+                    {payment.note ? <p>{payment.note}</p> : null}
+                  </div>
+                ))
+              ) : (
+                <p className="p-5 text-sm text-[#667380]">No payments recorded yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+            <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Receipt History</h2>
             </div>
             <div className="divide-y divide-[#edf1f5]">
@@ -457,7 +557,7 @@ export default async function PoDetailPage({
             </div>
           </div>
 
-          <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+          <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm xl:col-span-2">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Status History</h2>
             </div>

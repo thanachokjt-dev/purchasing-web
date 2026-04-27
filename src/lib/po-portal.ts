@@ -38,6 +38,9 @@ type PoPortalOrderRow = {
   currency: string | null;
   po_amount_foreign: number | string | null;
   po_amount_thb: number | string | null;
+  freight_total?: number | string | null;
+  other_landed_cost_total?: number | string | null;
+  landed_cost_note?: string | null;
   payment_terms_snapshot: string | null;
 };
 
@@ -122,6 +125,19 @@ type PoReceiptRow = {
   note: string | null;
 };
 
+type PoPaymentRow = {
+  id: string;
+  po_id: string | null;
+  payment_date: string | null;
+  payment_type: string | null;
+  amount: number | string | null;
+  currency: string | null;
+  paid_by: string | null;
+  reference: string | null;
+  note: string | null;
+  created_at: string | null;
+};
+
 type PoStatusEventRow = {
   id: string;
   po_id: string | null;
@@ -175,8 +191,10 @@ export type PoCatalogItemOption = {
 };
 
 type PortalItem = PoPortalItem & {
+  freightUnitCost?: number;
   imageUrl?: string | null;
   itemUuid?: string;
+  landedUnitCost?: number;
   onHand?: number;
 };
 
@@ -193,6 +211,9 @@ type PortalOrder = {
   currency: string;
   poAmountForeign: number;
   poAmountThb: number;
+  freightTotal: number;
+  otherLandedCostTotal: number;
+  landedCostNote: string;
   paymentTerms: string;
   itemCount: number;
   statuses: string[];
@@ -271,6 +292,8 @@ function mapSupabaseItem(
     backorderQty: numeric(item.backorder_qty),
     outstandingQty,
     unitPrice: numeric(item.unit_price),
+    freightUnitCost: numeric(item.freight_unit_cost),
+    landedUnitCost: numeric(item.landed_unit_cost),
     lineAmount: numeric(item.line_amount),
     currency: item.currency ?? "THB",
     remark: item.remark ?? "",
@@ -361,6 +384,9 @@ function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[])
     currency: order.currency ?? "THB",
     poAmountForeign: numeric(order.po_amount_foreign),
     poAmountThb: numeric(order.po_amount_thb),
+    freightTotal: numeric(order.freight_total),
+    otherLandedCostTotal: numeric(order.other_landed_cost_total),
+    landedCostNote: order.landed_cost_note ?? "",
     paymentTerms: order.payment_terms_snapshot ?? "",
     itemCount: orderLineItems.length,
     statuses: statuses.length > 0 ? statuses : [order.work_status ?? "unknown"],
@@ -494,8 +520,17 @@ function getAppSheetPoPortalData() {
       currency: supplier.currency,
       paymentTerms: supplier.paymentTerms,
     })),
-    poPortalOrders,
-    poPortalItems,
+    poPortalOrders.map((order) => ({
+      ...order,
+      freightTotal: 0,
+      landedCostNote: "",
+      otherLandedCostTotal: 0,
+    })),
+    poPortalItems.map((item) => ({
+      ...item,
+      freightUnitCost: 0,
+      landedUnitCost: item.unitPrice,
+    })),
     "appsheet-fallback",
     [],
   );
@@ -556,9 +591,12 @@ async function getSupabasePoPortalData() {
         "supplier_code",
         "supplier_name_snapshot",
         "currency",
-        "po_amount_foreign",
-        "po_amount_thb",
-        "payment_terms_snapshot",
+      "po_amount_foreign",
+      "po_amount_thb",
+      "freight_total",
+      "other_landed_cost_total",
+      "landed_cost_note",
+      "payment_terms_snapshot",
       ].join(","),
       "po_date",
     ),
@@ -576,6 +614,8 @@ async function getSupabasePoPortalData() {
         "legacy_received_qty",
         "backorder_qty",
         "unit_price",
+        "freight_unit_cost",
+        "landed_unit_cost",
         "line_amount",
         "currency",
         "remark",
@@ -747,10 +787,23 @@ export async function getPoPortalDetailData(poId: string) {
 
     return {
       source: "appsheet-fallback" as const,
-      order,
+      order: {
+        ...order,
+        freightTotal: 0,
+        landedCostNote: "",
+        otherLandedCostTotal: 0,
+      },
       items: poPortalItems
         .filter((item) => item.poId === poId)
-        .map((item) => ({ ...item, imageUrl: null, itemUuid: undefined, onHand: 0 })),
+        .map((item) => ({
+          ...item,
+          freightUnitCost: 0,
+          imageUrl: null,
+          itemUuid: undefined,
+          landedUnitCost: item.unitPrice,
+          onHand: 0,
+        })),
+      payments: [],
       receipts: [],
       statusEvents: [],
     };
@@ -772,6 +825,9 @@ export async function getPoPortalDetailData(poId: string) {
         "currency",
         "po_amount_foreign",
         "po_amount_thb",
+        "freight_total",
+        "other_landed_cost_total",
+        "landed_cost_note",
         "payment_terms_snapshot",
       ].join(","),
     )
@@ -797,6 +853,8 @@ export async function getPoPortalDetailData(poId: string) {
         "legacy_received_qty",
         "backorder_qty",
         "unit_price",
+        "freight_unit_cost",
+        "landed_unit_cost",
         "line_amount",
         "currency",
         "remark",
@@ -875,10 +933,17 @@ export async function getPoPortalDetailData(poId: string) {
     .eq("po_id", poId)
     .order("created_at", { ascending: false });
 
+  const { data: payments } = await supabase
+    .from("po_payments")
+    .select("id,po_id,payment_date,payment_type,amount,currency,paid_by,reference,note,created_at")
+    .eq("po_id", poId)
+    .order("payment_date", { ascending: false });
+
   return {
     source: "supabase" as const,
     order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
     items,
+    payments: (payments ?? []) as PoPaymentRow[],
     receipts: (receipts.data ?? []) as PoReceiptRow[],
     statusEvents: (statusEvents ?? []) as PoStatusEventRow[],
   };
