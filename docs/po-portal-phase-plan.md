@@ -80,26 +80,27 @@ Done when:
 
 ## Phase 2C - Operational UI
 
-Status: planned
+Status: in progress
 
 Goal: make the PO Portal usable for daily work.
 
 Deliverables:
 
-- PO list with filters for status, supplier, SKU, and date.
+- Done: PO detail screen:
+  - line item table
+  - status transition controls
+  - receive stock form per line
+  - receipt history
+  - status history
+- Remaining: PO list with filters for status, supplier, SKU, and date.
 - Create PO screen:
   - supplier
   - requester/owner
   - PO date
   - currency/payment terms
   - line items with SKU, title snapshot, qty, unit price, remark
-- PO detail screen:
+- Remaining: richer PO detail editing:
   - editable draft/header fields
-  - line item table
-  - status transition controls
-  - receive stock form per line
-  - receipt history
-  - status history
 - Clear empty/error/loading states.
 
 Done when:

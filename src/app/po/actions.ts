@@ -74,9 +74,12 @@ function actionClient() {
   return supabase;
 }
 
-function refreshPoViews() {
+function refreshPoViews(poId?: string | null) {
   revalidatePath("/po");
   revalidatePath("/");
+  if (poId) {
+    revalidatePath(`/po/${encodeURIComponent(poId)}`);
+  }
 }
 
 async function supplierSnapshot(supplierCode: string) {
@@ -167,7 +170,7 @@ export async function createPoAction(
       note: "PO created in web app",
     });
 
-    refreshPoViews();
+    refreshPoViews(poId);
     return success(`Created ${poId}`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Create PO failed");
@@ -244,7 +247,7 @@ export async function addPoItemAction(
       })
       .eq("po_id", poId);
 
-    refreshPoViews();
+    refreshPoViews(poId);
     return success(`Added ${sku} to ${poId}`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Add PO item failed");
@@ -344,7 +347,7 @@ export async function changePoStatusAction(
       });
     }
 
-    refreshPoViews();
+    refreshPoViews(poId);
     return success(`Updated ${poId} to ${toStatus}`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Change status failed");
@@ -420,7 +423,7 @@ export async function receivePoItemAction(
       throw new Error(receiptError.message);
     }
 
-    refreshPoViews();
+    refreshPoViews(item.po_id);
     return success(`Received ${receivedQty} units`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Receive item failed");

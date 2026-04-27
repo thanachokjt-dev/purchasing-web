@@ -66,6 +66,26 @@ type PoPortalReceiptTotalRow = {
   outstanding_qty: number | string | null;
 };
 
+type PoReceiptRow = {
+  id: string;
+  po_item_id: string | null;
+  received_at: string | null;
+  received_qty: number | string | null;
+  received_by: string | null;
+  note: string | null;
+};
+
+type PoStatusEventRow = {
+  id: string;
+  po_id: string | null;
+  po_item_id: string | null;
+  from_status: string | null;
+  to_status: string | null;
+  actor: string | null;
+  note: string | null;
+  created_at: string | null;
+};
+
 type PoPortalSupplierOption = {
   supplierCode: string;
   supplierName: string;
@@ -75,6 +95,27 @@ type PoPortalSupplierOption = {
 
 type PortalItem = PoPortalItem & {
   itemUuid?: string;
+};
+
+type PortalOrder = {
+  poId: string;
+  rqqId: string;
+  poTitle: string;
+  poDate: string;
+  workStatus: string;
+  requester: string;
+  owner: string;
+  supplierCode: string;
+  supplierName: string;
+  currency: string;
+  poAmountForeign: number;
+  poAmountThb: number;
+  paymentTerms: string;
+  itemCount: number;
+  statuses: string[];
+  totalQty: number;
+  receivedQty: number;
+  outstandingQty: number;
 };
 
 function normalizedStatus(value: string) {
@@ -118,28 +159,66 @@ function pendingApprovalQty(items: PoPortalItem[]) {
     .reduce((sum, item) => sum + item.outstandingQty, 0);
 }
 
+function mapSupabaseItem(
+  item: PoPortalItemRow,
+  receiptTotal?: PoPortalReceiptTotalRow,
+): PortalItem {
+  const orderedQty = numeric(item.ordered_qty);
+  const receivedQty = numeric(receiptTotal?.total_received_qty ?? item.legacy_received_qty);
+  const outstandingQty = numeric(receiptTotal?.outstanding_qty);
+
+  return {
+    poId: item.po_id ?? "",
+    itemUuid: item.id,
+    lineNo: item.line_no ?? "",
+    sku: item.sku ?? "",
+    productTitle: item.product_title_snapshot ?? item.sku ?? "",
+    variantTitle: item.variant_title_snapshot ?? "",
+    qty: orderedQty,
+    receivedQty,
+    backorderQty: numeric(item.backorder_qty),
+    outstandingQty,
+    unitPrice: numeric(item.unit_price),
+    lineAmount: numeric(item.line_amount),
+    currency: item.currency ?? "THB",
+    remark: item.remark ?? "",
+    poItemId: item.po_item_id ?? item.id,
+    fullName: item.full_name ?? "",
+    status: item.line_status ?? "unknown",
+  };
+}
+
+function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[]): PortalOrder {
+  const statuses = Array.from(new Set(orderLineItems.map((item) => item.status)));
+  const totalQty = orderLineItems.reduce((sum, item) => sum + item.qty, 0);
+  const receivedQty = orderLineItems.reduce((sum, item) => sum + item.receivedQty, 0);
+  const outstandingQty = orderLineItems.reduce((sum, item) => sum + item.outstandingQty, 0);
+
+  return {
+    poId: order.po_id ?? "",
+    rqqId: order.rqq_id ?? "",
+    poTitle: order.po_title ?? "",
+    poDate: order.po_date ?? "",
+    workStatus: order.work_status ?? "",
+    requester: order.requester ?? "",
+    owner: order.owner ?? "",
+    supplierCode: order.supplier_code ?? "",
+    supplierName: order.supplier_name_snapshot ?? order.supplier_code ?? "",
+    currency: order.currency ?? "THB",
+    poAmountForeign: numeric(order.po_amount_foreign),
+    poAmountThb: numeric(order.po_amount_thb),
+    paymentTerms: order.payment_terms_snapshot ?? "",
+    itemCount: orderLineItems.length,
+    statuses: statuses.length > 0 ? statuses : [order.work_status ?? "unknown"],
+    totalQty,
+    receivedQty,
+    outstandingQty,
+  };
+}
+
 function summarizePoPortalData(
   suppliers: PoPortalSupplierOption[],
-  orders: Array<{
-    poId: string;
-    rqqId: string;
-    poTitle: string;
-    poDate: string;
-    workStatus: string;
-    requester: string;
-    owner: string;
-    supplierCode: string;
-    supplierName: string;
-    currency: string;
-    poAmountForeign: number;
-    poAmountThb: number;
-    paymentTerms: string;
-    itemCount: number;
-    statuses: string[];
-    totalQty: number;
-    receivedQty: number;
-    outstandingQty: number;
-  }>,
+  orders: PortalOrder[],
   items: PortalItem[],
   source: "appsheet-fallback" | "supabase",
 ) {
@@ -367,32 +446,7 @@ async function getSupabasePoPortalData() {
 
   const mappedItems: PortalItem[] = items
     .filter((item) => item.po_id && item.sku)
-    .map((item) => {
-      const receiptTotal = receiptTotalByItemId.get(item.id);
-      const orderedQty = numeric(item.ordered_qty);
-      const receivedQty = numeric(receiptTotal?.total_received_qty ?? item.legacy_received_qty);
-      const outstandingQty = numeric(receiptTotal?.outstanding_qty);
-
-      return {
-        poId: item.po_id ?? "",
-        itemUuid: item.id,
-        lineNo: item.line_no ?? "",
-        sku: item.sku ?? "",
-        productTitle: item.product_title_snapshot ?? item.sku ?? "",
-        variantTitle: item.variant_title_snapshot ?? "",
-        qty: orderedQty,
-        receivedQty,
-        backorderQty: numeric(item.backorder_qty),
-        outstandingQty,
-        unitPrice: numeric(item.unit_price),
-        lineAmount: numeric(item.line_amount),
-        currency: item.currency ?? "THB",
-        remark: item.remark ?? "",
-        poItemId: item.po_item_id ?? item.id,
-        fullName: item.full_name ?? "",
-        status: item.line_status ?? "unknown",
-      };
-    });
+    .map((item) => mapSupabaseItem(item, receiptTotalByItemId.get(item.id)));
 
   const itemsByPoId = new Map<string, PoPortalItem[]>();
   for (const item of mappedItems) {
@@ -403,31 +457,7 @@ async function getSupabasePoPortalData() {
     .filter((order) => order.po_id)
     .map((order) => {
       const orderLineItems = itemsByPoId.get(order.po_id ?? "") ?? [];
-      const statuses = Array.from(new Set(orderLineItems.map((item) => item.status)));
-      const totalQty = orderLineItems.reduce((sum, item) => sum + item.qty, 0);
-      const receivedQty = orderLineItems.reduce((sum, item) => sum + item.receivedQty, 0);
-      const outstandingQty = orderLineItems.reduce((sum, item) => sum + item.outstandingQty, 0);
-
-      return {
-        poId: order.po_id ?? "",
-        rqqId: order.rqq_id ?? "",
-        poTitle: order.po_title ?? "",
-        poDate: order.po_date ?? "",
-        workStatus: order.work_status ?? "",
-        requester: order.requester ?? "",
-        owner: order.owner ?? "",
-        supplierCode: order.supplier_code ?? "",
-        supplierName: order.supplier_name_snapshot ?? order.supplier_code ?? "",
-        currency: order.currency ?? "THB",
-        poAmountForeign: numeric(order.po_amount_foreign),
-        poAmountThb: numeric(order.po_amount_thb),
-        paymentTerms: order.payment_terms_snapshot ?? "",
-        itemCount: orderLineItems.length,
-        statuses: statuses.length > 0 ? statuses : [order.work_status ?? "unknown"],
-        totalQty,
-        receivedQty,
-        outstandingQty,
-      };
+      return mapSupabaseOrder(order, orderLineItems);
     });
 
   return summarizePoPortalData(
@@ -448,5 +478,121 @@ export async function getPoPortalData() {
   return supabaseData ?? getAppSheetPoPortalData();
 }
 
+export async function getPoPortalDetailData(poId: string) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    const order = poPortalOrders.find((row) => row.poId === poId);
+    if (!order) {
+      return null;
+    }
+
+    return {
+      source: "appsheet-fallback" as const,
+      order,
+      items: poPortalItems
+        .filter((item) => item.poId === poId)
+        .map((item) => ({ ...item, itemUuid: undefined })),
+      receipts: [],
+      statusEvents: [],
+    };
+  }
+
+  const { data: orderRow, error: orderError } = await supabase
+    .from("po_orders")
+    .select(
+      [
+        "po_id",
+        "rqq_id",
+        "po_title",
+        "po_date",
+        "work_status",
+        "requester",
+        "owner",
+        "supplier_code",
+        "supplier_name_snapshot",
+        "currency",
+        "po_amount_foreign",
+        "po_amount_thb",
+        "payment_terms_snapshot",
+      ].join(","),
+    )
+    .eq("po_id", poId)
+    .maybeSingle();
+
+  if (orderError || !orderRow) {
+    return null;
+  }
+
+  const { data: itemRows, error: itemError } = await supabase
+    .from("po_items")
+    .select(
+      [
+        "id",
+        "po_item_id",
+        "po_id",
+        "line_no",
+        "sku",
+        "product_title_snapshot",
+        "variant_title_snapshot",
+        "ordered_qty",
+        "legacy_received_qty",
+        "backorder_qty",
+        "unit_price",
+        "line_amount",
+        "currency",
+        "remark",
+        "full_name",
+        "line_status",
+      ].join(","),
+    )
+    .eq("po_id", poId)
+    .order("line_no", { ascending: true });
+
+  if (itemError) {
+    return null;
+  }
+
+  const supabaseItems = (itemRows ?? []) as unknown as PoPortalItemRow[];
+  const itemIds = supabaseItems.map((item) => item.id);
+
+  const { data: receiptTotals } = await supabase
+    .from("po_item_receipt_totals")
+    .select("po_item_uuid,workflow_received_qty,total_received_qty,outstanding_qty")
+    .eq("po_id", poId);
+
+  const receiptTotalByItemId = new Map(
+    ((receiptTotals ?? []) as unknown as PoPortalReceiptTotalRow[])
+      .filter((row) => row.po_item_uuid)
+      .map((row) => [row.po_item_uuid, row]),
+  );
+  const items = supabaseItems.map((item) =>
+    mapSupabaseItem(item, receiptTotalByItemId.get(item.id)),
+  );
+
+  const receipts =
+    itemIds.length > 0
+      ? await supabase
+          .from("po_receipts")
+          .select("id,po_item_id,received_at,received_qty,received_by,note")
+          .in("po_item_id", itemIds)
+          .order("received_at", { ascending: false })
+      : { data: [] };
+
+  const { data: statusEvents } = await supabase
+    .from("po_status_events")
+    .select("id,po_id,po_item_id,from_status,to_status,actor,note,created_at")
+    .eq("po_id", poId)
+    .order("created_at", { ascending: false });
+
+  return {
+    source: "supabase" as const,
+    order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
+    items,
+    receipts: (receipts.data ?? []) as PoReceiptRow[],
+    statusEvents: (statusEvents ?? []) as PoStatusEventRow[],
+  };
+}
+
 export type PoPortalData = Awaited<ReturnType<typeof getPoPortalData>>;
 export type EnrichedPoPortalOrder = PoPortalData["activeOrders"][number];
+export type PoPortalDetailData = Awaited<ReturnType<typeof getPoPortalDetailData>>;

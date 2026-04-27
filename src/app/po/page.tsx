@@ -215,7 +215,9 @@ export default async function PoPortalPage() {
                     <tr key={order.poId}>
                       <td className="whitespace-nowrap px-4 py-3">
                         <p className="font-mono text-xs font-semibold text-[#172026]">
-                          {order.poId}
+                          <Link className="underline-offset-2 hover:underline" href={`/po/${encodeURIComponent(order.poId)}`}>
+                            {order.poId}
+                          </Link>
                         </p>
                         <p className="mt-1 text-xs text-[#6b7785]">
                           {order.poDate ? order.poDate.slice(0, 10) : "No date"}
@@ -300,7 +302,9 @@ export default async function PoPortalPage() {
                 {data.openItems.map((item) => (
                   <tr key={item.poItemId || `${item.poId}-${item.sku}-${item.lineNo}`}>
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                      {item.poId}
+                      <Link className="underline-offset-2 hover:underline" href={`/po/${encodeURIComponent(item.poId)}`}>
+                        {item.poId}
+                      </Link>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
                       {item.sku}
