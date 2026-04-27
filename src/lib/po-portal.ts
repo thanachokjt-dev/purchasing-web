@@ -8,11 +8,20 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 const ACTIVE_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
 const PENDING_STATUSES = new Set(["waiting_for_approve"]);
+const WORKBENCH_ORDER_STATUSES = new Set([
+  "draft",
+  "waiting_for_approve",
+  "inpro",
+  "delivery",
+  "final_payment",
+]);
 const PAGE_SIZE = 1000;
 
 type PoPortalSupplierRow = {
   supplier_code: string | null;
   supplier_name: string | null;
+  currency: string | null;
+  payment_terms: string | null;
 };
 
 type PoPortalOrderRow = {
@@ -57,6 +66,17 @@ type PoPortalReceiptTotalRow = {
   outstanding_qty: number | string | null;
 };
 
+type PoPortalSupplierOption = {
+  supplierCode: string;
+  supplierName: string;
+  currency: string;
+  paymentTerms: string;
+};
+
+type PortalItem = PoPortalItem & {
+  itemUuid?: string;
+};
+
 function normalizedStatus(value: string) {
   return value.trim().toLowerCase();
 }
@@ -99,7 +119,7 @@ function pendingApprovalQty(items: PoPortalItem[]) {
 }
 
 function summarizePoPortalData(
-  suppliers: Array<{ supplierCode: string; supplierName: string }>,
+  suppliers: PoPortalSupplierOption[],
   orders: Array<{
     poId: string;
     rqqId: string;
@@ -120,10 +140,10 @@ function summarizePoPortalData(
     receivedQty: number;
     outstandingQty: number;
   }>,
-  items: PoPortalItem[],
+  items: PortalItem[],
   source: "appsheet-fallback" | "supabase",
 ) {
-  const itemByPoId = new Map<string, PoPortalItem[]>();
+  const itemByPoId = new Map<string, PortalItem[]>();
   for (const item of items) {
     itemByPoId.set(item.poId, [...(itemByPoId.get(item.poId) ?? []), item]);
   }
@@ -167,7 +187,12 @@ function summarizePoPortalData(
   });
 
   const activeOrders = enrichedOrders
-    .filter((order) => order.activeIncomingQty > 0 || order.pendingApprovalQty > 0)
+    .filter(
+      (order) =>
+        order.activeIncomingQty > 0 ||
+        order.pendingApprovalQty > 0 ||
+        WORKBENCH_ORDER_STATUSES.has(normalizedStatus(order.workStatus)),
+    )
     .sort(
       (a, b) =>
         b.activeIncomingQty - a.activeIncomingQty ||
@@ -176,7 +201,11 @@ function summarizePoPortalData(
     .slice(0, 20);
 
   const openItems = items
-    .filter((item) => item.outstandingQty > 0 && item.status !== "Closed")
+    .filter(
+      (item) =>
+        item.outstandingQty > 0 &&
+        !["closed", "cancelled", "canceled"].includes(normalizedStatus(item.status)),
+    )
     .sort((a, b) => b.outstandingQty - a.outstandingQty)
     .slice(0, 20);
 
@@ -215,6 +244,7 @@ function summarizePoPortalData(
       receivedRate: orderedTotal > 0 ? receivedTotal / orderedTotal : 0,
     },
     source,
+    suppliers,
     statusSummaries,
     activeOrders,
     openItems,
@@ -226,6 +256,8 @@ function getAppSheetPoPortalData() {
     poPortalSuppliers.map((supplier) => ({
       supplierCode: supplier.supplierCode,
       supplierName: supplier.supplierName,
+      currency: supplier.currency,
+      paymentTerms: supplier.paymentTerms,
     })),
     poPortalOrders,
     poPortalItems,
@@ -272,7 +304,7 @@ async function getSupabasePoPortalData() {
   const [suppliers, orders, items, receiptTotals] = await Promise.all([
     fetchAllRows<PoPortalSupplierRow>(
       "po_suppliers",
-      "supplier_code,supplier_name",
+      "supplier_code,supplier_name,currency,payment_terms",
       "supplier_code",
     ),
     fetchAllRows<PoPortalOrderRow>(
@@ -333,7 +365,7 @@ async function getSupabasePoPortalData() {
       .map((row) => [row.po_item_uuid, row]),
   );
 
-  const mappedItems: PoPortalItem[] = items
+  const mappedItems: PortalItem[] = items
     .filter((item) => item.po_id && item.sku)
     .map((item) => {
       const receiptTotal = receiptTotalByItemId.get(item.id);
@@ -343,6 +375,7 @@ async function getSupabasePoPortalData() {
 
       return {
         poId: item.po_id ?? "",
+        itemUuid: item.id,
         lineNo: item.line_no ?? "",
         sku: item.sku ?? "",
         productTitle: item.product_title_snapshot ?? item.sku ?? "",
@@ -401,6 +434,8 @@ async function getSupabasePoPortalData() {
     suppliers.map((supplier) => ({
       supplierCode: supplier.supplier_code ?? "",
       supplierName: supplier.supplier_name ?? supplier.supplier_code ?? "",
+      currency: supplier.currency ?? "",
+      paymentTerms: supplier.payment_terms ?? "",
     })),
     mappedOrders,
     mappedItems,

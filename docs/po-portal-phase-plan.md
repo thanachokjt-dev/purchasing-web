@@ -52,26 +52,26 @@ Done when:
 
 ## Phase 2B - Mutation Layer
 
-Status: next
+Status: in progress
 
 Goal: create safe write operations before building rich UI controls.
 
 Deliverables:
 
-- Server actions for:
-  - create PO header
-  - update PO header
-  - add/update PO item
+- Done: server actions for:
+  - create PO header with first item line
+  - add PO item line
   - change PO/line status
   - receive item quantity
-- Validation rules:
-  - supplier exists before PO is submitted
+- Done: validation rules:
+  - supplier exists before PO creation
   - PO item SKU is required
   - ordered quantity must be positive
   - received quantity must be positive
   - received quantity cannot exceed outstanding quantity
   - closed/cancelled lines cannot be received
-- Revalidate `/po` and dashboard after successful writes.
+- Done: revalidate `/po` and dashboard after successful writes.
+- Remaining: richer update/edit actions for existing PO header and item details.
 
 Done when:
 

@@ -8,6 +8,12 @@ import {
 } from "lucide-react";
 import { getPoPortalData } from "@/lib/po-portal";
 import { formatNumber } from "@/lib/baseline-data";
+import {
+  AddPoItemForm,
+  CreatePoForm,
+  ReceiveItemForm,
+  StatusActionForm,
+} from "@/app/po/po-forms";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +48,7 @@ const statusClass = (status: string) => {
 
 export default async function PoPortalPage() {
   const data = await getPoPortalData();
+  const today = new Date().toISOString().slice(0, 10);
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -60,9 +67,8 @@ export default async function PoPortalPage() {
                 : "AppSheet PO export fallback"}
             </span>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#52606d]">
-              Read-only view of PO lifecycle data from `Po-Portals.xlsx`, including
-              supplier terms, receiving progress, active incoming quantities, and
-              pending approvals.
+              Open purchase orders, move work statuses, and receive stock into
+              `po_receipts` so incoming quantities come from the PO lifecycle.
             </p>
           </div>
           <Link
@@ -130,6 +136,25 @@ export default async function PoPortalPage() {
           })}
         </section>
 
+        <section className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+          <div className="border-b border-[#e2e7ed] p-5">
+            <h2 className="text-lg font-semibold">Open New PO</h2>
+            <p className="mt-1 text-sm text-[#667380]">
+              Creates a draft PO with the first item line. Add more lines from the
+              active workbench after the PO exists.
+            </p>
+          </div>
+          <div className="p-5">
+            {data.source === "supabase" ? (
+              <CreatePoForm suppliers={data.suppliers} today={today} />
+            ) : (
+              <p className="rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-medium text-[#946200]">
+                Connect Supabase and import PO data before opening live POs.
+              </p>
+            )}
+          </div>
+        </section>
+
         <section className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
@@ -182,6 +207,7 @@ export default async function PoPortalPage() {
                     <th className="px-4 py-3 text-right font-semibold">Incoming</th>
                     <th className="px-4 py-3 text-right font-semibold">Pending</th>
                     <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                    <th className="px-4 py-3 font-semibold">Update</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f5]">
@@ -227,6 +253,19 @@ export default async function PoPortalPage() {
                       <td className="px-4 py-3 text-right font-mono">
                         {formatCurrency(order.poAmountForeign, order.currency)}
                       </td>
+                      <td className="px-4 py-3 align-top">
+                        {data.source === "supabase" ? (
+                          <>
+                            <StatusActionForm
+                              currentStatus={order.workStatus || order.statuses[0] || "draft"}
+                              poId={order.poId}
+                            />
+                            <AddPoItemForm poId={order.poId} />
+                          </>
+                        ) : (
+                          <span className="text-xs text-[#8a96a3]">Fallback only</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -253,6 +292,8 @@ export default async function PoPortalPage() {
                   <th className="px-4 py-3 text-right font-semibold">Qty</th>
                   <th className="px-4 py-3 text-right font-semibold">Received</th>
                   <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
+                  <th className="px-4 py-3 font-semibold">Line Status</th>
+                  <th className="px-4 py-3 font-semibold">Receive</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#edf1f5]">
@@ -287,6 +328,27 @@ export default async function PoPortalPage() {
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-semibold text-[#1f6b3d]">
                       {formatNumber(item.outstandingQty)}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {data.source === "supabase" ? (
+                        <StatusActionForm
+                          currentStatus={item.status}
+                          itemUuid={item.itemUuid}
+                          poId={item.poId}
+                        />
+                      ) : (
+                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                      {data.source === "supabase" ? (
+                        <ReceiveItemForm
+                          itemUuid={item.itemUuid}
+                          outstandingQty={item.outstandingQty}
+                        />
+                      ) : (
+                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
+                      )}
                     </td>
                   </tr>
                 ))}
