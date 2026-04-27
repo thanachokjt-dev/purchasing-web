@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
 import {
@@ -223,8 +224,26 @@ export default async function PoDetailPage({
                     <td className="px-4 py-3 font-mono text-xs">{item.lineNo || "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{item.sku}</td>
                     <td className="px-4 py-3">
-                      <p className="font-medium">{item.productTitle}</p>
-                      <p className="mt-1 text-xs text-[#6b7785]">{item.variantTitle || item.fullName}</p>
+                      <div className="flex min-w-[260px] items-center gap-3">
+                        <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                          {item.imageUrl ? (
+                            <Image
+                              alt={item.productTitle || item.sku}
+                              className="h-full w-full object-cover"
+                              height={56}
+                              loading="lazy"
+                              src={item.imageUrl}
+                              width={56}
+                            />
+                          ) : (
+                            <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium">{item.productTitle}</p>
+                          <p className="mt-1 text-xs text-[#6b7785]">{item.variantTitle || item.fullName}</p>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(item.status)}`}>

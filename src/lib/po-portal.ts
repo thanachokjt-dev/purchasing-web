@@ -86,6 +86,19 @@ type PoStatusEventRow = {
   created_at: string | null;
 };
 
+type ProductVariantImageRow = {
+  sku: string | null;
+  variant_image_url: string | null;
+  products:
+    | {
+        product_image_url: string | null;
+      }
+    | {
+        product_image_url: string | null;
+      }[]
+    | null;
+};
+
 type PoPortalSupplierOption = {
   supplierCode: string;
   supplierName: string;
@@ -94,6 +107,7 @@ type PoPortalSupplierOption = {
 };
 
 type PortalItem = PoPortalItem & {
+  imageUrl?: string | null;
   itemUuid?: string;
 };
 
@@ -162,6 +176,7 @@ function pendingApprovalQty(items: PoPortalItem[]) {
 function mapSupabaseItem(
   item: PoPortalItemRow,
   receiptTotal?: PoPortalReceiptTotalRow,
+  imageUrl?: string | null,
 ): PortalItem {
   const orderedQty = numeric(item.ordered_qty);
   const receivedQty = numeric(receiptTotal?.total_received_qty ?? item.legacy_received_qty);
@@ -184,8 +199,14 @@ function mapSupabaseItem(
     remark: item.remark ?? "",
     poItemId: item.po_item_id ?? item.id,
     fullName: item.full_name ?? "",
+    imageUrl: imageUrl ?? null,
     status: item.line_status ?? "unknown",
   };
+}
+
+function productImageUrl(row: ProductVariantImageRow) {
+  const product = Array.isArray(row.products) ? row.products[0] : row.products;
+  return row.variant_image_url ?? product?.product_image_url ?? null;
 }
 
 function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[]): PortalOrder {
@@ -491,7 +512,7 @@ export async function getPoPortalDetailData(poId: string) {
       order,
       items: poPortalItems
         .filter((item) => item.poId === poId)
-        .map((item) => ({ ...item, itemUuid: undefined })),
+        .map((item) => ({ ...item, imageUrl: null, itemUuid: undefined })),
       receipts: [],
       statusEvents: [],
     };
@@ -554,6 +575,23 @@ export async function getPoPortalDetailData(poId: string) {
 
   const supabaseItems = (itemRows ?? []) as unknown as PoPortalItemRow[];
   const itemIds = supabaseItems.map((item) => item.id);
+  const skus = Array.from(
+    new Set(supabaseItems.map((item) => item.sku).filter(Boolean) as string[]),
+  );
+
+  const imageRows =
+    skus.length > 0
+      ? await supabase
+          .from("product_variants")
+          .select("sku,variant_image_url,products(product_image_url)")
+          .in("sku", skus)
+      : { data: [] };
+
+  const imageBySku = new Map(
+    ((imageRows.data ?? []) as unknown as ProductVariantImageRow[])
+      .filter((row) => row.sku)
+      .map((row) => [row.sku, productImageUrl(row)]),
+  );
 
   const { data: receiptTotals } = await supabase
     .from("po_item_receipt_totals")
@@ -566,7 +604,7 @@ export async function getPoPortalDetailData(poId: string) {
       .map((row) => [row.po_item_uuid, row]),
   );
   const items = supabaseItems.map((item) =>
-    mapSupabaseItem(item, receiptTotalByItemId.get(item.id)),
+    mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(item.sku ?? "")),
   );
 
   const receipts =
