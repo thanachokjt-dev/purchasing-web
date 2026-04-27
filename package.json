@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "backfill:sales-lines": "node scripts/backfill-sales-lines.mjs"
+    "backfill:sales-lines": "node scripts/backfill-sales-lines.mjs",
+    "import:po-portal": "node scripts/import-po-portal.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

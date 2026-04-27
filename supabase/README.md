@@ -66,6 +66,20 @@ quantity. It counts outstanding quantities from active PO item statuses
 (`inpro`, `delivery`, `final_payment`) and keeps pending approval quantities
 separate (`waiting_for_approve`).
 
+## PO Portal import
+
+After applying `004_phase2_po_portal.sql`, run:
+
+```bash
+npm run import:po-portal -- --dry-run
+npm run import:po-portal
+```
+
+The importer reads the generated `src/lib/po-portal-data.ts` snapshot from
+`Po-Portals.xlsx` and upserts suppliers, PO headers, and PO lines. Legacy
+AppSheet received quantities are kept in `legacy_received_qty`; new receiving
+events should be inserted into `po_receipts`.
+
 ## Cron
 
 Daily 05:00 ICT is 22:00 UTC on the previous date. `vercel.json` is configured to call the daily incremental endpoint at `0 22 * * *` UTC.

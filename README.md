@@ -140,6 +140,20 @@ For local month-by-month backfill, keep the dev server running and use:
 npm run backfill:sales-lines -- --since=2025-02-01 --until=2025-03-01 --max-pages=10
 ```
 
+## PO Portal Import
+
+After applying `004_phase2_po_portal.sql`, import the current AppSheet PO export
+snapshot into Supabase:
+
+```bash
+npm run import:po-portal -- --dry-run
+npm run import:po-portal
+```
+
+The importer upserts suppliers, PO headers, and PO lines. Existing AppSheet
+received quantities are stored as `legacy_received_qty`; new web-app receiving
+events will be stored in `po_receipts`.
+
 ## Development Workflow
 
 Use this sequence for each change set:
