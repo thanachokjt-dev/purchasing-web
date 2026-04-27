@@ -53,13 +53,14 @@ export default async function PoPortalPage({
 }) {
   const data = await getPoPortalData();
   const { q = "", status = "all" } = await searchParams;
+  const selectedStatus = status.trim().toLowerCase();
   const today = new Date().toISOString().slice(0, 10);
   const query = q.trim().toLowerCase();
   const filteredWorkbenchOrders = data.workbenchOrders.filter((order) => {
     const matchesStatus =
-      status === "all" ||
-      order.workStatus.toLowerCase() === status ||
-      order.statuses.some((itemStatus) => itemStatus.toLowerCase() === status);
+      selectedStatus === "all" ||
+      order.workStatus.toLowerCase() === selectedStatus ||
+      order.statuses.some((itemStatus) => itemStatus.toLowerCase() === selectedStatus);
     const matchesQuery =
       !query ||
       [
@@ -78,15 +79,12 @@ export default async function PoPortalPage({
   });
   const statusOptions = Array.from(
     new Set(
-      data.workbenchOrders.flatMap((order) => [
-        order.workStatus,
-        ...order.statuses,
-      ]),
+      data.workbenchOrders
+        .flatMap((order) => [order.workStatus, ...order.statuses])
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean),
     ),
-  )
-    .filter(Boolean)
-    .map((value) => value.toLowerCase())
-    .sort();
+  ).sort();
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -242,7 +240,7 @@ export default async function PoPortalPage({
                 />
                 <select
                   className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
-                  defaultValue={status}
+                  defaultValue={selectedStatus}
                   name="status"
                 >
                   <option value="all">All statuses</option>
@@ -256,7 +254,7 @@ export default async function PoPortalPage({
                   Filter
                 </button>
               </form>
-              {(q || status !== "all") ? (
+              {(q || selectedStatus !== "all") ? (
                 <Link className="mt-3 inline-flex text-sm font-semibold text-[#255f85]" href="/po">
                   Clear filters
                 </Link>
