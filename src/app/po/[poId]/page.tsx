@@ -10,6 +10,7 @@ import {
   LandedCostAllocationForm,
   PoDraftLinesForm,
   PrintPageButton,
+  SmartAddPoItemForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
 import { formatNumber } from "@/lib/baseline-data";
@@ -150,6 +151,11 @@ export default async function PoDetailPage({
   const today = new Date().toISOString().slice(0, 10);
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const matrix = quoteMatrixRows(data.items);
+  const detailCatalogItems = data.catalogItems.filter(
+    (item) =>
+      item.supplierCode === order.supplierCode ||
+      item.supplierName.toLowerCase() === order.supplierName.toLowerCase(),
+  );
   const paidTotal = data.payments.reduce(
     (sum, payment) => sum + Number(payment.amount ?? 0),
     0,
@@ -282,7 +288,17 @@ export default async function PoDetailPage({
             </div>
             <div className="p-5">
               {data.source === "supabase" ? (
-                <AddPoItemForm poId={order.poId} />
+                detailCatalogItems.length > 0 ? (
+                  <SmartAddPoItemForm
+                    catalogItems={detailCatalogItems}
+                    currency={order.currency}
+                    poId={order.poId}
+                    supplierCode={order.supplierCode}
+                    supplierName={order.supplierName}
+                  />
+                ) : (
+                  <AddPoItemForm poId={order.poId} />
+                )
               ) : (
                 <p className="rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-medium text-[#946200]">
                   Live edits require Supabase PO data.

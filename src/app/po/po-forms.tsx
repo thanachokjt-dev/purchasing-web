@@ -336,6 +336,179 @@ export function AddPoItemForm({ poId }: { poId: string }) {
   );
 }
 
+export function SmartAddPoItemForm({
+  catalogItems,
+  currency,
+  poId,
+  supplierCode,
+  supplierName,
+}: {
+  catalogItems: CatalogItemOption[];
+  currency: string;
+  poId: string;
+  supplierCode: string;
+  supplierName: string;
+}) {
+  const [state, formAction, pending] = useActionState(addPoItemAction, initialState);
+  const [query, setQuery] = useState("");
+  const [sku, setSku] = useState("");
+  const [productTitle, setProductTitle] = useState("");
+  const [variantTitle, setVariantTitle] = useState("");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [freightUnitCost, setFreightUnitCost] = useState("");
+  const [lineCurrency, setLineCurrency] = useState(currency || "THB");
+  const supplierKey = supplierName.toLowerCase();
+  const filteredCatalogItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return catalogItems
+      .filter((item) => {
+        const matchesSupplier =
+          item.supplierCode === supplierCode ||
+          item.supplierName.toLowerCase() === supplierKey;
+        const matchesQuery =
+          !normalizedQuery || item.searchText.includes(normalizedQuery);
+
+        return matchesSupplier && matchesQuery;
+      })
+      .slice(0, 10);
+  }, [catalogItems, query, supplierCode, supplierKey]);
+  const selectedItem = filteredCatalogItems.find((item) => item.sku === sku);
+
+  function selectCatalogItem(item: CatalogItemOption) {
+    setQuery(`${item.sku} - ${item.productTitle}`);
+    setSku(item.sku);
+    setProductTitle(item.productTitle);
+    setVariantTitle(item.variantTitle);
+    setUnitPrice(String(item.lastUnitPrice || item.shopifyPrice || ""));
+    setFreightUnitCost(item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "");
+    setLineCurrency(item.currency || currency || "THB");
+  }
+
+  return (
+    <form action={formAction} className="grid gap-3">
+      <input name="poId" type="hidden" value={poId} />
+      <input name="sku" type="hidden" value={sku} />
+      <input name="variantTitle" type="hidden" value={variantTitle} />
+      <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_0.45fr_0.55fr_0.55fr_0.45fr_auto]">
+        <div className={`${labelClass} relative`}>
+          SKU / Product search
+          <input
+            className={inputClass}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSku(event.target.value.trim());
+            }}
+            placeholder="Search SKU or product name"
+            required
+            value={query}
+          />
+          {query && filteredCatalogItems.length > 0 ? (
+            <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
+              {filteredCatalogItems.map((item) => (
+                <button
+                  className="grid w-full gap-1 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
+                  key={`${item.sku}-${item.supplierName}`}
+                  onClick={() => selectCatalogItem(item)}
+                  type="button"
+                >
+                  <span className="font-mono text-xs font-semibold text-[#172026]">
+                    {item.sku}
+                  </span>
+                  <span className="font-medium normal-case tracking-normal text-[#172026]">
+                    {item.productTitle}
+                  </span>
+                  <span className="text-xs normal-case tracking-normal text-[#667380]">
+                    {item.lastPoId
+                      ? `last ${item.lastPoId} @ ${item.lastUnitPrice}`
+                      : "Shopify catalog"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <label className={labelClass}>
+          Product
+          <input
+            className={inputClass}
+            name="productTitle"
+            onChange={(event) => setProductTitle(event.target.value)}
+            value={productTitle}
+          />
+        </label>
+        <label className={labelClass}>
+          Qty
+          <input className={inputClass} min="0.0001" name="orderedQty" required step="0.0001" type="number" />
+        </label>
+        <label className={labelClass}>
+          Price
+          <input
+            className={inputClass}
+            min="0"
+            name="unitPrice"
+            onChange={(event) => setUnitPrice(event.target.value)}
+            step="0.0001"
+            type="number"
+            value={unitPrice}
+          />
+        </label>
+        <label className={labelClass}>
+          Freight/unit
+          <input
+            className={inputClass}
+            min="0"
+            name="freightUnitCost"
+            onChange={(event) => setFreightUnitCost(event.target.value)}
+            step="0.0001"
+            type="number"
+            value={freightUnitCost}
+          />
+        </label>
+        <label className={labelClass}>
+          Currency
+          <input
+            className={inputClass}
+            name="currency"
+            onChange={(event) => setLineCurrency(event.target.value)}
+            value={lineCurrency}
+          />
+        </label>
+        <button className={buttonClass} disabled={pending} type="submit">
+          Add line
+        </button>
+      </div>
+      {selectedItem ? (
+        <div className="grid gap-2 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-xs text-[#52606d] sm:grid-cols-3">
+          <p>
+            Last PO:{" "}
+            <span className="font-mono font-semibold text-[#172026]">
+              {selectedItem.lastPoId || "-"}
+            </span>
+          </p>
+          <p>
+            Last unit:{" "}
+            <span className="font-mono font-semibold text-[#172026]">
+              {selectedItem.lastUnitPrice || "-"}
+            </span>
+          </p>
+          <p>
+            Last freight:{" "}
+            <span className="font-mono font-semibold text-[#172026]">
+              {selectedItem.lastFreightUnitCost || "-"}
+            </span>
+          </p>
+        </div>
+      ) : null}
+      <label className={labelClass}>
+        Remark
+        <input className={inputClass} name="remark" placeholder="Line note" />
+      </label>
+      <ActionMessage state={state} />
+    </form>
+  );
+}
+
 export function PoDraftLinesForm({
   items,
   poId,
@@ -668,23 +841,41 @@ export function BatchReceiveLineFields({
   itemUuid?: string;
   outstandingQty: number;
 }) {
+  const [receivedQty, setReceivedQty] = useState("");
+
   if (!itemUuid) {
     return <span className="text-xs text-[#8a96a3]">Import-only line</span>;
   }
 
   return (
-    <div className="flex min-w-[160px] items-center gap-2">
+    <div className="flex min-w-[240px] items-center gap-2">
       <input form={formId} name="batchItemUuid" type="hidden" value={itemUuid} />
       <input
         className={inputClass}
-        defaultValue={outstandingQty > 0 ? outstandingQty : ""}
         form={formId}
         max={outstandingQty}
         min="0"
         name="batchReceivedQty"
+        onChange={(event) => setReceivedQty(event.target.value)}
+        placeholder="0"
         step="0.0001"
         type="number"
+        value={receivedQty}
       />
+      <button
+        className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold text-[#364252]"
+        onClick={() => setReceivedQty(outstandingQty > 0 ? String(outstandingQty) : "")}
+        type="button"
+      >
+        Fill
+      </button>
+      <button
+        className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold text-[#667380]"
+        onClick={() => setReceivedQty("")}
+        type="button"
+      >
+        Clear
+      </button>
     </div>
   );
 }

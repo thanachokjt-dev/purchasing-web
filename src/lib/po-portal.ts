@@ -787,6 +787,7 @@ export async function getPoPortalDetailData(poId: string) {
 
     return {
       source: "appsheet-fallback" as const,
+      catalogItems: [],
       order: {
         ...order,
         freightTotal: 0,
@@ -837,6 +838,19 @@ export async function getPoPortalDetailData(poId: string) {
   if (orderError || !orderRow) {
     return null;
   }
+
+  const supplierRows = await fetchAllRows<PoPortalSupplierRow>(
+    "po_suppliers",
+    "supplier_code,supplier_name,currency,payment_terms",
+    "supplier_code",
+  );
+  const supplierOptions = (supplierRows ?? []).map((supplier) => ({
+    supplierCode: supplier.supplier_code ?? "",
+    supplierName: supplier.supplier_name ?? supplier.supplier_code ?? "",
+    currency: supplier.currency ?? "",
+    paymentTerms: supplier.payment_terms ?? "",
+  }));
+  const catalogItems = await getPoCatalogItems(supplierOptions);
 
   const { data: itemRows, error: itemError } = await supabase
     .from("po_items")
@@ -941,6 +955,7 @@ export async function getPoPortalDetailData(poId: string) {
 
   return {
     source: "supabase" as const,
+    catalogItems,
     order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
     items,
     payments: (payments ?? []) as PoPaymentRow[],
