@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import {
   addPoItemAction,
   batchReceivePoItemsAction,
@@ -15,6 +15,21 @@ type SupplierOption = {
   supplierName: string;
   currency: string;
   paymentTerms: string;
+};
+
+type CatalogItemOption = {
+  sku: string;
+  productTitle: string;
+  variantTitle: string;
+  supplierCode: string;
+  supplierName: string;
+  currency: string;
+  shopifyPrice: number;
+  lastUnitPrice: number;
+  lastFreightUnitCost: number;
+  lastLandedUnitCost: number;
+  lastPoId: string;
+  searchText: string;
 };
 
 const initialState: PoActionState = { ok: false, message: "" };
@@ -51,13 +66,53 @@ const buttonClass =
   "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
 
 export function CreatePoForm({
+  catalogItems,
   suppliers,
   today,
 }: {
+  catalogItems: CatalogItemOption[];
   suppliers: SupplierOption[];
   today: string;
 }) {
   const [state, formAction, pending] = useActionState(createPoAction, initialState);
+  const [supplierCode, setSupplierCode] = useState("");
+  const [query, setQuery] = useState("");
+  const [sku, setSku] = useState("");
+  const [productTitle, setProductTitle] = useState("");
+  const [variantTitle, setVariantTitle] = useState("");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [freightUnitCost, setFreightUnitCost] = useState("");
+  const [currency, setCurrency] = useState("THB");
+  const selectedSupplier = suppliers.find(
+    (supplier) => supplier.supplierCode === supplierCode,
+  );
+  const selectedSupplierName = selectedSupplier?.supplierName.toLowerCase() ?? "";
+  const filteredCatalogItems = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return catalogItems
+      .filter((item) => {
+        const matchesSupplier =
+          !supplierCode ||
+          item.supplierCode === supplierCode ||
+          item.supplierName.toLowerCase() === selectedSupplierName;
+        const matchesQuery =
+          !normalizedQuery || item.searchText.includes(normalizedQuery);
+
+        return matchesSupplier && matchesQuery;
+      })
+      .slice(0, 10);
+  }, [catalogItems, query, selectedSupplierName, supplierCode]);
+
+  function selectCatalogItem(item: CatalogItemOption) {
+    setQuery(`${item.sku} - ${item.productTitle}`);
+    setSku(item.sku);
+    setProductTitle(item.productTitle);
+    setVariantTitle(item.variantTitle);
+    setUnitPrice(String(item.lastUnitPrice || item.shopifyPrice || ""));
+    setFreightUnitCost(item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "");
+    setCurrency(item.currency || selectedSupplier?.currency || "THB");
+  }
 
   return (
     <form action={formAction} className="grid gap-4">
@@ -72,7 +127,25 @@ export function CreatePoForm({
         </label>
         <label className={labelClass}>
           Supplier
-          <select className={inputClass} name="supplierCode" required>
+          <select
+            className={inputClass}
+            name="supplierCode"
+            onChange={(event) => {
+              const nextSupplier = suppliers.find(
+                (supplier) => supplier.supplierCode === event.target.value,
+              );
+              setSupplierCode(event.target.value);
+              setCurrency(nextSupplier?.currency || "THB");
+              setQuery("");
+              setSku("");
+              setProductTitle("");
+              setVariantTitle("");
+              setUnitPrice("");
+              setFreightUnitCost("");
+            }}
+            required
+            value={supplierCode}
+          >
             <option value="">Select supplier</option>
             {suppliers.map((supplier) => (
               <option key={supplier.supplierCode} value={supplier.supplierCode}>
@@ -87,14 +160,59 @@ export function CreatePoForm({
         </label>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_0.7fr_0.7fr_0.7fr]">
-        <label className={labelClass}>
-          SKU
-          <input className={inputClass} name="sku" required />
-        </label>
+      <div className="grid gap-3 lg:grid-cols-[1.2fr_1.1fr_0.55fr_0.65fr_0.65fr_0.55fr]">
+        <div className={`${labelClass} relative`}>
+          SKU / Product search
+          <input
+            className={inputClass}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSku(event.target.value.trim());
+            }}
+            placeholder={
+              supplierCode
+                ? "Search SKU or product name"
+                : "Select supplier first"
+            }
+            required
+            value={query}
+          />
+          <input name="sku" type="hidden" value={sku} />
+          <input name="variantTitle" type="hidden" value={variantTitle} />
+          {query && filteredCatalogItems.length > 0 ? (
+            <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
+              {filteredCatalogItems.map((item) => (
+                <button
+                  className="grid w-full gap-1 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
+                  key={`${item.sku}-${item.supplierName}`}
+                  onClick={() => selectCatalogItem(item)}
+                  type="button"
+                >
+                  <span className="font-mono text-xs font-semibold text-[#172026]">
+                    {item.sku}
+                  </span>
+                  <span className="font-medium normal-case tracking-normal text-[#172026]">
+                    {item.productTitle}
+                  </span>
+                  <span className="text-xs normal-case tracking-normal text-[#667380]">
+                    {item.supplierName}
+                    {item.lastPoId
+                      ? ` · last ${item.lastPoId} @ ${item.lastUnitPrice}`
+                      : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <label className={labelClass}>
           Product
-          <input className={inputClass} name="productTitle" />
+          <input
+            className={inputClass}
+            name="productTitle"
+            onChange={(event) => setProductTitle(event.target.value)}
+            value={productTitle}
+          />
         </label>
         <label className={labelClass}>
           Qty
@@ -102,12 +220,68 @@ export function CreatePoForm({
         </label>
         <label className={labelClass}>
           Price
-          <input className={inputClass} min="0" name="unitPrice" step="0.0001" type="number" />
+          <input
+            className={inputClass}
+            min="0"
+            name="unitPrice"
+            onChange={(event) => setUnitPrice(event.target.value)}
+            step="0.0001"
+            type="number"
+            value={unitPrice}
+          />
+        </label>
+        <label className={labelClass}>
+          Freight / unit
+          <input
+            className={inputClass}
+            min="0"
+            name="freightUnitCost"
+            onChange={(event) => setFreightUnitCost(event.target.value)}
+            placeholder="after landed cost"
+            step="0.0001"
+            type="number"
+            value={freightUnitCost}
+          />
         </label>
         <label className={labelClass}>
           Currency
-          <input className={inputClass} defaultValue="THB" name="currency" />
+          <input
+            className={inputClass}
+            name="currency"
+            onChange={(event) => setCurrency(event.target.value)}
+            value={currency}
+          />
         </label>
+      </div>
+
+      <div className="grid gap-3 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-sm md:grid-cols-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+            Last PO unit price
+          </p>
+          <p className="mt-1 font-mono text-[#172026]">
+            {filteredCatalogItems.find((item) => item.sku === sku)?.lastUnitPrice ||
+              "-"}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+            Last freight / unit
+          </p>
+          <p className="mt-1 font-mono text-[#172026]">
+            {filteredCatalogItems.find((item) => item.sku === sku)
+              ?.lastFreightUnitCost || "-"}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+            Last PO
+          </p>
+          <p className="mt-1 font-mono text-[#172026]">
+            {filteredCatalogItems.find((item) => item.sku === sku)?.lastPoId ||
+              "-"}
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
@@ -116,7 +290,7 @@ export function CreatePoForm({
           <input className={inputClass} name="remark" />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Creating..." : "Open PO"}
+          {pending ? "Creating..." : "Open Draft PO"}
         </button>
       </div>
       <ActionMessage state={state} />
@@ -130,11 +304,12 @@ export function AddPoItemForm({ poId }: { poId: string }) {
   return (
     <form action={formAction} className="mt-3 grid gap-2">
       <input name="poId" type="hidden" value={poId} />
-      <div className="grid gap-2 md:grid-cols-[1fr_1fr_0.65fr_0.65fr_auto]">
+      <div className="grid gap-2 md:grid-cols-[1fr_1fr_0.55fr_0.6fr_0.6fr_auto]">
         <input className={inputClass} name="sku" placeholder="SKU" required />
         <input className={inputClass} name="productTitle" placeholder="Product" />
         <input className={inputClass} min="0.0001" name="orderedQty" placeholder="Qty" required step="0.0001" type="number" />
         <input className={inputClass} min="0" name="unitPrice" placeholder="Price" step="0.0001" type="number" />
+        <input className={inputClass} min="0" name="freightUnitCost" placeholder="Freight/unit" step="0.0001" type="number" />
         <button className={buttonClass} disabled={pending} type="submit">
           Add line
         </button>

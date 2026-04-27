@@ -4,6 +4,7 @@ import {
   poPortalSuppliers,
   type PoPortalItem,
 } from "@/lib/po-portal-data";
+import { excelSupplierMap } from "@/lib/excel-supplier-map";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 const ACTIVE_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
@@ -52,11 +53,57 @@ type PoPortalItemRow = {
   legacy_received_qty: number | string | null;
   backorder_qty: number | string | null;
   unit_price: number | string | null;
+  freight_unit_cost?: number | string | null;
+  landed_unit_cost?: number | string | null;
   line_amount: number | string | null;
   currency: string | null;
   remark: string | null;
   full_name: string | null;
   line_status: string | null;
+};
+
+type PoCatalogVariantRow = {
+  sku: string | null;
+  variant_title: string | null;
+  option1_value: string | null;
+  option2_value: string | null;
+  option3_value: string | null;
+  price: number | string | null;
+  products:
+    | {
+        product_title: string | null;
+        vendor: string | null;
+        tags: string[] | null;
+      }
+    | {
+        product_title: string | null;
+        vendor: string | null;
+        tags: string[] | null;
+      }[]
+    | null;
+};
+
+type PoDecisionControlRow = {
+  sku: string | null;
+  product_name_override: string | null;
+  main_name_override: string | null;
+  supplier_override: string | null;
+  hide_from_purchasing: boolean | null;
+};
+
+type LastPoPriceRow = {
+  po_id: string | null;
+  sku: string | null;
+  unit_price: number | string | null;
+  freight_unit_cost?: number | string | null;
+  landed_unit_cost?: number | string | null;
+  currency: string | null;
+  created_at: string | null;
+};
+
+type ManualSupplierMappingRow = {
+  sku: string | null;
+  supplier: string | null;
 };
 
 type PoPortalReceiptTotalRow = {
@@ -110,6 +157,21 @@ type PoPortalSupplierOption = {
   supplierName: string;
   currency: string;
   paymentTerms: string;
+};
+
+export type PoCatalogItemOption = {
+  sku: string;
+  productTitle: string;
+  variantTitle: string;
+  supplierCode: string;
+  supplierName: string;
+  currency: string;
+  shopifyPrice: number;
+  lastUnitPrice: number;
+  lastFreightUnitCost: number;
+  lastLandedUnitCost: number;
+  lastPoId: string;
+  searchText: string;
 };
 
 type PortalItem = PoPortalItem & {
@@ -168,6 +230,14 @@ function numeric(value: number | string | null | undefined) {
   return 0;
 }
 
+function compactText(value: string | null | undefined) {
+  return value?.trim() || "";
+}
+
+function firstProduct(row: PoCatalogVariantRow) {
+  return Array.isArray(row.products) ? row.products[0] : row.products;
+}
+
 function activeIncomingQty(items: PoPortalItem[]) {
   return items
     .filter((item) => isActiveStatus(item.status))
@@ -209,6 +279,36 @@ function mapSupabaseItem(
     imageUrl: imageUrl ?? null,
     status: item.line_status ?? "unknown",
   };
+}
+
+function productTitleForCatalog(row: PoCatalogVariantRow, control?: PoDecisionControlRow) {
+  const product = firstProduct(row);
+  const productTitle =
+    compactText(control?.product_name_override) ||
+    compactText(product?.product_title) ||
+    compactText(row.sku);
+  const variantTitle = compactText(row.variant_title);
+
+  if (!variantTitle || variantTitle === "Default Title" || productTitle.includes(variantTitle)) {
+    return productTitle;
+  }
+
+  return `${productTitle} / ${variantTitle}`;
+}
+
+function supplierNameForCatalog(
+  row: PoCatalogVariantRow,
+  control: PoDecisionControlRow | undefined,
+  manualSupplierBySku: Map<string, string>,
+) {
+  const sku = row.sku?.trim() ?? "";
+  return (
+    compactText(control?.supplier_override) ||
+    manualSupplierBySku.get(sku) ||
+    excelSupplierMap.find((item) => item.sku === sku)?.supplierName ||
+    compactText(firstProduct(row)?.vendor) ||
+    "Unmapped"
+  );
 }
 
 function productImageUrl(row: ProductVariantImageRow) {
@@ -275,6 +375,7 @@ function summarizePoPortalData(
   orders: PortalOrder[],
   items: PortalItem[],
   source: "appsheet-fallback" | "supabase",
+  catalogItems: PoCatalogItemOption[] = [],
 ) {
   const itemByPoId = new Map<string, PortalItem[]>();
   for (const item of items) {
@@ -377,6 +478,7 @@ function summarizePoPortalData(
     },
     source,
     suppliers,
+    catalogItems,
     statusSummaries,
     activeOrders: activeOrders.slice(0, 20),
     workbenchOrders: activeOrders,
@@ -395,6 +497,7 @@ function getAppSheetPoPortalData() {
     poPortalOrders,
     poPortalItems,
     "appsheet-fallback",
+    [],
   );
 }
 
@@ -492,6 +595,14 @@ async function getSupabasePoPortalData() {
     return null;
   }
 
+  const supplierOptions = suppliers.map((supplier) => ({
+    supplierCode: supplier.supplier_code ?? "",
+    supplierName: supplier.supplier_name ?? supplier.supplier_code ?? "",
+    currency: supplier.currency ?? "",
+    paymentTerms: supplier.payment_terms ?? "",
+  }));
+  const catalogItems = await getPoCatalogItems(supplierOptions);
+
   const receiptTotalByItemId = new Map(
     receiptTotals
       .filter((row) => row.po_item_uuid)
@@ -515,16 +626,110 @@ async function getSupabasePoPortalData() {
     });
 
   return summarizePoPortalData(
-    suppliers.map((supplier) => ({
-      supplierCode: supplier.supplier_code ?? "",
-      supplierName: supplier.supplier_name ?? supplier.supplier_code ?? "",
-      currency: supplier.currency ?? "",
-      paymentTerms: supplier.payment_terms ?? "",
-    })),
+    supplierOptions,
     mappedOrders,
     mappedItems,
     "supabase",
+    catalogItems,
   );
+}
+
+async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    return [];
+  }
+
+  const [variantRows, manualSupplierRows, decisionControlRows, lastPriceRows] =
+    await Promise.all([
+      fetchAllRows<PoCatalogVariantRow>(
+        "product_variants",
+        "sku,variant_title,option1_value,option2_value,option3_value,price,products(product_title,vendor,tags)",
+        "sku",
+      ),
+      fetchAllRows<ManualSupplierMappingRow>(
+        "manual_supplier_mappings",
+        "sku,supplier",
+        "sku",
+      ),
+      fetchAllRows<PoDecisionControlRow>(
+        "purchasing_decision_controls",
+        "sku,product_name_override,main_name_override,supplier_override,hide_from_purchasing",
+        "sku",
+      ),
+      fetchAllRows<LastPoPriceRow>(
+        "po_items",
+        "po_id,sku,unit_price,freight_unit_cost,landed_unit_cost,currency,created_at",
+        "created_at",
+      ),
+    ]);
+
+  if (!variantRows) {
+    return [];
+  }
+
+  const supplierCodeByName = new Map(
+    suppliers.map((supplier) => [supplier.supplierName.toLowerCase(), supplier.supplierCode]),
+  );
+  const supplierCurrencyByName = new Map(
+    suppliers.map((supplier) => [supplier.supplierName.toLowerCase(), supplier.currency || "THB"]),
+  );
+  const manualSupplierBySku = new Map(
+    (manualSupplierRows ?? [])
+      .filter((row) => row.sku?.trim() && row.supplier?.trim())
+      .map((row) => [row.sku!.trim(), row.supplier!.trim()]),
+  );
+  const controlBySku = new Map(
+    (decisionControlRows ?? [])
+      .filter((row) => row.sku?.trim())
+      .map((row) => [row.sku!.trim(), row]),
+  );
+  const lastPriceBySku = new Map<string, LastPoPriceRow>();
+
+  for (const row of [...(lastPriceRows ?? [])].reverse()) {
+    const sku = row.sku?.trim();
+    if (sku && !lastPriceBySku.has(sku)) {
+      lastPriceBySku.set(sku, row);
+    }
+  }
+
+  return variantRows.flatMap((row) => {
+    const sku = row.sku?.trim();
+    if (!sku) {
+      return [];
+    }
+
+    const control = controlBySku.get(sku);
+    if (control?.hide_from_purchasing) {
+      return [];
+    }
+
+    const supplierName = supplierNameForCatalog(row, control, manualSupplierBySku);
+    const supplierKey = supplierName.toLowerCase();
+    const productTitle = productTitleForCatalog(row, control);
+    const lastPrice = lastPriceBySku.get(sku);
+    const variantTitle = compactText(row.variant_title);
+    const tags = firstProduct(row)?.tags ?? [];
+
+    return [
+      {
+        sku,
+        productTitle,
+        variantTitle,
+        supplierCode: supplierCodeByName.get(supplierKey) ?? "",
+        supplierName,
+        currency: lastPrice?.currency ?? supplierCurrencyByName.get(supplierKey) ?? "THB",
+        shopifyPrice: numeric(row.price),
+        lastUnitPrice: numeric(lastPrice?.unit_price),
+        lastFreightUnitCost: numeric(lastPrice?.freight_unit_cost),
+        lastLandedUnitCost: numeric(lastPrice?.landed_unit_cost),
+        lastPoId: lastPrice?.po_id ?? "",
+        searchText: [sku, productTitle, variantTitle, supplierName, tags.join(" ")]
+          .join(" ")
+          .toLowerCase(),
+      },
+    ] satisfies PoCatalogItemOption[];
+  });
 }
 
 export async function getPoPortalData() {

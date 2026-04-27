@@ -182,7 +182,11 @@ export default async function PoPortalPage({
           </div>
           <div className="p-5">
             {data.source === "supabase" ? (
-              <CreatePoForm suppliers={data.suppliers} today={today} />
+              <CreatePoForm
+                catalogItems={data.catalogItems}
+                suppliers={data.suppliers}
+                today={today}
+              />
             ) : (
               <p className="rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-medium text-[#946200]">
                 Connect Supabase and import PO data before opening live POs.

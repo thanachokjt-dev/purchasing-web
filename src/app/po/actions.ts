@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type PoActionState = {
   ok: boolean;
   message: string;
+  poId?: string;
 };
 
 const ACTIVE_RECEIVING_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
@@ -109,6 +111,8 @@ export async function createPoAction(
   _previousState: PoActionState,
   formData: FormData,
 ): Promise<PoActionState> {
+  let createdPoId: string | null = null;
+
   try {
     const supabase = actionClient();
     const supplierCode = requiredText(formData, "supplierCode");
@@ -118,8 +122,11 @@ export async function createPoAction(
     const sku = requiredText(formData, "sku");
     const orderedQty = positiveNumber(formData, "orderedQty");
     const unitPrice = nonNegativeNumber(formData, "unitPrice");
+    const freightUnitCost = nonNegativeNumber(formData, "freightUnitCost");
     const currency = optionalText(formData, "currency") ?? supplier.currency ?? "THB";
+    const landedUnitCost = unitPrice + freightUnitCost;
     const lineAmount = orderedQty * unitPrice;
+    const landedAmount = orderedQty * landedUnitCost;
 
     const { error: orderError } = await supabase.from("po_orders").insert({
       po_id: poId,
@@ -131,8 +138,8 @@ export async function createPoAction(
       supplier_code: supplier.supplier_code,
       supplier_name_snapshot: supplier.supplier_name,
       currency,
-      po_amount_foreign: lineAmount,
-      po_amount_thb: currency === "THB" ? lineAmount : 0,
+      po_amount_foreign: landedAmount,
+      po_amount_thb: currency === "THB" ? landedAmount : 0,
       payment_terms_snapshot: supplier.payment_terms,
       source: "web_app",
       updated_at: new Date().toISOString(),
@@ -151,6 +158,8 @@ export async function createPoAction(
       ordered_qty: orderedQty,
       unit_price: unitPrice,
       line_amount: lineAmount,
+      freight_unit_cost: freightUnitCost,
+      landed_unit_cost: landedUnitCost,
       currency,
       remark: optionalText(formData, "remark"),
       full_name: optionalText(formData, "productTitle") ?? sku,
@@ -170,11 +179,17 @@ export async function createPoAction(
       note: "PO created in web app",
     });
 
+    createdPoId = poId;
     refreshPoViews(poId);
-    return success(`Created ${poId}`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Create PO failed");
   }
+
+  if (createdPoId) {
+    redirect(`/po/${encodeURIComponent(createdPoId)}`);
+  }
+
+  return success("Created PO");
 }
 
 export async function addPoItemAction(
@@ -187,6 +202,7 @@ export async function addPoItemAction(
     const sku = requiredText(formData, "sku");
     const orderedQty = positiveNumber(formData, "orderedQty");
     const unitPrice = nonNegativeNumber(formData, "unitPrice");
+    const freightUnitCost = nonNegativeNumber(formData, "freightUnitCost");
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
@@ -213,7 +229,9 @@ export async function addPoItemAction(
 
     const lineNo = String((count ?? 0) + 1);
     const currency = optionalText(formData, "currency") ?? order.currency ?? "THB";
+    const landedUnitCost = unitPrice + freightUnitCost;
     const lineAmount = orderedQty * unitPrice;
+    const landedAmount = orderedQty * landedUnitCost;
 
     const { error: itemError } = await supabase.from("po_items").insert({
       po_item_id: `${poId}-${lineNo}`,
@@ -225,6 +243,8 @@ export async function addPoItemAction(
       ordered_qty: orderedQty,
       unit_price: unitPrice,
       line_amount: lineAmount,
+      freight_unit_cost: freightUnitCost,
+      landed_unit_cost: landedUnitCost,
       currency,
       remark: optionalText(formData, "remark"),
       full_name: optionalText(formData, "productTitle") ?? sku,
@@ -241,8 +261,8 @@ export async function addPoItemAction(
     await supabase
       .from("po_orders")
       .update({
-        po_amount_foreign: currentForeignAmount + lineAmount,
-        po_amount_thb: currency === "THB" ? currentThbAmount + lineAmount : currentThbAmount,
+        po_amount_foreign: currentForeignAmount + landedAmount,
+        po_amount_thb: currency === "THB" ? currentThbAmount + landedAmount : currentThbAmount,
         updated_at: new Date().toISOString(),
       })
       .eq("po_id", poId);
