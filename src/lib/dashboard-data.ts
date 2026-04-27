@@ -71,6 +71,22 @@ type ManualSupplierMappingRow = {
   supplier: string | null;
 };
 
+type DecisionControlForDashboardRow = {
+  sku: string | null;
+  hide_from_purchasing: boolean | null;
+};
+
+type ProductVariantValueRow = {
+  sku: string | null;
+  price: number | string | null;
+};
+
+type IncomingBySkuRow = {
+  sku: string | null;
+  active_incoming_qty: number | string | null;
+  pending_approval_qty: number | string | null;
+};
+
 type SupplierMapResult = {
   map: Map<string, SupplierMapValue>;
   manualMappingReady: boolean;
@@ -630,6 +646,159 @@ function incomingForSku(sku: string) {
   );
 }
 
+async function fetchPurchasingHiddenSkuSet(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("purchasing_decision_controls")
+    .select("sku,hide_from_purchasing")
+    .eq("hide_from_purchasing", true);
+
+  if (error) {
+    return {
+      hiddenSkus: new Set<string>(),
+      controlsReady: false,
+    };
+  }
+
+  return {
+    hiddenSkus: new Set(
+      ((data ?? []) as DecisionControlForDashboardRow[])
+        .map((row) => row.sku?.trim())
+        .filter((sku): sku is string => Boolean(sku)),
+    ),
+    controlsReady: true,
+  };
+}
+
+async function fetchVariantValueRows(supabase: SupabaseClient) {
+  return fetchAllProductRows<ProductVariantValueRow>(
+    supabase,
+    "sku,price",
+  );
+}
+
+async function fetchAllProductRows<T>(supabase: SupabaseClient, select: string) {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("product_variants")
+      .select(select)
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Product variant query failed: ${error.message}`);
+    }
+
+    rows.push(...((data ?? []) as T[]));
+
+    if (!data || data.length < PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return rows;
+}
+
+async function fetchIncomingRows(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("po_incoming_by_sku")
+    .select("sku,active_incoming_qty,pending_approval_qty");
+
+  if (error) {
+    return [] as IncomingBySkuRow[];
+  }
+
+  return (data ?? []) as IncomingBySkuRow[];
+}
+
+function buildLiveSupplierSummaries(
+  variantRows: ProductVariantValueRow[],
+  inventoryRows: InventoryRow[],
+  poIncomingRows: IncomingBySkuRow[],
+  supplierMap: Map<string, SupplierMapValue>,
+) {
+  const stockBySku = new Map<string, number>();
+  const incomingBySku = new Map<string, number>();
+  const priceBySku = new Map<string, number>();
+
+  for (const row of inventoryRows) {
+    const sku = row.sku?.trim();
+    if (sku) {
+      stockBySku.set(sku, (stockBySku.get(sku) ?? 0) + numeric(row.on_hand));
+    }
+  }
+
+  for (const row of poIncomingRows) {
+    const sku = row.sku?.trim();
+    if (sku) {
+      incomingBySku.set(sku, numeric(row.active_incoming_qty));
+    }
+  }
+
+  for (const row of variantRows) {
+    const sku = row.sku?.trim();
+    if (sku) {
+      priceBySku.set(sku, numeric(row.price));
+    }
+  }
+
+  const bySupplier = new Map<
+    string,
+    {
+      supplier: string;
+      variants: number;
+      suggestedQty: number;
+      onHandQty: number;
+      activeIncomingQty: number;
+      inventoryValue: number;
+      incomingValue: number;
+      currency: string;
+      leadTimeNote: string;
+    }
+  >();
+
+  for (const row of variantRows) {
+    const sku = row.sku?.trim();
+    if (!sku) {
+      continue;
+    }
+
+    const supplier = supplierMap.get(sku)?.supplier || "Unmapped";
+    const existing =
+      bySupplier.get(supplier) ??
+      {
+        supplier,
+        variants: 0,
+        suggestedQty: 0,
+        onHandQty: 0,
+        activeIncomingQty: 0,
+        inventoryValue: 0,
+        incomingValue: 0,
+        currency: supplierTerms(supplier, supplierMap.get(sku)?.supplierCode ?? null).currency ?? "THB",
+        leadTimeNote: "Live Shopify on-hand + open PO coming",
+      };
+    const onHand = stockBySku.get(sku) ?? 0;
+    const incoming = incomingBySku.get(sku) ?? 0;
+    const price = priceBySku.get(sku) ?? 0;
+
+    existing.variants += 1;
+    existing.onHandQty += onHand;
+    existing.activeIncomingQty += incoming;
+    existing.inventoryValue += onHand * price;
+    existing.incomingValue += incoming * price;
+    bySupplier.set(supplier, existing);
+  }
+
+  return Array.from(bySupplier.values())
+    .sort(
+      (a, b) =>
+        b.inventoryValue - a.inventoryValue ||
+        b.onHandQty - a.onHandQty ||
+        a.supplier.localeCompare(b.supplier),
+    )
+    .slice(0, 12);
+}
+
 function buildBuyerReviewLine(
   line: Omit<
     BuyerReviewLine,
@@ -919,13 +1088,16 @@ export async function getDashboardData() {
     ? addMinutes(latestDailySalesSync.finished_at, 5)
     : null;
 
-  const [latestDemandResult, historyDemandRows, inventoryRows] =
+  const [latestDemandResult, historyDemandRows, inventoryRows, variantValueRows, poIncomingRows, controls] =
     await Promise.all([
       syncedFrom && syncedUntil
         ? salesQuery.gte("synced_at", syncedFrom).lte("synced_at", syncedUntil)
         : salesQuery,
       fetchDemandHistoryRows(supabase),
       fetchLatestInventoryRows(supabase, latestInventoryDate?.snapshot_date),
+      fetchVariantValueRows(supabase),
+      fetchIncomingRows(supabase),
+      fetchPurchasingHiddenSkuSet(supabase),
     ]);
   const comebackRows = await fetchSalesRowsForSkusSince(
     supabase,
@@ -947,14 +1119,23 @@ export async function getDashboardData() {
   const demandInsights = summarizeDemandInsights(
     historyDemandRows,
     inventoryRows,
+  ).filter((line) => !controls.hiddenSkus.has(line.sku));
+  const comebackSignals = summarizeComebackSignals(comebackRows, inventoryRows).filter(
+    (line) => !controls.hiddenSkus.has(line.sku),
   );
-  const comebackSignals = summarizeComebackSignals(comebackRows, inventoryRows);
   const supplierMap = await fetchSupplierMapForSkus(
     supabase,
     [
+      ...variantValueRows.map((line) => line.sku ?? ""),
       ...demandInsights.map((line) => line.sku),
       ...comebackSignals.map((line) => line.sku),
     ],
+  );
+  const liveSupplierSummaries = buildLiveSupplierSummaries(
+    variantValueRows,
+    inventoryRows,
+    poIncomingRows,
+    supplierMap.map,
   );
   const buyerReviewQueue = buildBuyerReviewQueue(
     demandInsights,
@@ -1016,7 +1197,7 @@ export async function getDashboardData() {
             : metric,
     ),
     syncSources: liveSyncSources,
-    supplierSummaries,
+    supplierSummaries: liveSupplierSummaries,
     demandLines,
     demandInsights,
     comebackSignals,

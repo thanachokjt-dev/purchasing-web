@@ -17,6 +17,10 @@ export type SupplierSummary = {
   suggestedQty: number;
   currency?: string;
   leadTimeNote?: string;
+  onHandQty?: number;
+  activeIncomingQty?: number;
+  inventoryValue?: number;
+  incomingValue?: number;
 };
 
 export type ReorderLine = {
