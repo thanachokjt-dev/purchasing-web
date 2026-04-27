@@ -15,6 +15,7 @@ Phase 1 web app for Shopify sync and read-only purchasing dashboard.
 - Excel-derived SKU supplier mapping from `PURCHASE DECISION SUPPORT.xlsx`
 - AppSheet `Po-Portals.xlsx` incoming PO reconciliation and supplier terms for net suggestions
 - Read-only PO Portal preview at `/po` using `Po-Portals.xlsx`
+- Phase 2 Supabase PO Portal schema for suppliers, PO headers, PO lines, receipts, and status history
 
 The app intentionally falls back to Excel baseline data when Supabase/Shopify credentials are not configured.
 
@@ -52,12 +53,13 @@ CRON_SECRET=change-me-before-deploying-vercel-cron
 
 ## Supabase Migration
 
-Apply both Phase 1 migrations before running sync:
+Apply migrations before running sync and PO Portal work:
 
 ```text
 supabase/migrations/001_phase1_shopify_read_model.sql
 supabase/migrations/002_phase1_sales_lines.sql
 supabase/migrations/003_manual_supplier_mappings.sql
+supabase/migrations/004_phase2_po_portal.sql
 ```
 
 They create:
@@ -69,6 +71,19 @@ They create:
 - `sales_lines`
 - `manual_supplier_mappings`
 - `sync_runs`
+- `po_suppliers`
+- `po_orders`
+- `po_items`
+- `po_receipts`
+- `po_status_events`
+
+Phase 2 also creates views for PO receiving and incoming-stock calculations:
+
+- `po_item_receipt_totals`
+- `po_incoming_by_sku`
+
+This is the foundation for replacing AppSheet incoming numbers with a real PO
+workflow in the web app.
 
 ## Sync Endpoint
 
