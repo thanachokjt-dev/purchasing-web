@@ -275,3 +275,15 @@ export function BatchReceiveLineFields({
     </div>
   );
 }
+
+export function PrintPageButton() {
+  return (
+    <button
+      className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
+      onClick={() => window.print()}
+      type="button"
+    >
+      Print Quote
+    </button>
+  );
+}

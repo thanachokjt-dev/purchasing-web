@@ -6,6 +6,7 @@ import {
   AddPoItemForm,
   BatchReceiveFormBar,
   BatchReceiveLineFields,
+  PrintPageButton,
   StatusActionForm,
 } from "@/app/po/po-forms";
 import { formatNumber } from "@/lib/baseline-data";
@@ -47,6 +48,79 @@ const statusClass = (status: string) => {
   return "bg-[#f3f5f7] text-[#52606d]";
 };
 
+type DetailItem = NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["items"][number];
+const CORE_SIZE_COLUMNS = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
+
+function itemSize(item: DetailItem) {
+  const source = [item.variantTitle, item.fullName, item.productTitle].join(" ");
+  const match = source.match(/(?:^|[\s/-])(3XL|2XL|XL|XS|L|M|S)(?:$|[\s/-])/i);
+  return match?.[1].toUpperCase() ?? "OS";
+}
+
+function matrixProductName(item: DetailItem) {
+  return item.productTitle
+    .replace(/\s*[/|-]\s*(3XL|2XL|XL|XS|L|M|S)\s*$/i, "")
+    .trim();
+}
+
+function quoteMatrixRows(items: DetailItem[]) {
+  const rows = new Map<
+    string,
+    {
+      imageUrl: string | null;
+      items: Map<
+        string,
+        {
+          onHand: number;
+          orderedQty: number;
+          price: number;
+        }
+      >;
+      productName: string;
+      totalQty: number;
+    }
+  >();
+
+  for (const item of items) {
+    const productName = matrixProductName(item);
+    const key = productName.toLowerCase();
+    const row =
+      rows.get(key) ??
+      {
+        imageUrl: item.imageUrl ?? null,
+        items: new Map(),
+        productName,
+        totalQty: 0,
+      };
+    const size = itemSize(item);
+    const current = row.items.get(size) ?? { onHand: 0, orderedQty: 0, price: 0 };
+
+    current.orderedQty += item.qty;
+    current.onHand += item.onHand ?? 0;
+    current.price = current.price || item.unitPrice;
+    row.totalQty += item.qty;
+    if (!row.imageUrl && item.imageUrl) {
+      row.imageUrl = item.imageUrl;
+    }
+
+    row.items.set(size, current);
+    rows.set(key, row);
+  }
+
+  const extraSizes = Array.from(
+    new Set(
+      Array.from(rows.values()).flatMap((row) =>
+        Array.from(row.items.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
+      ),
+    ),
+  ).sort();
+
+  return {
+    rows: Array.from(rows.values()).sort((a, b) => a.productName.localeCompare(b.productName)),
+    sizes: [...CORE_SIZE_COLUMNS, ...extraSizes],
+  };
+}
+
 export default async function PoDetailPage({
   params,
 }: {
@@ -61,6 +135,7 @@ export default async function PoDetailPage({
 
   const order = data.order;
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const matrix = quoteMatrixRows(data.items);
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -98,6 +173,7 @@ export default async function PoDetailPage({
             >
               Dashboard
             </Link>
+            <PrintPageButton />
           </div>
         </div>
       </header>
@@ -192,6 +268,80 @@ export default async function PoDetailPage({
                 </p>
               )}
             </div>
+          </div>
+        </section>
+
+        <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+          <div className="border-b border-[#e2e7ed] p-5">
+            <h2 className="text-lg font-semibold">Supplier Quote Matrix</h2>
+            <p className="mt-1 text-sm text-[#667380]">
+              Horizontal working view grouped by product. Raw PO lines remain below.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse text-left text-sm">
+              <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+                <tr>
+                  <th className="border-b border-[#dfe4ea] px-4 py-3 font-semibold">Product</th>
+                  {matrix.sizes.map((size) => (
+                    <th
+                      className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold"
+                      key={size}
+                    >
+                      {size}
+                    </th>
+                  ))}
+                  <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {matrix.rows.map((row) => (
+                  <tr className="border-b border-[#edf1f5]" key={row.productName}>
+                    <td className="min-w-[360px] px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                          {row.imageUrl ? (
+                            <Image
+                              alt={row.productName}
+                              className="h-full w-full object-cover"
+                              height={64}
+                              loading="lazy"
+                              src={row.imageUrl}
+                              width={64}
+                            />
+                          ) : (
+                            <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-semibold">{row.productName}</p>
+                          <p className="mt-1 text-xs font-semibold italic text-[#172026]">on-hand</p>
+                        </div>
+                      </div>
+                    </td>
+                    {matrix.sizes.map((size) => {
+                      const cell = row.items.get(size);
+                      return (
+                        <td
+                          className="min-w-20 border-l border-[#dfe4ea] bg-[#e8f4fb] px-3 py-3 text-right"
+                          key={size}
+                        >
+                          <p className="font-mono font-semibold">{cell ? formatNumber(cell.orderedQty) : ""}</p>
+                          <p className="mt-1 font-mono text-sm font-semibold italic text-[#172026]">
+                            {cell ? formatNumber(cell.onHand) : ""}
+                          </p>
+                        </td>
+                      );
+                    })}
+                    <td className="border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
+                      {formatNumber(row.totalQty)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
 
