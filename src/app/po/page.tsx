@@ -40,8 +40,8 @@ const statusClass = (status: string) => {
   return "bg-[#f3f5f7] text-[#52606d]";
 };
 
-export default function PoPortalPage() {
-  const data = getPoPortalData();
+export default async function PoPortalPage() {
+  const data = await getPoPortalData();
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -54,6 +54,11 @@ export default function PoPortalPage() {
             <h1 className="mt-2 text-3xl font-semibold tracking-normal">
               PO Portal
             </h1>
+            <span className="mt-3 inline-flex rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
+              {data.source === "supabase"
+                ? "Live Supabase PO workflow"
+                : "AppSheet PO export fallback"}
+            </span>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#52606d]">
               Read-only view of PO lifecycle data from `Po-Portals.xlsx`, including
               supplier terms, receiving progress, active incoming quantities, and

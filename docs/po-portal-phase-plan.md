@@ -28,21 +28,22 @@ ordered_qty - cancelled_qty - legacy_received_qty - sum(po_receipts.received_qty
 
 ## Phase 2A - Data Foundation
 
-Status: started
+Status: in progress
 
 Goal: make Supabase the source for PO Portal data while keeping Excel/AppSheet as fallback.
 
 Deliverables:
 
-- Apply `004_phase2_po_portal.sql`.
-- Import current `Po-Portals.xlsx` snapshot with `npm run import:po-portal`.
-- Add a Supabase PO query layer for:
+- Done: apply `004_phase2_po_portal.sql`.
+- Done: import current `Po-Portals.xlsx` snapshot with `npm run import:po-portal`.
+- Done: add a Supabase PO query layer for:
   - metrics
   - active PO workbench
   - open receiving lines
-  - supplier list
+- Done: update `/po` to read Supabase first and fall back to generated AppSheet data if tables are empty or env is missing.
+- Remaining: add a Supabase PO query layer for:
+  - supplier list for create/edit forms
   - SKU/product lookup
-- Update `/po` to read Supabase first and fall back to generated AppSheet data if tables are empty or env is missing.
 
 Done when:
 
