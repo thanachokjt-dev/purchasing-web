@@ -46,9 +46,47 @@ const statusClass = (status: string) => {
   return "bg-[#f3f5f7] text-[#52606d]";
 };
 
-export default async function PoPortalPage() {
+export default async function PoPortalPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; status?: string }>;
+}) {
   const data = await getPoPortalData();
+  const { q = "", status = "all" } = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
+  const query = q.trim().toLowerCase();
+  const filteredWorkbenchOrders = data.workbenchOrders.filter((order) => {
+    const matchesStatus =
+      status === "all" ||
+      order.workStatus.toLowerCase() === status ||
+      order.statuses.some((itemStatus) => itemStatus.toLowerCase() === status);
+    const matchesQuery =
+      !query ||
+      [
+        order.poId,
+        order.poTitle,
+        order.supplierName,
+        order.supplierCode,
+        order.owner,
+        order.requester,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+
+    return matchesStatus && matchesQuery;
+  });
+  const statusOptions = Array.from(
+    new Set(
+      data.workbenchOrders.flatMap((order) => [
+        order.workStatus,
+        ...order.statuses,
+      ]),
+    ),
+  )
+    .filter(Boolean)
+    .map((value) => value.toLowerCase())
+    .sort();
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -195,6 +233,34 @@ export default async function PoPortalPage() {
               <p className="mt-1 text-sm text-[#667380]">
                 POs with active incoming or waiting approval quantities.
               </p>
+              <form className="mt-4 grid gap-3 md:grid-cols-[1fr_220px_auto]" action="/po">
+                <input
+                  className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
+                  defaultValue={q}
+                  name="q"
+                  placeholder="Search PO, supplier, owner"
+                />
+                <select
+                  className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
+                  defaultValue={status}
+                  name="status"
+                >
+                  <option value="all">All statuses</option>
+                  {statusOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+                <button className="h-10 rounded-md bg-[#172026] px-4 text-sm font-semibold text-white" type="submit">
+                  Filter
+                </button>
+              </form>
+              {(q || status !== "all") ? (
+                <Link className="mt-3 inline-flex text-sm font-semibold text-[#255f85]" href="/po">
+                  Clear filters
+                </Link>
+              ) : null}
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
@@ -211,7 +277,7 @@ export default async function PoPortalPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f5]">
-                  {data.activeOrders.map((order) => (
+                  {filteredWorkbenchOrders.map((order) => (
                     <tr key={order.poId}>
                       <td className="whitespace-nowrap px-4 py-3">
                         <p className="font-mono text-xs font-semibold text-[#172026]">
@@ -270,6 +336,13 @@ export default async function PoPortalPage() {
                       </td>
                     </tr>
                   ))}
+                  {filteredWorkbenchOrders.length === 0 ? (
+                    <tr>
+                      <td className="px-4 py-6 text-sm text-[#667380]" colSpan={8}>
+                        No purchase orders match this search.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>

@@ -313,6 +313,10 @@ export async function changePoStatusAction(
       }
 
       const timestampFields: Record<string, string | null> = {};
+      if (!["closed", "cancelled"].includes(toStatus)) {
+        timestampFields.closed_at = null;
+        timestampFields.cancelled_at = null;
+      }
       if (toStatus === "waiting_for_approve") {
         timestampFields.submitted_at = new Date().toISOString();
       }

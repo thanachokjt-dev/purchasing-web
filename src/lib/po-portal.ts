@@ -297,8 +297,7 @@ function summarizePoPortalData(
       (a, b) =>
         b.activeIncomingQty - a.activeIncomingQty ||
         b.pendingApprovalQty - a.pendingApprovalQty,
-    )
-    .slice(0, 20);
+    );
 
   const openItems = items
     .filter(
@@ -346,7 +345,8 @@ function summarizePoPortalData(
     source,
     suppliers,
     statusSummaries,
-    activeOrders,
+    activeOrders: activeOrders.slice(0, 20),
+    workbenchOrders: activeOrders,
     openItems,
   };
 }
