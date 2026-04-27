@@ -265,6 +265,7 @@ export default async function PurchasingDecisionPage({
                         <input
                           className="size-4 accent-[#172026]"
                           data-decision-select="sku"
+                          defaultChecked={false}
                           form="decision-create-po-form"
                           name="selectedSku"
                           type="checkbox"

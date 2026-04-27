@@ -336,7 +336,7 @@ function supplierNameForCatalog(
 
 function productImageUrl(row: ProductVariantImageRow) {
   const product = Array.isArray(row.products) ? row.products[0] : row.products;
-  return row.variant_image_url ?? product?.product_image_url ?? null;
+  return row.variant_image_url?.trim() || product?.product_image_url?.trim() || null;
 }
 
 function latestOnHandBySku(rows: InventorySnapshotRow[]) {

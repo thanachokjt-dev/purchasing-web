@@ -25,6 +25,9 @@ export type ShopifyVariantNode = {
   title: string;
   price: string | null;
   compareAtPrice: string | null;
+  image: {
+    url: string;
+  } | null;
   inventoryItem: {
     id: string;
     tracked: boolean;
@@ -174,6 +177,9 @@ export const PRODUCT_VARIANTS_QUERY = `
         title
         price
         compareAtPrice
+        image {
+          url
+        }
         inventoryItem {
           id
           tracked
