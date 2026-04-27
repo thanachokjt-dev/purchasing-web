@@ -429,3 +429,147 @@ export async function receivePoItemAction(
     return initialError(error instanceof Error ? error.message : "Receive item failed");
   }
 }
+
+export async function batchReceivePoItemsAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const itemUuids = formData.getAll("batchItemUuid").map((value) => String(value).trim());
+    const qtyValues = formData.getAll("batchReceivedQty").map((value) => String(value).trim());
+
+    if (itemUuids.length !== qtyValues.length) {
+      throw new Error("Receive lines are mismatched. Reload the page and try again.");
+    }
+
+    const requestedReceipts = itemUuids.flatMap((itemUuid, index) => {
+      const qtyText = qtyValues[index] ?? "";
+      if (!qtyText || Number(qtyText) === 0) {
+        return [];
+      }
+
+      const receivedQty = Number(qtyText);
+      if (!itemUuid) {
+        throw new Error(`Line ${index + 1} is missing an item id`);
+      }
+      if (!Number.isFinite(receivedQty) || receivedQty < 0) {
+        throw new Error(`Line ${index + 1} receive quantity must be 0 or greater`);
+      }
+
+      return [{ itemUuid, receivedQty }];
+    });
+
+    if (requestedReceipts.length === 0) {
+      throw new Error("Enter at least one receive quantity");
+    }
+
+    const uniqueItemUuids = Array.from(
+      new Set(requestedReceipts.map((receipt) => receipt.itemUuid)),
+    );
+
+    const { data: order, error: orderError } = await supabase
+      .from("po_orders")
+      .select("closed_at,cancelled_at")
+      .eq("po_id", poId)
+      .maybeSingle();
+    if (orderError) {
+      throw new Error(orderError.message);
+    }
+    if (!order) {
+      throw new Error(`PO ${poId} does not exist`);
+    }
+    if (order.closed_at || order.cancelled_at) {
+      throw new Error("Closed or cancelled POs cannot be received");
+    }
+
+    const { data: items, error: itemError } = await supabase
+      .from("po_items")
+      .select("id,po_id,line_no,sku,line_status")
+      .in("id", uniqueItemUuids);
+    if (itemError) {
+      throw new Error(itemError.message);
+    }
+
+    const itemById = new Map(
+      ((items ?? []) as Array<{
+        id: string;
+        po_id: string | null;
+        line_no: string | null;
+        sku: string | null;
+        line_status: string | null;
+      }>).map((item) => [item.id, item]),
+    );
+
+    const { data: totals, error: totalError } = await supabase
+      .from("po_item_receipt_totals")
+      .select("po_item_uuid,outstanding_qty")
+      .in("po_item_uuid", uniqueItemUuids);
+    if (totalError) {
+      throw new Error(totalError.message);
+    }
+
+    const outstandingByItemId = new Map(
+      ((totals ?? []) as Array<{
+        po_item_uuid: string | null;
+        outstanding_qty: number | string | null;
+      }>)
+        .filter((row) => row.po_item_uuid)
+        .map((row) => [row.po_item_uuid, Number(row.outstanding_qty ?? 0)]),
+    );
+
+    for (const receipt of requestedReceipts) {
+      const item = itemById.get(receipt.itemUuid);
+      if (!item) {
+        throw new Error(`PO item ${receipt.itemUuid} does not exist`);
+      }
+      if (item.po_id !== poId) {
+        throw new Error(`Line ${item.line_no ?? item.sku ?? receipt.itemUuid} does not belong to ${poId}`);
+      }
+
+      const status = normalizeStatus(item.line_status ?? "");
+      if (BLOCKED_RECEIVING_STATUSES.has(status)) {
+        throw new Error(`Line ${item.line_no ?? item.sku} is closed or cancelled`);
+      }
+      if (!ACTIVE_RECEIVING_STATUSES.has(status)) {
+        throw new Error(
+          `Line ${item.line_no ?? item.sku} must be inpro, delivery, or final_payment before receiving`,
+        );
+      }
+
+      const outstandingQty = outstandingByItemId.get(receipt.itemUuid) ?? 0;
+      if (!Number.isFinite(outstandingQty) || outstandingQty <= 0) {
+        throw new Error(`Line ${item.line_no ?? item.sku} has no outstanding quantity left`);
+      }
+      if (receipt.receivedQty > outstandingQty) {
+        throw new Error(
+          `Line ${item.line_no ?? item.sku} receive quantity exceeds outstanding quantity (${outstandingQty})`,
+        );
+      }
+    }
+
+    const receivedBy = optionalText(formData, "receivedBy");
+    const note = optionalText(formData, "note");
+    const { error: receiptError } = await supabase.from("po_receipts").insert(
+      requestedReceipts.map((receipt) => ({
+        po_item_id: receipt.itemUuid,
+        received_qty: receipt.receivedQty,
+        received_by: receivedBy,
+        note,
+        source: "web_app",
+      })),
+    );
+    if (receiptError) {
+      throw new Error(receiptError.message);
+    }
+
+    const totalQty = requestedReceipts.reduce((sum, receipt) => sum + receipt.receivedQty, 0);
+    refreshPoViews(poId);
+    return success(
+      `Received ${totalQty} units across ${requestedReceipts.length} lines`,
+    );
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Batch receive failed");
+  }
+}

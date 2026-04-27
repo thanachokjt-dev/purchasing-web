@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import {
   addPoItemAction,
+  batchReceivePoItemsAction,
   changePoStatusAction,
   createPoAction,
   receivePoItemAction,
@@ -209,5 +210,68 @@ export function ReceiveItemForm({
       </div>
       <ActionMessage state={state} />
     </form>
+  );
+}
+
+export function BatchReceiveFormBar({
+  formId,
+  poId,
+}: {
+  formId: string;
+  poId: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    batchReceivePoItemsAction,
+    initialState,
+  );
+
+  return (
+    <div className="grid gap-3 border-b border-[#e2e7ed] p-5">
+      <form action={formAction} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]" id={formId}>
+        <input name="poId" type="hidden" value={poId} />
+        <label className={labelClass}>
+          Received By
+          <input className={inputClass} name="receivedBy" placeholder="Receiver name" />
+        </label>
+        <label className={labelClass}>
+          Receipt Note
+          <input className={inputClass} name="note" placeholder="Optional note for this batch" />
+        </label>
+        <button className={buttonClass} disabled={pending} type="submit">
+          {pending ? "Saving..." : "Save Receipts"}
+        </button>
+      </form>
+      <ActionMessage state={state} />
+    </div>
+  );
+}
+
+export function BatchReceiveLineFields({
+  formId,
+  itemUuid,
+  outstandingQty,
+}: {
+  formId: string;
+  itemUuid?: string;
+  outstandingQty: number;
+}) {
+  if (!itemUuid) {
+    return <span className="text-xs text-[#8a96a3]">Import-only line</span>;
+  }
+
+  return (
+    <div className="flex min-w-[160px] items-center gap-2">
+      <input form={formId} name="batchItemUuid" type="hidden" value={itemUuid} />
+      <input
+        className={inputClass}
+        defaultValue={outstandingQty > 0 ? outstandingQty : ""}
+        form={formId}
+        max={outstandingQty}
+        min="0"
+        name="batchReceivedQty"
+        step="0.0001"
+        type="number"
+      />
+    </div>
   );
 }

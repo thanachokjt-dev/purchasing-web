@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
-import { AddPoItemForm, ReceiveItemForm, StatusActionForm } from "@/app/po/po-forms";
+import {
+  AddPoItemForm,
+  BatchReceiveFormBar,
+  BatchReceiveLineFields,
+  StatusActionForm,
+} from "@/app/po/po-forms";
 import { formatNumber } from "@/lib/baseline-data";
 import { getPoPortalDetailData } from "@/lib/po-portal";
 
@@ -54,6 +59,7 @@ export default async function PoDetailPage({
   }
 
   const order = data.order;
+  const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -193,6 +199,9 @@ export default async function PoDetailPage({
             <h2 className="text-lg font-semibold">Lines & Receiving</h2>
             <p className="mt-1 text-sm text-[#667380]">Receive against active lines and keep status changes line-level.</p>
           </div>
+          {data.source === "supabase" ? (
+            <BatchReceiveFormBar formId={batchReceiveFormId} poId={order.poId} />
+          ) : null}
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
@@ -205,7 +214,7 @@ export default async function PoDetailPage({
                   <th className="px-4 py-3 text-right font-semibold">Received</th>
                   <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
                   <th className="px-4 py-3 font-semibold">Update</th>
-                  <th className="px-4 py-3 font-semibold">Receive</th>
+                  <th className="px-4 py-3 font-semibold">Receive Qty</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#edf1f5]">
@@ -236,7 +245,11 @@ export default async function PoDetailPage({
                     </td>
                     <td className="px-4 py-3 align-top">
                       {data.source === "supabase" ? (
-                        <ReceiveItemForm itemUuid={item.itemUuid} outstandingQty={item.outstandingQty} />
+                        <BatchReceiveLineFields
+                          formId={batchReceiveFormId}
+                          itemUuid={item.itemUuid}
+                          outstandingQty={item.outstandingQty}
+                        />
                       ) : (
                         <span className="text-xs text-[#8a96a3]">Fallback only</span>
                       )}
