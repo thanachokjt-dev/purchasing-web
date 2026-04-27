@@ -154,6 +154,9 @@ The importer upserts suppliers, PO headers, and PO lines. Existing AppSheet
 received quantities are stored as `legacy_received_qty`; new web-app receiving
 events will be stored in `po_receipts`.
 
+PO Portal implementation planning is tracked in
+[`docs/po-portal-phase-plan.md`](docs/po-portal-phase-plan.md).
+
 ## Development Workflow
 
 Use this sequence for each change set:
