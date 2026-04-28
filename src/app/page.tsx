@@ -75,6 +75,13 @@ export default async function Home() {
             </Link>
             <Link
               className="inline-flex h-10 items-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 font-medium text-[#364252]"
+              href="/purchasing-setup"
+            >
+              <Settings2 size={16} />
+              Setup
+            </Link>
+            <Link
+              className="inline-flex h-10 items-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 font-medium text-[#364252]"
               href="/po"
             >
               <ClipboardList size={16} />

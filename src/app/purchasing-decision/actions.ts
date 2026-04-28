@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDecisionTags } from "@/lib/purchasing-decision-data";
+import { getPurchasingSetupData } from "@/lib/purchasing-setup";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 function textAt(values: FormDataEntryValue[], index: number) {
@@ -22,11 +23,42 @@ function nullableNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function plannedNumber(
+  value: string,
+  source: string,
+  supplierDefault: string,
+) {
+  const parsed = nullableNumber(value);
+  const defaultValue = nullableNumber(supplierDefault);
+  if (
+    parsed !== null &&
+    defaultValue !== null &&
+    parsed === defaultValue &&
+    (source === "supplier" || source === "default")
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
+
 export async function savePurchasingDecisionAction(formData: FormData) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;
   }
+
+  const setupData = await getPurchasingSetupData();
+  const allowedSuppliers = new Set(
+    setupData.suppliers
+      .filter((supplier) => supplier.isActive)
+      .map((supplier) => supplier.supplierName.toLowerCase()),
+  );
+  const allowedTags = new Set(
+    setupData.tags
+      .filter((tag) => tag.isActive)
+      .map((tag) => tag.tag.toLowerCase()),
+  );
 
   const skus = formData.getAll("sku");
   const hiddenSkus = new Set(
@@ -38,7 +70,11 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const tags = formData.getAll("tags");
   const demandIndexes = formData.getAll("demandIndexHm");
   const safetyDays = formData.getAll("safetyDays");
+  const safetySources = formData.getAll("safetySource");
+  const supplierSafetyDays = formData.getAll("supplierSafetyDays");
   const leadTimeDays = formData.getAll("leadTimeDays");
+  const leadTimeSources = formData.getAll("leadTimeSource");
+  const supplierLeadTimeDays = formData.getAll("supplierLeadTimeDays");
   const orderCycleDays = formData.getAll("orderCycleDays");
   const manualRopUnits = formData.getAll("manualRopUnits");
   const targetCoverageDays = formData.getAll("targetCoverageDays");
@@ -52,16 +88,32 @@ export async function savePurchasingDecisionAction(formData: FormData) {
       return [];
     }
 
+    const supplierValue = textAt(suppliers, index);
+    const nextSupplier = allowedSuppliers.has(supplierValue.toLowerCase())
+      ? supplierValue
+      : "";
+    const nextTags = parseDecisionTags(textAt(tags, index)).filter((tag) =>
+      allowedTags.has(tag.toLowerCase()),
+    );
+
     return [
       {
         sku,
         product_name_override: nullableText(textAt(productNames, index)),
         main_name_override: nullableText(textAt(mainNames, index)),
-        supplier_override: nullableText(textAt(suppliers, index)),
-        tags_override: parseDecisionTags(textAt(tags, index)),
+        supplier_override: nullableText(nextSupplier),
+        tags_override: nextTags,
         demand_index_override: nullableNumber(textAt(demandIndexes, index)),
-        safety_days: nullableNumber(textAt(safetyDays, index)),
-        lead_time_days: nullableNumber(textAt(leadTimeDays, index)),
+        safety_days: plannedNumber(
+          textAt(safetyDays, index),
+          textAt(safetySources, index),
+          textAt(supplierSafetyDays, index),
+        ),
+        lead_time_days: plannedNumber(
+          textAt(leadTimeDays, index),
+          textAt(leadTimeSources, index),
+          textAt(supplierLeadTimeDays, index),
+        ),
         order_cycle_days: nullableNumber(textAt(orderCycleDays, index)),
         manual_rop_units: nullableNumber(textAt(manualRopUnits, index)),
         target_coverage_days: nullableNumber(textAt(targetCoverageDays, index)),

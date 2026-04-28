@@ -87,16 +87,24 @@ export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   demandIndexHm,
   leadTimeDays,
+  leadTimeSource,
   orderCycleDays,
   reorderPointUnits,
   safetyDays,
+  safetySource,
+  supplierLeadTimeDays,
+  supplierSafetyDays,
 }: {
   calculatedDemandIndexHm: number;
   demandIndexHm: number;
   leadTimeDays: number;
+  leadTimeSource: "sku" | "supplier" | "default";
   orderCycleDays: number;
   reorderPointUnits: number;
   safetyDays: number;
+  safetySource: "sku" | "supplier" | "default";
+  supplierLeadTimeDays: number | null;
+  supplierSafetyDays: number | null;
 }) {
   const [demand, setDemand] = useState(formatDecimal(demandIndexHm, 4));
   const [safety, setSafety] = useState(String(safetyDays));
@@ -125,6 +133,12 @@ export function DecisionPlanningCells({
         </p>
       </td>
       <td className="px-3 py-3 align-top">
+        <input name="safetySource" type="hidden" value={safetySource} />
+        <input
+          name="supplierSafetyDays"
+          type="hidden"
+          value={supplierSafetyDays ?? ""}
+        />
         <input
           className={compactInputClass}
           min="0"
@@ -133,8 +147,19 @@ export function DecisionPlanningCells({
           type="number"
           value={safety}
         />
+        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+          {safetySource === "supplier" && supplierSafetyDays !== null
+            ? `sup ${supplierSafetyDays}`
+            : safetySource}
+        </p>
       </td>
       <td className="px-3 py-3 align-top">
+        <input name="leadTimeSource" type="hidden" value={leadTimeSource} />
+        <input
+          name="supplierLeadTimeDays"
+          type="hidden"
+          value={supplierLeadTimeDays ?? ""}
+        />
         <input
           className={compactInputClass}
           min="0"
@@ -143,6 +168,11 @@ export function DecisionPlanningCells({
           type="number"
           value={lead}
         />
+        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+          {leadTimeSource === "supplier" && supplierLeadTimeDays !== null
+            ? `sup ${supplierLeadTimeDays}`
+            : leadTimeSource}
+        </p>
       </td>
       <td className="px-3 py-3 align-top">
         <input
@@ -161,5 +191,50 @@ export function DecisionPlanningCells({
         </p>
       </td>
     </>
+  );
+}
+
+export function TagMultiSelect({
+  initialTags,
+  options,
+}: {
+  initialTags: string[];
+  options: string[];
+}) {
+  const [selected, setSelected] = useState(
+    initialTags.filter((tag) => options.includes(tag)),
+  );
+
+  function toggle(tag: string) {
+    setSelected((current) =>
+      current.includes(tag)
+        ? current.filter((item) => item !== tag)
+        : [...current, tag],
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      <input name="tags" type="hidden" value={selected.join(", ")} />
+      <div className="flex max-h-24 min-w-[260px] flex-wrap gap-1 overflow-auto rounded-md border border-[#cfd6df] bg-white p-2">
+        {options.map((tag) => {
+          const active = selected.includes(tag);
+          return (
+            <button
+              className={`rounded-md border px-2 py-1 text-xs font-semibold ${
+                active
+                  ? "border-[#172026] bg-[#172026] text-white"
+                  : "border-[#dfe4ea] bg-[#fbfcfd] text-[#52606d]"
+              }`}
+              key={tag}
+              onClick={() => toggle(tag)}
+              type="button"
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

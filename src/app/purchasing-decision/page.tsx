@@ -10,9 +10,9 @@ import {
   DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
+  TagMultiSelect,
 } from "@/app/purchasing-decision/decision-form";
 import {
-  decisionTagsText,
   getPurchasingDecisionData,
 } from "@/lib/purchasing-decision-data";
 import { formatNumber } from "@/lib/baseline-data";
@@ -202,6 +202,17 @@ export default async function PurchasingDecisionPage({
                 </button>
               </form>
             </div>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <Link
+                className="inline-flex h-9 items-center rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 font-semibold text-[#364252]"
+                href="/purchasing-setup"
+              >
+                Setup Suppliers & Tags
+              </Link>
+              <span className="inline-flex h-9 items-center rounded-md bg-[#eef4f8] px-3 text-xs font-semibold text-[#255f85]">
+                Tags and suppliers are controlled by Purchasing Setup
+              </span>
+            </div>
           </div>
 
           <form action={createPoFromDecisionAction} id="decision-create-po-form" />
@@ -337,18 +348,21 @@ export default async function PurchasingDecisionPage({
                         />
                       </td>
                       <td className="min-w-[230px] px-3 py-3 align-top">
-                        <input
-                          className={inputClass}
-                          defaultValue={decisionTagsText(line.tags)}
-                          name="tags"
-                        />
+                        <TagMultiSelect initialTags={line.tags} options={data.tagOptions} />
                       </td>
                       <td className="min-w-[220px] px-3 py-3 align-top">
-                        <input
+                        <select
                           className={inputClass}
                           defaultValue={line.supplier}
                           name="supplier"
-                        />
+                        >
+                          <option value="">Select supplier</option>
+                          {data.supplierOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.onHandUnits)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
@@ -356,9 +370,13 @@ export default async function PurchasingDecisionPage({
                         calculatedDemandIndexHm={line.calculatedDemandIndexHm}
                         demandIndexHm={line.demandIndexHm}
                         leadTimeDays={line.leadTimeDays}
+                        leadTimeSource={line.leadTimeSource}
                         orderCycleDays={line.orderCycleDays}
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
+                        safetySource={line.safetySource}
+                        supplierLeadTimeDays={line.supplierLeadTimeDays}
+                        supplierSafetyDays={line.supplierSafetyDays}
                       />
                       <td className={readOnlyMetricClass}>
                         {formatNumber(line.ropUnitsRaw)}

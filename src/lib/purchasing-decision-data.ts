@@ -1,4 +1,5 @@
 import { excelSupplierMap } from "@/lib/excel-supplier-map";
+import { getPurchasingSetupData } from "@/lib/purchasing-setup";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -86,14 +87,18 @@ export type PurchasingDecisionLine = {
   mainName: string;
   tags: string[];
   supplier: string;
-  supplierSource: "decision" | "manual" | "excel" | "shopify_vendor" | "pending";
+  supplierSource: "decision" | "manual" | "excel" | "shopify_vendor" | "setup" | "pending";
   onHandUnits: number;
   totalSale: number;
   demandIndexHm: number;
   calculatedDemandIndexHm: number;
   demandIndexOverride: number | null;
   safetyDays: number;
+  supplierSafetyDays: number | null;
+  safetySource: "sku" | "supplier" | "default";
   leadTimeDays: number;
+  supplierLeadTimeDays: number | null;
+  leadTimeSource: "sku" | "supplier" | "default";
   orderCycleDays: number;
   planningDays: number;
   reorderPointUnits: number;
@@ -122,6 +127,7 @@ export type PurchasingDecisionData = {
   mode: "supabase" | "baseline";
   controlsReady: boolean;
   supplierOptions: string[];
+  tagOptions: string[];
   lines: PurchasingDecisionLine[];
   totals: {
     skuCount: number;
@@ -425,6 +431,7 @@ function supplierForLine(
   row: VariantRow,
   control: DecisionControlRow | undefined,
   manualSupplierBySku: Map<string, string>,
+  setupSupplierNames: Set<string>,
 ) {
   const override = compactText(control?.supplier_override);
   if (override) {
@@ -433,7 +440,12 @@ function supplierForLine(
 
   const manual = manualSupplierBySku.get(sku);
   if (manual) {
-    return { supplier: manual, source: "manual" as const };
+    return {
+      supplier: manual,
+      source: setupSupplierNames.has(manual.toLowerCase())
+        ? ("setup" as const)
+        : ("manual" as const),
+    };
   }
 
   const excel = excelSupplierBySku.get(sku);
@@ -443,7 +455,12 @@ function supplierForLine(
 
   const vendor = compactText(firstProduct(row)?.vendor);
   if (vendor) {
-    return { supplier: vendor, source: "shopify_vendor" as const };
+    return {
+      supplier: vendor,
+      source: setupSupplierNames.has(vendor.toLowerCase())
+        ? ("setup" as const)
+        : ("shopify_vendor" as const),
+    };
   }
 
   return { supplier: "Unmapped", source: "pending" as const };
@@ -480,6 +497,7 @@ export async function getPurchasingDecisionData({
       mode: "baseline",
       controlsReady: false,
       supplierOptions: [],
+      tagOptions: [],
       lines: [],
       totals: {
         skuCount: 0,
@@ -499,6 +517,7 @@ export async function getPurchasingDecisionData({
     incomingResult,
     manualSupplierResult,
     controlResult,
+    setupData,
   ] = await Promise.all([
     fetchAll<VariantRow>("Product variants", (from, to) =>
       supabase
@@ -516,6 +535,7 @@ export async function getPurchasingDecisionData({
       .select("sku,active_incoming_qty,pending_approval_qty"),
     supabase.from("manual_supplier_mappings").select("sku,supplier"),
     fetchControls(supabase),
+    getPurchasingSetupData(),
   ]);
 
   const stockBySku = buildStockBySku(inventoryRows);
@@ -528,6 +548,17 @@ export async function getPurchasingDecisionData({
   const query = q.trim().toLowerCase();
   const selectedSupplier = supplier.trim().toLowerCase();
   const selectedVisibility = visibility.trim().toLowerCase();
+  const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
+  const activeSupplierNames = new Set(
+    activeSuppliers.map((item) => item.supplierName.toLowerCase()),
+  );
+  const supplierDefaultByName = new Map(
+    activeSuppliers.map((item) => [item.supplierName.toLowerCase(), item]),
+  );
+  const activeTagOptions = setupData.tags
+    .filter((tag) => tag.isActive)
+    .map((tag) => tag.tag);
+  const activeTagSet = new Set(activeTagOptions.map((tag) => tag.toLowerCase()));
 
   const allLines = variants.flatMap((row) => {
     const sku = row.sku?.trim();
@@ -537,17 +568,25 @@ export async function getPurchasingDecisionData({
 
     const product = firstProduct(row);
     const control = controlResult.controls.get(sku);
-    const lineSupplier = supplierForLine(sku, row, control, manualSupplierBySku);
+    const lineSupplier = supplierForLine(
+      sku,
+      row,
+      control,
+      manualSupplierBySku,
+      activeSupplierNames,
+    );
+    const supplierDefault = supplierDefaultByName.get(lineSupplier.supplier.toLowerCase());
     const shopifyProductName = productName(row);
     const resolvedProductName =
       compactText(control?.product_name_override) || shopifyProductName;
     const resolvedMainName =
       compactText(control?.main_name_override) || mainNameFromRow(row);
     const shopifyTags = product?.tags ?? [];
-    const tags =
+    const sourceTags =
       control?.tags_override && control.tags_override.length
         ? control.tags_override
         : shopifyTags;
+    const tags = sourceTags.filter((tag) => activeTagSet.has(tag.toLowerCase()));
     const sales = salesBySku.get(sku) ?? {
       total: 0,
       sold7: 0,
@@ -561,9 +600,20 @@ export async function getPurchasingDecisionData({
     ]);
     const demandIndexOverride = optionalNumber(control?.demand_index_override);
     const demandIndexHm = demandIndexOverride ?? calculatedDemandIndexHm;
-    const safetyDays = optionalInteger(control?.safety_days) ?? DEFAULT_SAFETY_DAYS;
-    const leadTimeDays =
-      optionalInteger(control?.lead_time_days) ?? DEFAULT_LEAD_TIME_DAYS;
+    const skuSafetyDays = optionalInteger(control?.safety_days);
+    const supplierSafetyDays =
+      supplierDefault && supplierDefault.safetyDays > 0
+        ? supplierDefault.safetyDays
+        : null;
+    const safetyDays = skuSafetyDays ?? supplierSafetyDays ?? DEFAULT_SAFETY_DAYS;
+    const safetySource = skuSafetyDays !== null ? "sku" : supplierSafetyDays !== null ? "supplier" : "default";
+    const skuLeadTimeDays = optionalInteger(control?.lead_time_days);
+    const supplierLeadTimeDays =
+      supplierDefault && supplierDefault.leadTimeDays > 0
+        ? supplierDefault.leadTimeDays
+        : null;
+    const leadTimeDays = skuLeadTimeDays ?? supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
+    const leadTimeSource = skuLeadTimeDays !== null ? "sku" : supplierLeadTimeDays !== null ? "supplier" : "default";
     const orderCycleDays =
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
@@ -597,7 +647,11 @@ export async function getPurchasingDecisionData({
         calculatedDemandIndexHm,
         demandIndexOverride,
         safetyDays,
+        supplierSafetyDays,
+        safetySource,
         leadTimeDays,
+        supplierLeadTimeDays,
+        leadTimeSource,
         orderCycleDays,
         planningDays,
         reorderPointUnits,
@@ -624,7 +678,12 @@ export async function getPurchasingDecisionData({
     ];
   });
 
-  const supplierOptions = Array.from(new Set(allLines.map((line) => line.supplier)))
+  const supplierOptions = Array.from(
+    new Set([
+      ...activeSuppliers.map((item) => item.supplierName),
+      ...allLines.map((line) => line.supplier).filter((item) => activeSupplierNames.has(item.toLowerCase())),
+    ]),
+  )
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
 
@@ -667,6 +726,7 @@ export async function getPurchasingDecisionData({
     mode: "supabase",
     controlsReady: controlResult.controlsReady,
     supplierOptions,
+    tagOptions: activeTagOptions.sort((a, b) => a.localeCompare(b)),
     lines: visibleLines,
     totals: {
       skuCount: allLines.length,
