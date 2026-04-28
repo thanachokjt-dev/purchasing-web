@@ -16,6 +16,7 @@ const WORKBENCH_ORDER_STATUSES = new Set([
   "inpro",
   "delivery",
   "final_payment",
+  "closed",
 ]);
 const PAGE_SIZE = 1000;
 

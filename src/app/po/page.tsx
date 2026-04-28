@@ -11,7 +11,7 @@ import { formatNumber } from "@/lib/baseline-data";
 import {
   AddPoItemForm,
   CreatePoForm,
-  ReceiveItemForm,
+  DeleteDraftPoForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
 
@@ -248,7 +248,7 @@ export default async function PoPortalPage({
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Active PO Workbench</h2>
               <p className="mt-1 text-sm text-[#667380]">
-                POs with active incoming or waiting approval quantities.
+                POs with active incoming, waiting approval, draft, and closed statuses.
               </p>
               <form className="mt-4 grid gap-3 md:grid-cols-[1fr_220px_auto]" action="/po">
                 <input
@@ -346,6 +346,10 @@ export default async function PoPortalPage({
                               poId={order.poId}
                             />
                             <AddPoItemForm poId={order.poId} />
+                            <DeleteDraftPoForm
+                              isDraft={order.workStatus.toLowerCase() === "draft"}
+                              poId={order.poId}
+                            />
                           </>
                         ) : (
                           <span className="text-xs text-[#8a96a3]">Fallback only</span>
@@ -366,90 +370,6 @@ export default async function PoPortalPage({
           </div>
         </section>
 
-        <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
-          <div className="border-b border-[#e2e7ed] p-5">
-            <h2 className="text-lg font-semibold">Open Receiving Lines</h2>
-            <p className="mt-1 text-sm text-[#667380]">
-              Largest outstanding item lines that are not closed.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">PO</th>
-                  <th className="px-4 py-3 font-semibold">SKU</th>
-                  <th className="px-4 py-3 font-semibold">Product</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 text-right font-semibold">Qty</th>
-                  <th className="px-4 py-3 text-right font-semibold">Received</th>
-                  <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
-                  <th className="px-4 py-3 font-semibold">Line Status</th>
-                  <th className="px-4 py-3 font-semibold">Receive</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#edf1f5]">
-                {data.openItems.map((item) => (
-                  <tr key={item.poItemId || `${item.poId}-${item.sku}-${item.lineNo}`}>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                      <Link className="underline-offset-2 hover:underline" href={`/po/${encodeURIComponent(item.poId)}`}>
-                        {item.poId}
-                      </Link>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">
-                      {item.sku}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium">{item.productTitle}</p>
-                      <p className="mt-1 text-xs text-[#6b7785]">
-                        {item.variantTitle || item.fullName}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(
-                          item.status,
-                        )}`}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {formatNumber(item.qty)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {formatNumber(item.receivedQty)}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold text-[#1f6b3d]">
-                      {formatNumber(item.outstandingQty)}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {data.source === "supabase" ? (
-                        <StatusActionForm
-                          currentStatus={item.status}
-                          itemUuid={item.itemUuid}
-                          poId={item.poId}
-                        />
-                      ) : (
-                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {data.source === "supabase" ? (
-                        <ReceiveItemForm
-                          itemUuid={item.itemUuid}
-                          outstandingQty={item.outstandingQty}
-                        />
-                      ) : (
-                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
       </div>
     </main>
   );

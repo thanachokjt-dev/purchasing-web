@@ -9,6 +9,7 @@ import {
   batchReceivePoItemsAction,
   changePoStatusAction,
   createPoAction,
+  deleteDraftPoAction,
   receivePoItemAction,
   updatePoDraftLinesAction,
   type PoActionState,
@@ -829,6 +830,45 @@ export function StatusActionForm({
           Save
         </button>
       </div>
+      <ActionMessage state={state} />
+    </form>
+  );
+}
+
+export function DeleteDraftPoForm({
+  isDraft,
+  poId,
+}: {
+  isDraft: boolean;
+  poId: string;
+}) {
+  const [state, formAction, pending] = useActionState(deleteDraftPoAction, initialState);
+
+  if (!isDraft) {
+    return null;
+  }
+
+  return (
+    <form
+      action={formAction}
+      className="mt-2 grid gap-2"
+      onSubmit={(event) => {
+        const confirmed = window.confirm(
+          `Delete draft PO ${poId}? This removes the draft header and lines.`,
+        );
+        if (!confirmed) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <input name="poId" type="hidden" value={poId} />
+      <button
+        className="inline-flex h-9 items-center justify-center rounded-md border border-[#efcaca] bg-[#fff7f7] px-3 text-xs font-semibold text-[#9f2a2a] disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={pending}
+        type="submit"
+      >
+        {pending ? "Deleting..." : "Delete Draft"}
+      </button>
       <ActionMessage state={state} />
     </form>
   );

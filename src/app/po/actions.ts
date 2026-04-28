@@ -445,6 +445,87 @@ export async function changePoStatusAction(
   }
 }
 
+export async function deleteDraftPoAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+
+    const { data: order, error: orderError } = await supabase
+      .from("po_orders")
+      .select("po_id,work_status,closed_at,cancelled_at")
+      .eq("po_id", poId)
+      .maybeSingle();
+
+    if (orderError) {
+      throw new Error(orderError.message);
+    }
+    if (!order) {
+      throw new Error(`PO ${poId} does not exist`);
+    }
+
+    const status = normalizeStatus(order.work_status ?? "");
+    if (status !== "draft" || order.closed_at || order.cancelled_at) {
+      throw new Error("Only draft POs can be deleted");
+    }
+
+    const { data: itemRows, error: itemError } = await supabase
+      .from("po_items")
+      .select("id")
+      .eq("po_id", poId);
+
+    if (itemError) {
+      throw new Error(itemError.message);
+    }
+
+    const itemIds = ((itemRows ?? []) as Array<{ id: string }>).map((item) => item.id);
+    const receiptQuery =
+      itemIds.length > 0
+        ? supabase
+            .from("po_receipts")
+            .select("id", { count: "exact", head: true })
+            .in("po_item_id", itemIds)
+        : Promise.resolve({ count: 0, error: null });
+    const [
+      { count: receiptCount, error: receiptError },
+      { count: paymentCount, error: paymentError },
+    ] = await Promise.all([
+      receiptQuery,
+      supabase
+        .from("po_payments")
+        .select("id", { count: "exact", head: true })
+        .eq("po_id", poId),
+    ]);
+
+    if (receiptError) {
+      throw new Error(receiptError.message);
+    }
+    if (paymentError) {
+      throw new Error(paymentError.message);
+    }
+    if ((receiptCount ?? 0) > 0 || (paymentCount ?? 0) > 0) {
+      throw new Error("POs with receipts or payments cannot be deleted");
+    }
+
+    const { error: deleteError } = await supabase
+      .from("po_orders")
+      .delete()
+      .eq("po_id", poId)
+      .eq("work_status", "draft");
+
+    if (deleteError) {
+      throw new Error(deleteError.message);
+    }
+
+    refreshPoViews(poId);
+    return success(`Deleted draft PO ${poId}`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Delete draft PO failed");
+  }
+}
+
 export async function receivePoItemAction(
   _previousState: PoActionState,
   formData: FormData,

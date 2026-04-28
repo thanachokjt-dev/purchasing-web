@@ -160,6 +160,14 @@ export default async function PoDetailPage({
     (sum, payment) => sum + Number(payment.amount ?? 0),
     0,
   );
+  const receiptsByItemId = new Map<string, typeof data.receipts>();
+  for (const receipt of data.receipts) {
+    const itemId = receipt.po_item_id;
+    if (!itemId) {
+      continue;
+    }
+    receiptsByItemId.set(itemId, [...(receiptsByItemId.get(itemId) ?? []), receipt]);
+  }
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
@@ -453,10 +461,16 @@ export default async function PoDetailPage({
                   <th className="px-4 py-3 text-right font-semibold">Received</th>
                   <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
                   <th className="px-4 py-3 font-semibold">Receive Qty</th>
+                  <th className="px-4 py-3 font-semibold">Receipt Rounds</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#edf1f5]">
-                {data.items.map((item) => (
+                {data.items.map((item) => {
+                  const lineReceipts = item.itemUuid
+                    ? receiptsByItemId.get(item.itemUuid) ?? []
+                    : [];
+
+                  return (
                   <tr key={item.poItemId || item.itemUuid || `${item.poId}-${item.lineNo}`}>
                     <td className="px-4 py-3 font-mono text-xs">{item.lineNo || "-"}</td>
                     <td className="px-4 py-3">
@@ -516,8 +530,35 @@ export default async function PoDetailPage({
                         <span className="text-xs text-[#8a96a3]">Fallback only</span>
                       )}
                     </td>
+                    <td className="min-w-[240px] px-4 py-3 align-top">
+                      {lineReceipts.length > 0 ? (
+                        <div className="grid gap-2">
+                          {lineReceipts.map((receipt, index) => (
+                            <div
+                              className="rounded-md border border-[#e2e7ed] bg-[#fbfcfd] px-3 py-2 text-xs"
+                              key={receipt.id}
+                            >
+                              <p className="font-mono font-semibold text-[#172026]">
+                                Round {lineReceipts.length - index}:{" "}
+                                {formatNumber(Number(receipt.received_qty ?? 0))} units
+                              </p>
+                              <p className="mt-1 text-[#667380]">
+                                {formatDateTime(receipt.received_at)} /{" "}
+                                {receipt.received_by || "No receiver"}
+                              </p>
+                              {receipt.note ? (
+                                <p className="mt-1 text-[#52606d]">{receipt.note}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-[#8a96a3]">No receipts yet</span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
