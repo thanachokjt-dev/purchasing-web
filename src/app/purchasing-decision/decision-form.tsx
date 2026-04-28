@@ -93,6 +93,7 @@ export function SelectionButtons() {
 
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
+  comingQty,
   demandIndexHm,
   leadTimeDays,
   leadTimeSource,
@@ -100,10 +101,12 @@ export function DecisionPlanningCells({
   reorderPointUnits,
   safetyDays,
   safetySource,
+  sku,
   supplierLeadTimeDays,
   supplierSafetyDays,
 }: {
   calculatedDemandIndexHm: number;
+  comingQty: number;
   demandIndexHm: number;
   leadTimeDays: number;
   leadTimeSource: "sku" | "supplier" | "default";
@@ -111,6 +114,7 @@ export function DecisionPlanningCells({
   reorderPointUnits: number;
   safetyDays: number;
   safetySource: "sku" | "supplier" | "default";
+  sku: string;
   supplierLeadTimeDays: number | null;
   supplierSafetyDays: number | null;
 }) {
@@ -122,6 +126,26 @@ export function DecisionPlanningCells({
     const nextValue = Math.ceil(numberOrZero(demand) * (numberOrZero(safety) + numberOrZero(lead)));
     return Number.isFinite(nextValue) ? Math.max(0, nextValue) : reorderPointUnits;
   }, [demand, lead, reorderPointUnits, safety]);
+  const liveRawQty = useMemo(() => {
+    const nextValue = Math.ceil(
+      numberOrZero(demand) *
+        (numberOrZero(safety) + numberOrZero(lead) + numberOrZero(cycle)),
+    );
+    return Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0;
+  }, [cycle, demand, lead, safety]);
+  const netRawQty = Math.max(0, liveRawQty - comingQty);
+  const netRoundedQty = roundUpToTen(netRawQty);
+  const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">("rounded");
+  const [manualOrderQty, setManualOrderQty] = useState<string | null>(null);
+  const computedOrderQty = String(
+    selectedMode === "raw" ? netRawQty : netRoundedQty,
+  );
+  const orderQty = manualOrderQty ?? computedOrderQty;
+
+  function chooseMode(mode: "raw" | "rounded") {
+    setSelectedMode(mode);
+    setManualOrderQty(null);
+  }
 
   return (
     <>
@@ -202,6 +226,65 @@ export function DecisionPlanningCells({
           (Safety + Lead) x HM
         </p>
       </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        <p>{formatNumber(netRawQty)}</p>
+        {comingQty > 0 ? (
+          <p className="mt-1 text-[10px] text-[#946200]">
+            {formatNumber(liveRawQty)} - coming {formatNumber(comingQty)}
+          </p>
+        ) : null}
+      </td>
+      <td className="px-3 py-3 align-top text-right">
+        <input
+          className={compactInputClass}
+          min="0"
+          name="manualRopUnits"
+          onChange={(event) => setManualOrderQty(event.target.value)}
+          placeholder={String(netRoundedQty)}
+          type="number"
+          value={orderQty}
+        />
+      </td>
+      <td className="px-3 py-3 align-top">
+        <input
+          form="decision-create-po-form"
+          name="poRawQty"
+          type="hidden"
+          value={netRawQty}
+        />
+        <input
+          form="decision-create-po-form"
+          name="poRoundedQty"
+          type="hidden"
+          value={orderQty}
+        />
+        <div className="grid gap-1 text-xs text-[#52606d]">
+          <label className="flex items-center gap-2">
+            <input
+              checked={selectedMode === "raw"}
+              form="decision-create-po-form"
+              name={`qtyChoice:${sku}`}
+              onClick={() => chooseMode("raw")}
+              onChange={() => chooseMode("raw")}
+              type="radio"
+              value="raw"
+            />
+            Raw
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              checked={selectedMode === "rounded"}
+              form="decision-create-po-form"
+              name={`qtyChoice:${sku}`}
+              onClick={() => chooseMode("rounded")}
+              onChange={() => chooseMode("rounded")}
+              type="radio"
+              value="rounded"
+            />
+            Round 10
+          </label>
+        </div>
+      </td>
     </>
   );
 }
@@ -236,89 +319,5 @@ export function TagDropdownSelect({
         ))}
       </select>
     </div>
-  );
-}
-
-export function DecisionOrderQtyCells({
-  comingQty,
-  rawQty,
-  sku,
-}: {
-  comingQty: number;
-  rawQty: number;
-  sku: string;
-}) {
-  const netRawQty = Math.max(0, rawQty - comingQty);
-  const netRoundedQty = roundUpToTen(netRawQty);
-  const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">("rounded");
-  const [qty, setQty] = useState(String(netRoundedQty));
-
-  function chooseMode(mode: "raw" | "rounded") {
-    setSelectedMode(mode);
-    setQty(String(mode === "raw" ? netRawQty : netRoundedQty));
-  }
-
-  return (
-    <>
-      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
-        <p>{formatNumber(netRawQty)}</p>
-        {comingQty > 0 ? (
-          <p className="mt-1 text-[10px] text-[#946200]">
-            {formatNumber(rawQty)} - coming {formatNumber(comingQty)}
-          </p>
-        ) : null}
-      </td>
-      <td className="px-3 py-3 align-top text-right">
-        <input
-          className={compactInputClass}
-          min="0"
-          name="manualRopUnits"
-          onChange={(event) => setQty(event.target.value)}
-          placeholder={String(netRoundedQty)}
-          type="number"
-          value={qty}
-        />
-      </td>
-      <td className="px-3 py-3 align-top">
-        <input
-          form="decision-create-po-form"
-          name="poRawQty"
-          type="hidden"
-          value={netRawQty}
-        />
-        <input
-          form="decision-create-po-form"
-          name="poRoundedQty"
-          type="hidden"
-          value={qty}
-        />
-        <div className="grid gap-1 text-xs text-[#52606d]">
-          <label className="flex items-center gap-2">
-            <input
-              checked={selectedMode === "raw"}
-              form="decision-create-po-form"
-              name={`qtyChoice:${sku}`}
-              onClick={() => chooseMode("raw")}
-              onChange={() => chooseMode("raw")}
-              type="radio"
-              value="raw"
-            />
-            Raw
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              checked={selectedMode === "rounded"}
-              form="decision-create-po-form"
-              name={`qtyChoice:${sku}`}
-              onClick={() => chooseMode("rounded")}
-              onChange={() => chooseMode("rounded")}
-              type="radio"
-              value="rounded"
-            />
-            Round 10
-          </label>
-        </div>
-      </td>
-    </>
   );
 }

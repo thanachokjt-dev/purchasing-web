@@ -7,7 +7,6 @@ import {
 } from "@/app/purchasing-decision/actions";
 import {
   DecisionCreatePoButton,
-  DecisionOrderQtyCells,
   DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
@@ -355,6 +354,7 @@ export default async function PurchasingDecisionPage({
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
                       <DecisionPlanningCells
                         calculatedDemandIndexHm={line.calculatedDemandIndexHm}
+                        comingQty={line.coming}
                         demandIndexHm={line.demandIndexHm}
                         leadTimeDays={line.leadTimeDays}
                         leadTimeSource={line.leadTimeSource}
@@ -362,13 +362,9 @@ export default async function PurchasingDecisionPage({
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
                         safetySource={line.safetySource}
+                        sku={line.sku}
                         supplierLeadTimeDays={line.supplierLeadTimeDays}
                         supplierSafetyDays={line.supplierSafetyDays}
-                      />
-                      <DecisionOrderQtyCells
-                        comingQty={line.coming}
-                        rawQty={line.ropUnitsRaw}
-                        sku={line.sku}
                       />
                       <td className={readOnlyMetricClass}>{coverageText(line.coversSalesDuration)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.week)}</td>
