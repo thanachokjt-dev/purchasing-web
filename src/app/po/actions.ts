@@ -211,6 +211,7 @@ export async function createPoAction(
       po_item_id: `${poId}-1`,
       po_id: poId,
       line_no: "1",
+      sort_position: 1,
       sku,
       product_title_snapshot: optionalText(formData, "productTitle") ?? sku,
       variant_title_snapshot: optionalText(formData, "variantTitle"),
@@ -296,6 +297,7 @@ export async function addPoItemAction(
       po_item_id: `${poId}-${lineNo}`,
       po_id: poId,
       line_no: lineNo,
+      sort_position: Number(lineNo),
       sku,
       product_title_snapshot: optionalText(formData, "productTitle") ?? sku,
       variant_title_snapshot: optionalText(formData, "variantTitle"),
@@ -330,6 +332,130 @@ export async function addPoItemAction(
     return success(`Added ${sku} to ${poId}`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Add PO item failed");
+  }
+}
+
+export async function addPoItemsBatchAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const selectedSkus = new Set(
+      formData.getAll("selectedSku").map((value) => String(value).trim()).filter(Boolean),
+    );
+    const skus = formData.getAll("sku").map((value) => String(value).trim());
+    const productTitles = formData.getAll("productTitle").map((value) => String(value).trim());
+    const variantTitles = formData.getAll("variantTitle").map((value) => String(value).trim());
+    const qtyValues = formData.getAll("orderedQty").map((value) => String(value).trim());
+    const priceValues = formData.getAll("unitPrice").map((value) => String(value).trim());
+    const freightValues = formData.getAll("freightUnitCost").map((value) => String(value).trim());
+    const currencyValues = formData.getAll("currency").map((value) => String(value).trim());
+    const remark = optionalText(formData, "remark");
+
+    if (!selectedSkus.size) {
+      throw new Error("Select at least one SKU to add");
+    }
+
+    const { data: order, error: orderError } = await supabase
+      .from("po_orders")
+      .select("po_id,currency,closed_at,cancelled_at")
+      .eq("po_id", poId)
+      .maybeSingle();
+    if (orderError) {
+      throw new Error(orderError.message);
+    }
+    if (!order || order.closed_at || order.cancelled_at) {
+      throw new Error(`PO ${poId} is closed, cancelled, or missing`);
+    }
+
+    const { count, error: countError } = await supabase
+      .from("po_items")
+      .select("id", { count: "exact", head: true })
+      .eq("po_id", poId);
+    if (countError) {
+      throw new Error(countError.message);
+    }
+
+    const batchStamp = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
+    let addedLineIndex = 0;
+    const rows = skus.flatMap((sku, index) => {
+      if (!sku || !selectedSkus.has(sku)) {
+        return [];
+      }
+      const orderedQty = nonNegativeTextNumber(qtyValues[index] ?? "", `${sku} qty`);
+      if (orderedQty <= 0) {
+        return [];
+      }
+      const unitPrice = nonNegativeTextNumber(priceValues[index] ?? "", `${sku} price`);
+      const freightUnitCost = nonNegativeTextNumber(freightValues[index] ?? "", `${sku} freight`);
+      const currency = currencyValues[index] || order.currency || "THB";
+      addedLineIndex += 1;
+      const lineNo = String((count ?? 0) + addedLineIndex);
+      return [
+        {
+          po_item_id: `${poId}-${batchStamp}-${addedLineIndex}`,
+          po_id: poId,
+          line_no: lineNo,
+          sort_position: Number(lineNo),
+          sku,
+          product_title_snapshot: productTitles[index] || sku,
+          variant_title_snapshot: variantTitles[index] || null,
+          ordered_qty: orderedQty,
+          unit_price: unitPrice,
+          freight_unit_cost: freightUnitCost,
+          landed_unit_cost: unitPrice + freightUnitCost,
+          line_amount: orderedQty * unitPrice,
+          currency,
+          remark,
+          full_name: productTitles[index] || sku,
+          line_status: "draft",
+          source: "web_app",
+          updated_at: new Date().toISOString(),
+        },
+      ];
+    });
+
+    if (!rows.length) {
+      throw new Error("Selected SKUs need quantity greater than 0");
+    }
+
+    const { error: itemError } = await supabase.from("po_items").insert(rows);
+    if (itemError) {
+      throw new Error(itemError.message);
+    }
+
+    await recalculatePoAmount(poId);
+    refreshPoViews(poId);
+    return success(`Added ${rows.length} lines to ${poId}`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Add selected lines failed");
+  }
+}
+
+export async function updatePoHeaderRefsAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const { error } = await supabase
+      .from("po_orders")
+      .update({
+        quotation_reference: optionalText(formData, "quotationReference"),
+        supplier_invoice_no: optionalText(formData, "supplierInvoiceNo"),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("po_id", poId);
+    if (error) {
+      throw new Error(error.message);
+    }
+    refreshPoViews(poId);
+    return success("Saved quotation and invoice refs");
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Save PO header refs failed");
   }
 }
 
@@ -754,6 +880,9 @@ export async function updatePoDraftLinesAction(
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const itemUuids = formData.getAll("itemUuid").map((value) => String(value).trim());
+    const deleteItemUuids = new Set(
+      formData.getAll("deleteItemUuid").map((value) => String(value).trim()).filter(Boolean),
+    );
     const skus = formData.getAll("sku").map((value) => String(value).trim());
     const productTitles = formData.getAll("productTitle").map((value) => String(value).trim());
     const qtyValues = formData.getAll("orderedQty").map((value) => String(value).trim());
@@ -765,8 +894,23 @@ export async function updatePoDraftLinesAction(
       throw new Error("No PO lines to update");
     }
 
+    if (deleteItemUuids.size > 0) {
+      const { error } = await supabase
+        .from("po_items")
+        .delete()
+        .eq("po_id", poId)
+        .in("id", Array.from(deleteItemUuids));
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
+    let nextLineNo = 1;
     for (const [index, itemUuid] of itemUuids.entries()) {
       if (!itemUuid) {
+        continue;
+      }
+      if (deleteItemUuids.has(itemUuid)) {
         continue;
       }
 
@@ -789,6 +933,8 @@ export async function updatePoDraftLinesAction(
           sku,
           product_title_snapshot: productTitles[index] || sku,
           full_name: productTitles[index] || sku,
+          line_no: String(nextLineNo),
+          sort_position: nextLineNo,
           ordered_qty: orderedQty,
           unit_price: unitPrice,
           freight_unit_cost: freightUnitCost,
@@ -803,6 +949,7 @@ export async function updatePoDraftLinesAction(
       if (error) {
         throw new Error(error.message);
       }
+      nextLineNo += 1;
     }
 
     await recalculatePoAmount(poId);

@@ -43,6 +43,9 @@ type PoPortalOrderRow = {
   freight_total?: number | string | null;
   other_landed_cost_total?: number | string | null;
   landed_cost_note?: string | null;
+  quotation_reference?: string | null;
+  supplier_invoice_no?: string | null;
+  vat_mode?: string | null;
   payment_terms_snapshot: string | null;
 };
 
@@ -65,6 +68,7 @@ type PoPortalItemRow = {
   remark: string | null;
   full_name: string | null;
   line_status: string | null;
+  sort_position?: number | string | null;
 };
 
 type PoCatalogVariantRow = {
@@ -183,6 +187,7 @@ type PoPortalSupplierOption = {
 export type PoCatalogItemOption = {
   sku: string;
   productTitle: string;
+  mainName: string;
   variantTitle: string;
   imageUrl: string | null;
   supplierCode: string;
@@ -205,6 +210,7 @@ type PortalItem = PoPortalItem & {
   itemUuid?: string;
   landedUnitCost?: number;
   onHand?: number;
+  sortPosition?: number;
 };
 
 type PortalOrder = {
@@ -223,6 +229,9 @@ type PortalOrder = {
   freightTotal: number;
   otherLandedCostTotal: number;
   landedCostNote: string;
+  quotationReference: string;
+  supplierInvoiceNo: string;
+  vatMode: string;
   paymentTerms: string;
   itemCount: number;
   statuses: string[];
@@ -309,6 +318,7 @@ function mapSupabaseItem(
     poItemId: item.po_item_id ?? item.id,
     fullName: item.full_name ?? "",
     imageUrl: imageUrl ?? null,
+    sortPosition: numeric(item.sort_position),
     status: item.line_status ?? "unknown",
   };
 }
@@ -326,6 +336,14 @@ function productTitleForCatalog(row: PoCatalogVariantRow, control?: PoDecisionCo
   }
 
   return `${productTitle} / ${variantTitle}`;
+}
+
+function mainNameForCatalog(row: PoCatalogVariantRow, control?: PoDecisionControlRow) {
+  return (
+    compactText(control?.main_name_override) ||
+    compactText(firstProduct(row)?.product_title) ||
+    productTitleForCatalog(row, control)
+  );
 }
 
 function supplierNameForCatalog(
@@ -396,6 +414,9 @@ function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[])
     freightTotal: numeric(order.freight_total),
     otherLandedCostTotal: numeric(order.other_landed_cost_total),
     landedCostNote: order.landed_cost_note ?? "",
+    quotationReference: order.quotation_reference ?? "",
+    supplierInvoiceNo: order.supplier_invoice_no ?? "",
+    vatMode: order.vat_mode ?? "",
     paymentTerms: order.payment_terms_snapshot ?? "",
     itemCount: orderLineItems.length,
     statuses: statuses.length > 0 ? statuses : [order.work_status ?? "unknown"],
@@ -534,6 +555,9 @@ function getAppSheetPoPortalData() {
       freightTotal: 0,
       landedCostNote: "",
       otherLandedCostTotal: 0,
+      quotationReference: "",
+      supplierInvoiceNo: "",
+      vatMode: "",
     })),
     poPortalItems.map((item) => ({
       ...item,
@@ -766,6 +790,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
     const supplierName = supplierNameForCatalog(row, control, manualSupplierBySku);
     const supplierKey = supplierName.toLowerCase();
     const productTitle = productTitleForCatalog(row, control);
+    const mainName = mainNameForCatalog(row, control);
     const lastPrice = lastPriceBySku.get(sku);
     const decisionLine = decisionBySku.get(sku);
     const variantTitle = compactText(row.variant_title);
@@ -779,6 +804,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
       {
         sku,
         productTitle,
+        mainName,
         variantTitle,
         imageUrl,
         supplierCode: supplierCodeByName.get(supplierKey) ?? "",
@@ -792,7 +818,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         recommendedRawQty: decisionLine?.ropUnitsRaw ?? 0,
         recommendedRoundQty: decisionLine?.ropUnitsRounded ?? 0,
         recommendedQty: decisionLine?.ropUnits ?? 0,
-        searchText: [sku, productTitle, variantTitle, supplierName, tags.join(" ")]
+        searchText: [sku, productTitle, mainName, variantTitle, supplierName, tags.join(" ")]
           .join(" ")
           .toLowerCase(),
       },
@@ -821,6 +847,9 @@ export async function getPoPortalDetailData(poId: string) {
         freightTotal: 0,
         landedCostNote: "",
         otherLandedCostTotal: 0,
+        quotationReference: "",
+        supplierInvoiceNo: "",
+        vatMode: "",
       },
       items: poPortalItems
         .filter((item) => item.poId === poId)
@@ -838,7 +867,7 @@ export async function getPoPortalDetailData(poId: string) {
     };
   }
 
-  const { data: orderRow, error: orderError } = await supabase
+  let { data: orderRow, error: orderError } = await supabase
     .from("po_orders")
     .select(
       [
@@ -857,11 +886,43 @@ export async function getPoPortalDetailData(poId: string) {
         "freight_total",
         "other_landed_cost_total",
         "landed_cost_note",
+        "quotation_reference",
+        "supplier_invoice_no",
+        "vat_mode",
         "payment_terms_snapshot",
       ].join(","),
     )
     .eq("po_id", poId)
     .maybeSingle();
+
+  if (orderError) {
+    const fallback = await supabase
+      .from("po_orders")
+      .select(
+        [
+          "po_id",
+          "rqq_id",
+          "po_title",
+          "po_date",
+          "work_status",
+          "requester",
+          "owner",
+          "supplier_code",
+          "supplier_name_snapshot",
+          "currency",
+          "po_amount_foreign",
+          "po_amount_thb",
+          "freight_total",
+          "other_landed_cost_total",
+          "landed_cost_note",
+          "payment_terms_snapshot",
+        ].join(","),
+      )
+      .eq("po_id", poId)
+      .maybeSingle();
+    orderRow = fallback.data;
+    orderError = fallback.error;
+  }
 
   if (orderError || !orderRow) {
     return null;
@@ -880,7 +941,7 @@ export async function getPoPortalDetailData(poId: string) {
   }));
   const catalogItems = await getPoCatalogItems(supplierOptions);
 
-  const { data: itemRows, error: itemError } = await supabase
+  let itemQuery = await supabase
     .from("po_items")
     .select(
       [
@@ -902,10 +963,43 @@ export async function getPoPortalDetailData(poId: string) {
         "remark",
         "full_name",
         "line_status",
+        "sort_position",
       ].join(","),
     )
     .eq("po_id", poId)
+    .order("sort_position", { ascending: true, nullsFirst: false })
     .order("line_no", { ascending: true });
+
+  if (itemQuery.error) {
+    itemQuery = await supabase
+      .from("po_items")
+      .select(
+        [
+          "id",
+          "po_item_id",
+          "po_id",
+          "line_no",
+          "sku",
+          "product_title_snapshot",
+          "variant_title_snapshot",
+          "ordered_qty",
+          "legacy_received_qty",
+          "backorder_qty",
+          "unit_price",
+          "freight_unit_cost",
+          "landed_unit_cost",
+          "line_amount",
+          "currency",
+          "remark",
+          "full_name",
+          "line_status",
+        ].join(","),
+      )
+      .eq("po_id", poId)
+      .order("line_no", { ascending: true });
+  }
+
+  const { data: itemRows, error: itemError } = itemQuery;
 
   if (itemError) {
     return null;

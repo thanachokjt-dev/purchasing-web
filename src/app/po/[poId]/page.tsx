@@ -8,6 +8,7 @@ import {
   BatchReceiveFormBar,
   BatchReceiveLineFields,
   LandedCostAllocationForm,
+  PoHeaderRefsForm,
   PoDraftLinesForm,
   PrintPageButton,
   SmartAddPoItemForm,
@@ -273,6 +274,8 @@ export default async function PoDetailPage({
                 ["Requester", order.requester || "-"],
                 ["Payment", order.paymentTerms || "-"],
                 ["Currency", order.currency || "-"],
+                ["Quotation", order.quotationReference || "-"],
+                ["Supplier INV", order.supplierInvoiceNo || "-"],
               ].map(([label, value]) => (
                 <div className="grid grid-cols-[120px_1fr] gap-4" key={label}>
                   <p className="font-semibold text-[#667380]">{label}</p>
@@ -280,7 +283,12 @@ export default async function PoDetailPage({
                 </div>
               ))}
               {data.source === "supabase" ? (
-                <div className="pt-2">
+                <div className="grid gap-4 border-t border-[#e2e7ed] pt-4">
+                  <PoHeaderRefsForm
+                    poId={order.poId}
+                    quotationReference={order.quotationReference}
+                    supplierInvoiceNo={order.supplierInvoiceNo}
+                  />
                   <StatusActionForm currentStatus={order.workStatus || "draft"} poId={order.poId} />
                 </div>
               ) : null}
