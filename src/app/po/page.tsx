@@ -32,6 +32,20 @@ const formatPercent = (value: number) =>
     style: "percent",
   }).format(value);
 
+function generatedPoId() {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+    String(now.getMilliseconds()).padStart(3, "0"),
+  ].join("");
+  return `PO-${stamp}`;
+}
+
 const statusClass = (status: string) => {
   const normalized = status.toLowerCase();
   if (normalized === "delivery") {
@@ -184,6 +198,7 @@ export default async function PoPortalPage({
             {data.source === "supabase" ? (
               <CreatePoForm
                 catalogItems={data.catalogItems}
+                suggestedPoId={generatedPoId()}
                 suppliers={data.suppliers}
                 today={today}
               />

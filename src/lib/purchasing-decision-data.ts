@@ -462,10 +462,12 @@ function ropStatus(hidden: boolean, onHand: number, coming: number, ropUnits: nu
 }
 
 export async function getPurchasingDecisionData({
+  limit = 120,
   q = "",
   supplier = "all",
   visibility = "active",
 }: {
+  limit?: number | null;
   q?: string;
   supplier?: string;
   visibility?: string;
@@ -654,15 +656,15 @@ export async function getPurchasingDecisionData({
         b.totalSale - a.totalSale ||
         a.sku.localeCompare(b.sku)
       );
-    })
-    .slice(0, 120);
+    });
+  const visibleLines = limit === null ? filteredLines : filteredLines.slice(0, limit);
 
   const activeLines = allLines.filter((line) => !line.hidden);
   return {
     mode: "supabase",
     controlsReady: controlResult.controlsReady,
     supplierOptions,
-    lines: filteredLines,
+    lines: visibleLines,
     totals: {
       skuCount: allLines.length,
       activeSkuCount: activeLines.length,

@@ -5,6 +5,7 @@ import {
   type PoPortalItem,
 } from "@/lib/po-portal-data";
 import { excelSupplierMap } from "@/lib/excel-supplier-map";
+import { getPurchasingDecisionData } from "@/lib/purchasing-decision-data";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 const ACTIVE_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
@@ -72,14 +73,17 @@ type PoCatalogVariantRow = {
   option2_value: string | null;
   option3_value: string | null;
   price: number | string | null;
+  variant_image_url: string | null;
   products:
     | {
         product_title: string | null;
+        product_image_url: string | null;
         vendor: string | null;
         tags: string[] | null;
       }
     | {
         product_title: string | null;
+        product_image_url: string | null;
         vendor: string | null;
         tags: string[] | null;
       }[]
@@ -179,6 +183,7 @@ export type PoCatalogItemOption = {
   sku: string;
   productTitle: string;
   variantTitle: string;
+  imageUrl: string | null;
   supplierCode: string;
   supplierName: string;
   currency: string;
@@ -187,6 +192,9 @@ export type PoCatalogItemOption = {
   lastFreightUnitCost: number;
   lastLandedUnitCost: number;
   lastPoId: string;
+  recommendedRawQty: number;
+  recommendedRoundQty: number;
+  recommendedQty: number;
   searchText: string;
 };
 
@@ -680,11 +688,17 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
     return [];
   }
 
-  const [variantRows, manualSupplierRows, decisionControlRows, lastPriceRows] =
+  const [
+    variantRows,
+    manualSupplierRows,
+    decisionControlRows,
+    lastPriceRows,
+    purchasingDecisionData,
+  ] =
     await Promise.all([
       fetchAllRows<PoCatalogVariantRow>(
         "product_variants",
-        "sku,variant_title,option1_value,option2_value,option3_value,price,products(product_title,vendor,tags)",
+        "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,products(product_title,product_image_url,vendor,tags)",
         "sku",
       ),
       fetchAllRows<ManualSupplierMappingRow>(
@@ -702,6 +716,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         "po_id,sku,unit_price,freight_unit_cost,landed_unit_cost,currency,created_at",
         "created_at",
       ),
+      getPurchasingDecisionData({ limit: null, visibility: "active" }).catch(() => null),
     ]);
 
   if (!variantRows) {
@@ -725,6 +740,9 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
       .map((row) => [row.sku!.trim(), row]),
   );
   const lastPriceBySku = new Map<string, LastPoPriceRow>();
+  const decisionBySku = new Map(
+    (purchasingDecisionData?.lines ?? []).map((line) => [line.sku, line]),
+  );
 
   for (const row of [...(lastPriceRows ?? [])].reverse()) {
     const sku = row.sku?.trim();
@@ -748,14 +766,20 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
     const supplierKey = supplierName.toLowerCase();
     const productTitle = productTitleForCatalog(row, control);
     const lastPrice = lastPriceBySku.get(sku);
+    const decisionLine = decisionBySku.get(sku);
     const variantTitle = compactText(row.variant_title);
     const tags = firstProduct(row)?.tags ?? [];
+    const imageUrl =
+      compactText(row.variant_image_url) ||
+      compactText(firstProduct(row)?.product_image_url) ||
+      null;
 
     return [
       {
         sku,
         productTitle,
         variantTitle,
+        imageUrl,
         supplierCode: supplierCodeByName.get(supplierKey) ?? "",
         supplierName,
         currency: lastPrice?.currency ?? supplierCurrencyByName.get(supplierKey) ?? "THB",
@@ -764,6 +788,9 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         lastFreightUnitCost: numeric(lastPrice?.freight_unit_cost),
         lastLandedUnitCost: numeric(lastPrice?.landed_unit_cost),
         lastPoId: lastPrice?.po_id ?? "",
+        recommendedRawQty: decisionLine?.ropUnitsRaw ?? 0,
+        recommendedRoundQty: decisionLine?.ropUnitsRounded ?? 0,
+        recommendedQty: decisionLine?.ropUnits ?? 0,
         searchText: [sku, productTitle, variantTitle, supplierName, tags.join(" ")]
           .join(" ")
           .toLowerCase(),

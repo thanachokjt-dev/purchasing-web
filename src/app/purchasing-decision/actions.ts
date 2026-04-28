@@ -87,7 +87,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
 }
 
 function generatedPoId() {
-  const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
   return `PO-${stamp}`;
 }
 

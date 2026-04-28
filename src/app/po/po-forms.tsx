@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useActionState, useMemo, useState } from "react";
 import {
   addPoItemAction,
@@ -24,6 +25,7 @@ type CatalogItemOption = {
   sku: string;
   productTitle: string;
   variantTitle: string;
+  imageUrl: string | null;
   supplierCode: string;
   supplierName: string;
   currency: string;
@@ -32,6 +34,9 @@ type CatalogItemOption = {
   lastFreightUnitCost: number;
   lastLandedUnitCost: number;
   lastPoId: string;
+  recommendedRawQty: number;
+  recommendedRoundQty: number;
+  recommendedQty: number;
   searchText: string;
 };
 
@@ -84,10 +89,12 @@ const buttonClass =
 
 export function CreatePoForm({
   catalogItems,
+  suggestedPoId,
   suppliers,
   today,
 }: {
   catalogItems: CatalogItemOption[];
+  suggestedPoId: string;
   suppliers: SupplierOption[];
   today: string;
 }) {
@@ -97,6 +104,7 @@ export function CreatePoForm({
   const [sku, setSku] = useState("");
   const [productTitle, setProductTitle] = useState("");
   const [variantTitle, setVariantTitle] = useState("");
+  const [orderedQty, setOrderedQty] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
   const [freightUnitCost, setFreightUnitCost] = useState("");
   const [currency, setCurrency] = useState("THB");
@@ -126,6 +134,7 @@ export function CreatePoForm({
     setSku(item.sku);
     setProductTitle(item.productTitle);
     setVariantTitle(item.variantTitle);
+    setOrderedQty(item.recommendedQty ? String(item.recommendedQty) : "");
     setUnitPrice(String(item.lastUnitPrice || item.shopifyPrice || ""));
     setFreightUnitCost(item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "");
     setCurrency(item.currency || selectedSupplier?.currency || "THB");
@@ -136,7 +145,7 @@ export function CreatePoForm({
       <div className="grid gap-3 lg:grid-cols-4">
         <label className={labelClass}>
           PO ID
-          <input className={inputClass} name="poId" placeholder="auto if blank" />
+          <input className={inputClass} name="poId" readOnly value={suggestedPoId} />
         </label>
         <label className={labelClass}>
           PO Date
@@ -157,6 +166,7 @@ export function CreatePoForm({
               setSku("");
               setProductTitle("");
               setVariantTitle("");
+              setOrderedQty("");
               setUnitPrice("");
               setFreightUnitCost("");
             }}
@@ -200,19 +210,32 @@ export function CreatePoForm({
             <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
               {filteredCatalogItems.map((item) => (
                 <button
-                  className="grid w-full gap-1 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
+                  className="grid w-full grid-cols-[48px_1fr] gap-3 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
                   key={`${item.sku}-${item.supplierName}`}
                   onClick={() => selectCatalogItem(item)}
                   type="button"
                 >
-                  <span className="font-mono text-xs font-semibold text-[#172026]">
+                  <span className="row-span-3 grid size-12 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                    {item.imageUrl ? (
+                      <Image
+                        alt={item.productTitle}
+                        className="h-full w-full object-cover"
+                        height={48}
+                        src={item.imageUrl}
+                        width={48}
+                      />
+                    ) : (
+                      <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                    )}
+                  </span>
+                  <span className="col-start-2 font-mono text-xs font-semibold text-[#172026]">
                     {item.sku}
                   </span>
-                  <span className="font-medium normal-case tracking-normal text-[#172026]">
+                  <span className="col-start-2 truncate font-medium normal-case tracking-normal text-[#172026]">
                     {item.productTitle}
                   </span>
-                  <span className="text-xs normal-case tracking-normal text-[#667380]">
-                    {item.supplierName}
+                  <span className="col-start-2 text-xs normal-case tracking-normal text-[#667380]">
+                    Round 10 {item.recommendedQty || "-"} / {item.supplierName}
                     {item.lastPoId
                       ? ` · last ${item.lastPoId} @ ${item.lastUnitPrice}`
                       : ""}
@@ -233,7 +256,16 @@ export function CreatePoForm({
         </label>
         <label className={labelClass}>
           Qty
-          <input className={inputClass} min="0.0001" name="orderedQty" required step="0.0001" type="number" />
+          <input
+            className={inputClass}
+            min="0.0001"
+            name="orderedQty"
+            onChange={(event) => setOrderedQty(event.target.value)}
+            required
+            step="0.0001"
+            type="number"
+            value={orderedQty}
+          />
         </label>
         <label className={labelClass}>
           Price
@@ -271,7 +303,16 @@ export function CreatePoForm({
         </label>
       </div>
 
-      <div className="grid gap-3 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-sm md:grid-cols-3">
+      <div className="grid gap-3 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-sm md:grid-cols-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+            Purchasing Decision Round 10
+          </p>
+          <p className="mt-1 font-mono text-[#172026]">
+            {filteredCatalogItems.find((item) => item.sku === sku)?.recommendedQty ||
+              "-"}
+          </p>
+        </div>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
             Last PO unit price
@@ -354,6 +395,7 @@ export function SmartAddPoItemForm({
   const [sku, setSku] = useState("");
   const [productTitle, setProductTitle] = useState("");
   const [variantTitle, setVariantTitle] = useState("");
+  const [orderedQty, setOrderedQty] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
   const [freightUnitCost, setFreightUnitCost] = useState("");
   const [lineCurrency, setLineCurrency] = useState(currency || "THB");
@@ -380,6 +422,7 @@ export function SmartAddPoItemForm({
     setSku(item.sku);
     setProductTitle(item.productTitle);
     setVariantTitle(item.variantTitle);
+    setOrderedQty(item.recommendedQty ? String(item.recommendedQty) : "");
     setUnitPrice(String(item.lastUnitPrice || item.shopifyPrice || ""));
     setFreightUnitCost(item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "");
     setLineCurrency(item.currency || currency || "THB");
@@ -407,18 +450,32 @@ export function SmartAddPoItemForm({
             <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
               {filteredCatalogItems.map((item) => (
                 <button
-                  className="grid w-full gap-1 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
+                  className="grid w-full grid-cols-[48px_1fr] gap-3 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
                   key={`${item.sku}-${item.supplierName}`}
                   onClick={() => selectCatalogItem(item)}
                   type="button"
                 >
-                  <span className="font-mono text-xs font-semibold text-[#172026]">
+                  <span className="row-span-3 grid size-12 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                    {item.imageUrl ? (
+                      <Image
+                        alt={item.productTitle}
+                        className="h-full w-full object-cover"
+                        height={48}
+                        src={item.imageUrl}
+                        width={48}
+                      />
+                    ) : (
+                      <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                    )}
+                  </span>
+                  <span className="col-start-2 font-mono text-xs font-semibold text-[#172026]">
                     {item.sku}
                   </span>
-                  <span className="font-medium normal-case tracking-normal text-[#172026]">
+                  <span className="col-start-2 truncate font-medium normal-case tracking-normal text-[#172026]">
                     {item.productTitle}
                   </span>
-                  <span className="text-xs normal-case tracking-normal text-[#667380]">
+                  <span className="col-start-2 text-xs normal-case tracking-normal text-[#667380]">
+                    Round 10 {item.recommendedQty || "-"} /{" "}
                     {item.lastPoId
                       ? `last ${item.lastPoId} @ ${item.lastUnitPrice}`
                       : "Shopify catalog"}
@@ -439,7 +496,16 @@ export function SmartAddPoItemForm({
         </label>
         <label className={labelClass}>
           Qty
-          <input className={inputClass} min="0.0001" name="orderedQty" required step="0.0001" type="number" />
+          <input
+            className={inputClass}
+            min="0.0001"
+            name="orderedQty"
+            onChange={(event) => setOrderedQty(event.target.value)}
+            required
+            step="0.0001"
+            type="number"
+            value={orderedQty}
+          />
         </label>
         <label className={labelClass}>
           Price
@@ -479,7 +545,13 @@ export function SmartAddPoItemForm({
         </button>
       </div>
       {selectedItem ? (
-        <div className="grid gap-2 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-xs text-[#52606d] sm:grid-cols-3">
+        <div className="grid gap-2 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-xs text-[#52606d] sm:grid-cols-4">
+          <p>
+            Round 10:{" "}
+            <span className="font-mono font-semibold text-[#172026]">
+              {selectedItem.recommendedQty || "-"}
+            </span>
+          </p>
           <p>
             Last PO:{" "}
             <span className="font-mono font-semibold text-[#172026]">
