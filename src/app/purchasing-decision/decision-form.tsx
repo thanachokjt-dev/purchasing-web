@@ -148,7 +148,9 @@ export function DecisionPlanningCells({
           value={safety}
         />
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
-          {safetySource === "supplier" && supplierSafetyDays !== null
+          {safetySource === "sku" && supplierSafetyDays !== null
+            ? `sku / sup ${supplierSafetyDays}`
+            : safetySource === "supplier" && supplierSafetyDays !== null
             ? `sup ${supplierSafetyDays}`
             : safetySource}
         </p>
@@ -169,7 +171,9 @@ export function DecisionPlanningCells({
           value={lead}
         />
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
-          {leadTimeSource === "supplier" && supplierLeadTimeDays !== null
+          {leadTimeSource === "sku" && supplierLeadTimeDays !== null
+            ? `sku / sup ${supplierLeadTimeDays}`
+            : leadTimeSource === "supplier" && supplierLeadTimeDays !== null
             ? `sup ${supplierLeadTimeDays}`
             : leadTimeSource}
         </p>

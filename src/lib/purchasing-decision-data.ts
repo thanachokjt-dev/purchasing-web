@@ -605,15 +605,33 @@ export async function getPurchasingDecisionData({
       supplierDefault && supplierDefault.safetyDays > 0
         ? supplierDefault.safetyDays
         : null;
+    const safetyMatchesSupplier =
+      skuSafetyDays !== null &&
+      supplierSafetyDays !== null &&
+      skuSafetyDays === supplierSafetyDays;
     const safetyDays = skuSafetyDays ?? supplierSafetyDays ?? DEFAULT_SAFETY_DAYS;
-    const safetySource = skuSafetyDays !== null ? "sku" : supplierSafetyDays !== null ? "supplier" : "default";
+    const safetySource =
+      supplierSafetyDays !== null && (skuSafetyDays === null || safetyMatchesSupplier)
+        ? "supplier"
+        : skuSafetyDays !== null
+          ? "sku"
+          : "default";
     const skuLeadTimeDays = optionalInteger(control?.lead_time_days);
     const supplierLeadTimeDays =
       supplierDefault && supplierDefault.leadTimeDays > 0
         ? supplierDefault.leadTimeDays
         : null;
+    const leadMatchesSupplier =
+      skuLeadTimeDays !== null &&
+      supplierLeadTimeDays !== null &&
+      skuLeadTimeDays === supplierLeadTimeDays;
     const leadTimeDays = skuLeadTimeDays ?? supplierLeadTimeDays ?? DEFAULT_LEAD_TIME_DAYS;
-    const leadTimeSource = skuLeadTimeDays !== null ? "sku" : supplierLeadTimeDays !== null ? "supplier" : "default";
+    const leadTimeSource =
+      supplierLeadTimeDays !== null && (skuLeadTimeDays === null || leadMatchesSupplier)
+        ? "supplier"
+        : skuLeadTimeDays !== null
+          ? "sku"
+          : "default";
     const orderCycleDays =
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
