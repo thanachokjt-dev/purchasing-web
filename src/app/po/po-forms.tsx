@@ -15,6 +15,7 @@ import {
   receivePoItemAction,
   updatePoHeaderRefsAction,
   updatePoDraftLinesAction,
+  updatePoPaymentsAction,
   type PoActionState,
 } from "@/app/po/actions";
 
@@ -59,6 +60,19 @@ type DraftLineItem = {
   currency: string;
   remark: string;
   sortPosition?: number;
+};
+
+type PaymentRowItem = {
+  id: string;
+  payment_date: string | null;
+  payment_type: string | null;
+  payment_status?: string | null;
+  due_date?: string | null;
+  amount: number | string | null;
+  currency: string | null;
+  paid_by: string | null;
+  reference: string | null;
+  note: string | null;
 };
 
 const initialState: PoActionState = { ok: false, message: "" };
@@ -995,6 +1009,130 @@ export function AddPaymentForm({
   );
 }
 
+export function PaymentScheduleForm({
+  currency,
+  payments,
+  poAmount,
+  poId,
+}: {
+  currency: string;
+  payments: PaymentRowItem[];
+  poAmount: number;
+  poId: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    updatePoPaymentsAction,
+    initialState,
+  );
+  const sortedPayments = [...payments].sort((a, b) =>
+    String(a.payment_date ?? a.due_date ?? "").localeCompare(
+      String(b.payment_date ?? b.due_date ?? ""),
+    ),
+  );
+  const rows = Array.from({ length: 4 }, (_, index) => sortedPayments[index] ?? null);
+  const paidTotal = payments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const plannedTotal = payments
+    .filter((payment) => (payment.payment_status ?? "paid") === "planned")
+    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const balance = Math.max(0, poAmount - paidTotal);
+  const nextDue = sortedPayments.find(
+    (payment) => (payment.payment_status ?? "paid") === "planned" && payment.due_date,
+  );
+
+  return (
+    <form action={formAction} className="grid gap-4">
+      <input name="poId" type="hidden" value={poId} />
+      <div className="grid gap-3 md:grid-cols-4">
+        {[
+          ["Paid", paidTotal],
+          ["Planned", plannedTotal],
+          ["Balance", balance],
+          ["Next due", nextDue?.due_date ?? "-"],
+        ].map(([label, value]) => (
+          <div className="rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3" key={label}>
+            <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">{label}</p>
+            <p className="mt-1 font-mono text-lg font-semibold">
+              {typeof value === "number" ? `${formatMoney(value)} ${currency}` : value}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[1200px] text-left text-sm">
+          <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+            <tr>
+              <th className="px-3 py-3 font-semibold">Payment</th>
+              <th className="px-3 py-3 font-semibold">Status</th>
+              <th className="px-3 py-3 font-semibold">Paid date</th>
+              <th className="px-3 py-3 font-semibold">Due reminder</th>
+              <th className="px-3 py-3 font-semibold">Type</th>
+              <th className="px-3 py-3 text-right font-semibold">Amount</th>
+              <th className="px-3 py-3 font-semibold">Currency</th>
+              <th className="px-3 py-3 font-semibold">Reference</th>
+              <th className="px-3 py-3 font-semibold">Note</th>
+              <th className="px-3 py-3 font-semibold">Delete</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#edf1f5]">
+            {rows.map((payment, index) => (
+              <tr key={payment?.id ?? `new-${index}`}>
+                <td className="px-3 py-3 font-semibold">Payment {index + 1}</td>
+                <td className="px-3 py-3">
+                  <input name="paymentId" type="hidden" value={payment?.id ?? ""} />
+                  <select className={inputClass} defaultValue={payment?.payment_status ?? "paid"} name="paymentStatus">
+                    <option value="paid">Paid</option>
+                    <option value="planned">Planned</option>
+                  </select>
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.payment_date ?? ""} name="paymentDate" type="date" />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.due_date ?? ""} name="dueDate" type="date" />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.payment_type ?? `payment_${index + 1}`} name="paymentType" />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={`${inputClass} text-right font-mono`} defaultValue={payment?.amount ?? ""} min="0" name="amount" step="0.0001" type="number" />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.currency ?? currency} name="currency" />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.reference ?? ""} name="reference" />
+                  <input name="paidBy" type="hidden" value={payment?.paid_by ?? ""} />
+                </td>
+                <td className="px-3 py-3">
+                  <input className={inputClass} defaultValue={payment?.note ?? ""} name="note" />
+                </td>
+                <td className="px-3 py-3">
+                  {payment?.id ? (
+                    <label className="flex items-center gap-2 text-xs font-semibold text-[#9f2a2a]">
+                      <input name="deletePaymentId" type="checkbox" value={payment.id} />
+                      Delete
+                    </label>
+                  ) : (
+                    <span className="text-xs text-[#8a96a3]">New</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <ActionMessage state={state} />
+        <button className={buttonClass} disabled={pending} type="submit">
+          {pending ? "Saving..." : "Save Payments"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function StatusActionForm({
   poId,
   itemUuid,
@@ -1184,14 +1322,26 @@ export function BatchReceiveLineFields({
   );
 }
 
-export function PrintPageButton() {
+export function PrintDocumentButton({
+  label,
+  mode,
+}: {
+  label: string;
+  mode: "quote" | "receiving";
+}) {
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
-      onClick={() => window.print()}
+      onClick={() => {
+        document.documentElement.dataset.printMode = mode;
+        window.print();
+        window.setTimeout(() => {
+          delete document.documentElement.dataset.printMode;
+        }, 300);
+      }}
       type="button"
     >
-      Print Quote
+      {label}
     </button>
   );
 }

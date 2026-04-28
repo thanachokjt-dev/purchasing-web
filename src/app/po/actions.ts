@@ -1075,3 +1075,86 @@ export async function addPoPaymentAction(
     return initialError(error instanceof Error ? error.message : "Add payment failed");
   }
 }
+
+export async function updatePoPaymentsAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const ids = formData.getAll("paymentId").map((value) => String(value).trim());
+    const statuses = formData.getAll("paymentStatus").map((value) => String(value).trim());
+    const types = formData.getAll("paymentType").map((value) => String(value).trim());
+    const amountValues = formData.getAll("amount").map((value) => String(value).trim());
+    const currencies = formData.getAll("currency").map((value) => String(value).trim());
+    const paymentDates = formData.getAll("paymentDate").map((value) => String(value).trim());
+    const dueDates = formData.getAll("dueDate").map((value) => String(value).trim());
+    const paidByValues = formData.getAll("paidBy").map((value) => String(value).trim());
+    const references = formData.getAll("reference").map((value) => String(value).trim());
+    const notes = formData.getAll("note").map((value) => String(value).trim());
+    const deleteIds = new Set(
+      formData.getAll("deletePaymentId").map((value) => String(value).trim()).filter(Boolean),
+    );
+
+    if (deleteIds.size > 0) {
+      const { error } = await supabase
+        .from("po_payments")
+        .delete()
+        .eq("po_id", poId)
+        .in("id", Array.from(deleteIds));
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    let savedCount = 0;
+    for (const [index, rawId] of ids.entries()) {
+      if (rawId && deleteIds.has(rawId)) {
+        continue;
+      }
+
+      const status = statuses[index] === "planned" ? "planned" : "paid";
+      const amount = nonNegativeTextNumber(amountValues[index] ?? "", `Payment ${index + 1} amount`);
+      const paymentDate = paymentDates[index] || (status === "paid" ? today : null);
+      const dueDate = dueDates[index] || null;
+      const hasContent =
+        Boolean(rawId) ||
+        amount > 0 ||
+        Boolean(dueDate) ||
+        Boolean(references[index]) ||
+        Boolean(notes[index]);
+
+      if (!hasContent) {
+        continue;
+      }
+
+      const row = {
+        po_id: poId,
+        payment_date: paymentDate,
+        payment_type: types[index] || `payment_${index + 1}`,
+        payment_status: status,
+        due_date: dueDate,
+        amount,
+        currency: currencies[index] || "THB",
+        paid_by: paidByValues[index] || null,
+        reference: references[index] || null,
+        note: notes[index] || null,
+      };
+
+      const { error } = rawId
+        ? await supabase.from("po_payments").update(row).eq("id", rawId).eq("po_id", poId)
+        : await supabase.from("po_payments").insert(row);
+      if (error) {
+        throw new Error(error.message);
+      }
+      savedCount += 1;
+    }
+
+    refreshPoViews(poId);
+    return success(`Saved ${savedCount} payment rows`);
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Save payments failed");
+  }
+}

@@ -139,6 +139,8 @@ type PoPaymentRow = {
   po_id: string | null;
   payment_date: string | null;
   payment_type: string | null;
+  payment_status?: string | null;
+  due_date?: string | null;
   amount: number | string | null;
   currency: string | null;
   paid_by: string | null;
@@ -1069,18 +1071,28 @@ export async function getPoPortalDetailData(poId: string) {
     .eq("po_id", poId)
     .order("created_at", { ascending: false });
 
-  const { data: payments } = await supabase
+  const paymentQuery = await supabase
     .from("po_payments")
-    .select("id,po_id,payment_date,payment_type,amount,currency,paid_by,reference,note,created_at")
+    .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,currency,paid_by,reference,note,created_at")
     .eq("po_id", poId)
     .order("payment_date", { ascending: false });
+
+  let paymentRows: unknown[] = paymentQuery.data ?? [];
+  if (paymentQuery.error) {
+    const fallbackPaymentQuery = await supabase
+      .from("po_payments")
+      .select("id,po_id,payment_date,payment_type,amount,currency,paid_by,reference,note,created_at")
+      .eq("po_id", poId)
+      .order("payment_date", { ascending: false });
+    paymentRows = fallbackPaymentQuery.data ?? [];
+  }
 
   return {
     source: "supabase" as const,
     catalogItems,
     order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
     items,
-    payments: (payments ?? []) as PoPaymentRow[],
+    payments: paymentRows as PoPaymentRow[],
     receipts: (receipts.data ?? []) as PoReceiptRow[],
     statusEvents: (statusEvents ?? []) as PoStatusEventRow[],
   };

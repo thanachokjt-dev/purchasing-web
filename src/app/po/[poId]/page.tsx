@@ -3,14 +3,14 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
 import {
-  AddPaymentForm,
   AddPoItemForm,
   BatchReceiveFormBar,
   BatchReceiveLineFields,
   LandedCostAllocationForm,
   PoHeaderRefsForm,
   PoDraftLinesForm,
-  PrintPageButton,
+  PaymentScheduleForm,
+  PrintDocumentButton,
   SmartAddPoItemForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
@@ -48,6 +48,13 @@ const formatDate = (value: string | null) => {
     timeZone: "Asia/Bangkok",
   }).format(new Date(`${value}T00:00:00`));
 };
+
+const companyLines = [
+  "Siam Martial Arts Training Center Co., LTD.",
+  "72/46 Moo 3, Choeng Thale, Thalang, Phuket 83110, Thailand",
+  "Head Office | Tax ID: 0835564003295 | Tel: 076-604-229",
+  "www.bangtaofightstore.com",
+];
 
 const statusClass = (status: string) => {
   const normalized = status.toLowerCase();
@@ -150,7 +157,6 @@ export default async function PoDetailPage({
   }
 
   const order = data.order;
-  const today = new Date().toISOString().slice(0, 10);
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const matrix = quoteMatrixRows(data.items);
   const detailCatalogItems = data.catalogItems.filter(
@@ -158,10 +164,13 @@ export default async function PoDetailPage({
       item.supplierCode === order.supplierCode ||
       item.supplierName.toLowerCase() === order.supplierName.toLowerCase(),
   );
-  const paidTotal = data.payments.reduce(
+  const paidTotal = data.payments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .reduce(
     (sum, payment) => sum + Number(payment.amount ?? 0),
     0,
   );
+  const paymentBalance = Math.max(0, order.poAmountForeign - paidTotal);
   const receiptsByItemId = new Map<string, typeof data.receipts>();
   for (const receipt of data.receipts) {
     const itemId = receipt.po_item_id;
@@ -173,6 +182,7 @@ export default async function PoDetailPage({
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
+      <div className="screen-only">
       <header className="border-b border-[#d9dde3] bg-white">
         <div className="mx-auto flex w-full max-w-none flex-col gap-5 px-4 py-5 sm:px-6 2xl:px-8 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -207,7 +217,8 @@ export default async function PoDetailPage({
             >
               Dashboard
             </Link>
-            <PrintPageButton />
+            <PrintDocumentButton label="Print Quote" mode="quote" />
+            <PrintDocumentButton label="Goods Receipt" mode="receiving" />
           </div>
         </div>
       </header>
@@ -234,7 +245,7 @@ export default async function PoDetailPage({
               value: formatNumber(order.outstandingQty),
             },
             {
-              detail: `paid ${formatCurrency(paidTotal, order.currency)}`,
+              detail: `paid ${formatCurrency(paidTotal, order.currency)} / balance ${formatCurrency(paymentBalance, order.currency)}`,
               icon: ClipboardList,
               label: "Amount",
               value: formatCurrency(order.poAmountForeign, order.currency),
@@ -328,6 +339,26 @@ export default async function PoDetailPage({
         {data.source === "supabase" ? (
           <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
+              <h2 className="text-lg font-semibold">Payment</h2>
+              <p className="mt-1 text-sm text-[#667380]">
+                Track payment 1-4, planned due dates, paid amounts, and balance.
+                Planned rows can be used as reminders before payment is made.
+              </p>
+            </div>
+            <div className="p-5">
+              <PaymentScheduleForm
+                currency={order.currency}
+                payments={data.payments}
+                poAmount={order.poAmountForeign}
+                poId={order.poId}
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {data.source === "supabase" ? (
+          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+            <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Draft Line Details</h2>
               <p className="mt-1 text-sm text-[#667380]">
                 Edit SKU, product name, order qty, unit price, freight/unit, and
@@ -370,7 +401,9 @@ export default async function PoDetailPage({
                 </p>
               </div>
               <div className="p-5">
-                <AddPaymentForm currency={order.currency} poId={order.poId} today={today} />
+                <p className="rounded-md bg-[#fbfcfd] px-3 py-2 text-sm text-[#667380]">
+                  Use the Payment section above to edit paid and planned rows.
+                </p>
               </div>
             </div>
           </section>
@@ -648,6 +681,80 @@ export default async function PoDetailPage({
           </div>
         </section>
       </div>
+      </div>
+      <PrintMatrixDocument
+        matrix={matrix}
+        order={order}
+        title="Supplier Quote"
+        type="quote"
+      />
+      <PrintMatrixDocument
+        matrix={matrix}
+        order={order}
+        title="Goods Receiving Note"
+        type="receiving"
+      />
     </main>
+  );
+}
+
+function PrintMatrixDocument({
+  matrix,
+  order,
+  title,
+  type,
+}: {
+  matrix: ReturnType<typeof quoteMatrixRows>;
+  order: NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["order"];
+  title: string;
+  type: "quote" | "receiving";
+}) {
+  return (
+    <section className={`print-only print-${type}`}>
+      <div className="print-header">
+        <div>
+          {companyLines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+        <div className="print-title">
+          <h1>{title}</h1>
+          <p>PO: {order.poId}</p>
+          <p>Supplier: {order.supplierName}</p>
+          <p>Date: {order.poDate ? order.poDate.slice(0, 10) : "-"}</p>
+          {order.quotationReference ? <p>Quotation: {order.quotationReference}</p> : null}
+          {order.supplierInvoiceNo ? <p>Supplier INV: {order.supplierInvoiceNo}</p> : null}
+        </div>
+      </div>
+      <table className="print-matrix">
+        <thead>
+          <tr>
+            <th>Product</th>
+            {matrix.sizes.map((size) => (
+              <th key={size}>{size}</th>
+            ))}
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((row) => (
+            <tr key={row.productName}>
+              <td>{row.productName}</td>
+              {matrix.sizes.map((size) => (
+                <td key={size}>{row.items.get(size)?.orderedQty || ""}</td>
+              ))}
+              <td>{row.totalQty}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {type === "receiving" ? (
+        <div className="print-signatures">
+          <span>Prepared by</span>
+          <span>Received by</span>
+          <span>Checked by</span>
+        </div>
+      ) : null}
+    </section>
   );
 }

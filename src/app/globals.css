@@ -17,3 +17,99 @@ body {
   color: var(--foreground);
   font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
 }
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 10mm;
+    size: A4 landscape;
+  }
+
+  body {
+    background: white;
+  }
+
+  .screen-only {
+    display: none !important;
+  }
+
+  .print-only {
+    display: none;
+    color: #111827;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  html[data-print-mode="quote"] .print-quote,
+  html[data-print-mode="receiving"] .print-receiving {
+    display: block;
+  }
+
+  .print-header {
+    align-items: flex-start;
+    border-bottom: 1px solid #111827;
+    display: flex;
+    font-size: 10px;
+    justify-content: space-between;
+    line-height: 1.35;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+  }
+
+  .print-header p {
+    margin: 0;
+  }
+
+  .print-title {
+    text-align: right;
+  }
+
+  .print-title h1 {
+    font-size: 18px;
+    margin: 0 0 4px;
+    text-transform: uppercase;
+  }
+
+  .print-matrix {
+    border-collapse: collapse;
+    font-size: 10px;
+    width: 100%;
+  }
+
+  .print-matrix th,
+  .print-matrix td {
+    border: 1px solid #374151;
+    padding: 5px 6px;
+  }
+
+  .print-matrix th {
+    background: #f3f4f6;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .print-matrix td:not(:first-child) {
+    font-family: Arial, Helvetica, sans-serif;
+    text-align: center;
+  }
+
+  .print-matrix td:first-child {
+    font-weight: 600;
+    min-width: 220px;
+  }
+
+  .print-signatures {
+    display: grid;
+    gap: 18mm;
+    grid-template-columns: repeat(3, 1fr);
+    margin-top: 18mm;
+    text-align: center;
+  }
+
+  .print-signatures span {
+    border-top: 1px solid #111827;
+    padding-top: 5px;
+  }
+}
