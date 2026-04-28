@@ -7,6 +7,7 @@ import {
 } from "@/app/purchasing-decision/actions";
 import {
   DecisionCreatePoButton,
+  DecisionOrderQtyCells,
   DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
@@ -21,8 +22,6 @@ export const dynamic = "force-dynamic";
 
 const inputClass =
   "h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
-const compactInputClass =
-  "h-9 w-20 rounded-md border border-[#cfd6df] bg-white px-2 text-right font-mono text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const readOnlyMetricClass = "px-3 py-3 text-right font-mono text-sm text-[#172026]";
 
 function formatMoney(value: number) {
@@ -296,18 +295,6 @@ export default async function PurchasingDecisionPage({
                           type="hidden"
                           value={qtyValue(line.unitPrice)}
                         />
-                        <input
-                          form="decision-create-po-form"
-                          name="poRawQty"
-                          type="hidden"
-                          value={qtyValue(line.ropUnitsRaw)}
-                        />
-                        <input
-                          form="decision-create-po-form"
-                          name="poRoundedQty"
-                          type="hidden"
-                          value={qtyValue(line.ropUnitsRounded)}
-                        />
                       </td>
                       <td className="px-3 py-3 align-top">
                         <input name="sku" type="hidden" value={line.sku} />
@@ -378,43 +365,11 @@ export default async function PurchasingDecisionPage({
                         supplierLeadTimeDays={line.supplierLeadTimeDays}
                         supplierSafetyDays={line.supplierSafetyDays}
                       />
-                      <td className={readOnlyMetricClass}>
-                        {formatNumber(line.ropUnitsRaw)}
-                      </td>
-                      <td className="px-3 py-3 align-top text-right">
-                        <input
-                          className={compactInputClass}
-                          defaultValue={line.manualRopUnits ?? line.ropUnitsRounded}
-                          min="0"
-                          name="manualRopUnits"
-                          placeholder={String(line.ropUnitsRounded)}
-                          type="number"
-                        />
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <div className="grid gap-1 text-xs text-[#52606d]">
-                          <label className="flex items-center gap-2">
-                            <input
-                              defaultChecked={false}
-                              form="decision-create-po-form"
-                              name={`qtyChoice:${line.sku}`}
-                              type="radio"
-                              value="raw"
-                            />
-                            Raw
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              defaultChecked
-                              form="decision-create-po-form"
-                              name={`qtyChoice:${line.sku}`}
-                              type="radio"
-                              value="rounded"
-                            />
-                            Round 10
-                          </label>
-                        </div>
-                      </td>
+                      <DecisionOrderQtyCells
+                        comingQty={line.coming}
+                        rawQty={line.ropUnitsRaw}
+                        sku={line.sku}
+                      />
                       <td className={readOnlyMetricClass}>{coverageText(line.coversSalesDuration)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.week)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.month)}</td>
