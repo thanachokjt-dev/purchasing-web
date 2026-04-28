@@ -7,6 +7,7 @@ import {
 } from "@/app/purchasing-decision/actions";
 import {
   DecisionCreatePoButton,
+  DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
 } from "@/app/purchasing-decision/decision-form";
@@ -28,13 +29,6 @@ function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
     minimumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatDecimal(value: number, digits = 2) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits,
   }).format(value);
 }
 
@@ -229,7 +223,7 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="overflow-x-auto">
-              <table className="min-w-[2360px] text-left text-sm">
+              <table className="min-w-[2480px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className="px-3 py-3 font-semibold">Pick</th>
@@ -244,6 +238,7 @@ export default async function PurchasingDecisionPage({
                     <th className="px-3 py-3 text-right font-semibold">Safety</th>
                     <th className="px-3 py-3 text-right font-semibold">Lead</th>
                     <th className="px-3 py-3 text-right font-semibold">Cycle</th>
+                    <th className="px-3 py-3 text-right font-semibold">Re-order Point</th>
                     <th className="px-3 py-3 text-right font-semibold">Raw qty</th>
                     <th className="px-3 py-3 text-right font-semibold">Round 10</th>
                     <th className="px-3 py-3 font-semibold">Use</th>
@@ -357,47 +352,14 @@ export default async function PurchasingDecisionPage({
                       </td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.onHandUnits)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
-                      <td className="px-3 py-3 align-top">
-                        <input
-                          className={compactInputClass}
-                          defaultValue={formatDecimal(line.demandIndexHm, 4)}
-                          min="0"
-                          name="demandIndexHm"
-                          step="0.0001"
-                          title={`Calculated ${formatDecimal(line.calculatedDemandIndexHm, 4)}`}
-                          type="number"
-                        />
-                        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
-                          calc {formatDecimal(line.calculatedDemandIndexHm, 2)}
-                        </p>
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <input
-                          className={compactInputClass}
-                          defaultValue={line.safetyDays}
-                          min="0"
-                          name="safetyDays"
-                          type="number"
-                        />
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <input
-                          className={compactInputClass}
-                          defaultValue={line.leadTimeDays}
-                          min="0"
-                          name="leadTimeDays"
-                          type="number"
-                        />
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <input
-                          className={compactInputClass}
-                          defaultValue={line.orderCycleDays}
-                          min="0"
-                          name="orderCycleDays"
-                          type="number"
-                        />
-                      </td>
+                      <DecisionPlanningCells
+                        calculatedDemandIndexHm={line.calculatedDemandIndexHm}
+                        demandIndexHm={line.demandIndexHm}
+                        leadTimeDays={line.leadTimeDays}
+                        orderCycleDays={line.orderCycleDays}
+                        reorderPointUnits={line.reorderPointUnits}
+                        safetyDays={line.safetyDays}
+                      />
                       <td className={readOnlyMetricClass}>
                         {formatNumber(line.ropUnitsRaw)}
                       </td>

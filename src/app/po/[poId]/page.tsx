@@ -173,7 +173,7 @@ export default async function PoDetailPage({
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
       <header className="border-b border-[#d9dde3] bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-5 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mx-auto flex w-full max-w-none flex-col gap-5 px-4 py-5 sm:px-6 2xl:px-8 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">
               PO detail
@@ -211,8 +211,8 @@ export default async function PoDetailPage({
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-6 sm:px-8">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mx-auto grid w-full max-w-none gap-5 px-4 py-5 sm:px-6 2xl:px-8">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-4">
           {[
             {
               detail: `${formatNumber(order.itemCount)} lines`,
@@ -260,7 +260,7 @@ export default async function PoDetailPage({
           })}
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+        <section className="grid gap-5 xl:grid-cols-[0.7fr_1.3fr] 2xl:grid-cols-[0.55fr_1.45fr]">
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Header</h2>
@@ -332,7 +332,7 @@ export default async function PoDetailPage({
         ) : null}
 
         {data.source === "supabase" ? (
-          <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
             <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
               <div className="border-b border-[#e2e7ed] p-5">
                 <h2 className="text-lg font-semibold">Landed Cost Allocation</h2>
@@ -565,7 +565,7 @@ export default async function PoDetailPage({
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-2">
+        <section className="grid gap-5 xl:grid-cols-2">
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Payment History</h2>

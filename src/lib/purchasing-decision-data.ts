@@ -96,6 +96,7 @@ export type PurchasingDecisionLine = {
   leadTimeDays: number;
   orderCycleDays: number;
   planningDays: number;
+  reorderPointUnits: number;
   ropUnits: number;
   ropUnitsRaw: number;
   ropUnitsRounded: number;
@@ -566,6 +567,7 @@ export async function getPurchasingDecisionData({
     const orderCycleDays =
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
+    const reorderPointUnits = Math.max(0, Math.ceil(demandIndexHm * (safetyDays + leadTimeDays)));
     const ropUnitsRaw = Math.max(0, Math.ceil(demandIndexHm * planningDays));
     const ropUnitsRounded = roundUpToTen(ropUnitsRaw);
     const manualRopUnits = optionalInteger(control?.manual_rop_units);
@@ -598,6 +600,7 @@ export async function getPurchasingDecisionData({
         leadTimeDays,
         orderCycleDays,
         planningDays,
+        reorderPointUnits,
         ropUnits,
         ropUnitsRaw,
         ropUnitsRounded,
