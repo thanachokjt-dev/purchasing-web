@@ -63,17 +63,18 @@ const statusClass = (status: string) => {
 };
 
 type DetailItem = NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["items"][number];
-const CORE_SIZE_COLUMNS = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
+const SIZE_PATTERN = "3XL|2XL|XXS|XS|XL|L|M|S";
+const CORE_SIZE_COLUMNS = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL"];
 
 function itemSize(item: DetailItem) {
   const source = [item.variantTitle, item.fullName, item.productTitle].join(" ");
-  const match = source.match(/(?:^|[\s/-])(3XL|2XL|XL|XS|L|M|S)(?:$|[\s/-])/i);
+  const match = source.match(new RegExp(`(?:^|[\\s/-])(${SIZE_PATTERN})(?:$|[\\s/-])`, "i"));
   return match?.[1].toUpperCase() ?? "OS";
 }
 
 function matrixProductName(item: DetailItem) {
   return item.productTitle
-    .replace(/\s*[/|-]\s*(3XL|2XL|XL|XS|L|M|S)\s*$/i, "")
+    .replace(new RegExp(`\\s*[/|-]\\s*(${SIZE_PATTERN})\\s*$`, "i"), "")
     .trim();
 }
 
