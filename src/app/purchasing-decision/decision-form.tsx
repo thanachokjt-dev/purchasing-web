@@ -194,7 +194,10 @@ export function DecisionPlanningCells({
   );
 }
 
-export function TagMultiSelect({
+const tagSelectClass =
+  "h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]";
+
+export function TagDropdownSelect({
   initialTags,
   options,
 }: {
@@ -202,39 +205,24 @@ export function TagMultiSelect({
   options: string[];
 }) {
   const [selected, setSelected] = useState(
-    initialTags.filter((tag) => options.includes(tag)),
+    initialTags.find((tag) => options.includes(tag)) ?? "",
   );
 
-  function toggle(tag: string) {
-    setSelected((current) =>
-      current.includes(tag)
-        ? current.filter((item) => item !== tag)
-        : [...current, tag],
-    );
-  }
-
   return (
-    <div className="grid gap-2">
-      <input name="tags" type="hidden" value={selected.join(", ")} />
-      <div className="flex max-h-24 min-w-[260px] flex-wrap gap-1 overflow-auto rounded-md border border-[#cfd6df] bg-white p-2">
-        {options.map((tag) => {
-          const active = selected.includes(tag);
-          return (
-            <button
-              className={`rounded-md border px-2 py-1 text-xs font-semibold ${
-                active
-                  ? "border-[#172026] bg-[#172026] text-white"
-                  : "border-[#dfe4ea] bg-[#fbfcfd] text-[#52606d]"
-              }`}
-              key={tag}
-              onClick={() => toggle(tag)}
-              type="button"
-            >
-              {tag}
-            </button>
-          );
-        })}
-      </div>
+    <div className="min-w-[190px]">
+      <input name="tags" type="hidden" value={selected} />
+      <select
+        className={tagSelectClass}
+        onChange={(event) => setSelected(event.target.value)}
+        value={selected}
+      >
+        <option value="">Select tag</option>
+        {options.map((tag) => (
+          <option key={tag} value={tag}>
+            {tag}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

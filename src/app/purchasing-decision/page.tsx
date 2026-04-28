@@ -10,7 +10,7 @@ import {
   DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
-  TagMultiSelect,
+  TagDropdownSelect,
 } from "@/app/purchasing-decision/decision-form";
 import {
   getPurchasingDecisionData,
@@ -78,9 +78,9 @@ export default async function PurchasingDecisionPage({
   const data = await getPurchasingDecisionData({ q, supplier, visibility });
 
   return (
-    <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
+    <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
       <header className="border-b border-[#d9dde3] bg-white">
-        <div className="mx-auto flex max-w-[1600px] flex-col gap-5 px-5 py-5 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex w-full flex-col gap-5 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">
               Purchasing Decision
@@ -112,7 +112,7 @@ export default async function PurchasingDecisionPage({
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1600px] gap-6 px-5 py-6 sm:px-8">
+      <div className="grid w-full min-w-0 gap-5 px-4 py-5 sm:px-6">
         {!data.controlsReady ? (
           <section className="rounded-lg border border-[#f0d9aa] bg-[#fffaf0] p-4 text-sm text-[#6f5a31]">
             Apply `supabase/migrations/005_purchasing_decision_controls.sql` in
@@ -120,7 +120,7 @@ export default async function PurchasingDecisionPage({
           </section>
         ) : null}
 
-        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section className="grid min-w-0 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {[
             { label: "SKUs", value: formatNumber(data.totals.skuCount), detail: "in Shopify read model" },
             { label: "Active", value: formatNumber(data.totals.activeSkuCount), detail: "visible to dashboard / PO" },
@@ -142,8 +142,8 @@ export default async function PurchasingDecisionPage({
           ))}
         </section>
 
-        <section className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
-          <div className="grid gap-4 border-b border-[#e2e7ed] p-5">
+        <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+          <div className="grid gap-4 border-b border-[#e2e7ed] p-4 sm:p-5">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-[#172026]">
@@ -217,7 +217,7 @@ export default async function PurchasingDecisionPage({
 
           <form action={createPoFromDecisionAction} id="decision-create-po-form" />
           <form action={savePurchasingDecisionAction}>
-            <div className="flex items-center justify-between gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-5 py-3">
+            <div className="flex flex-col gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="inline-flex items-center gap-2 text-sm font-medium text-[#52606d]">
                 <SlidersHorizontal size={16} />
                 Showing {formatNumber(data.lines.length)} rows
@@ -233,8 +233,8 @@ export default async function PurchasingDecisionPage({
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-[2480px] text-left text-sm">
+            <div className="max-w-full overflow-x-auto">
+              <table className="min-w-[2240px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className="px-3 py-3 font-semibold">Pick</th>
@@ -318,7 +318,7 @@ export default async function PurchasingDecisionPage({
                           {line.supplierSource}
                         </p>
                       </td>
-                      <td className="min-w-[300px] px-3 py-3 align-top">
+                      <td className="min-w-[280px] px-3 py-3 align-top">
                         <div className="flex items-start gap-3">
                           {line.imageUrl ? (
                             <Image
@@ -340,15 +340,15 @@ export default async function PurchasingDecisionPage({
                           />
                         </div>
                       </td>
-                      <td className="min-w-[220px] px-3 py-3 align-top">
+                      <td className="min-w-[200px] px-3 py-3 align-top">
                         <input
                           className={inputClass}
                           defaultValue={line.mainName}
                           name="mainName"
                         />
                       </td>
-                      <td className="min-w-[230px] px-3 py-3 align-top">
-                        <TagMultiSelect initialTags={line.tags} options={data.tagOptions} />
+                      <td className="min-w-[190px] px-3 py-3 align-top">
+                        <TagDropdownSelect initialTags={line.tags} options={data.tagOptions} />
                       </td>
                       <td className="min-w-[220px] px-3 py-3 align-top">
                         <select
