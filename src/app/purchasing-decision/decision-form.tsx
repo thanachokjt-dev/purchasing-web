@@ -161,6 +161,11 @@ export function DecisionPlanningCells({
     <>
       <td className="px-3 py-3 align-top">
         <input
+          name="calculatedDemandIndexHm"
+          type="hidden"
+          value={formatDecimal(calculatedDemandIndexHm, 4)}
+        />
+        <input
           className={compactInputClass}
           min="0"
           name="demandIndexHm"

@@ -55,8 +55,6 @@ async function runDailySync(request: NextRequest, modeOverride?: "manual" | "cro
       syncShopifyProductsAndInventory(supabase, {
         mode,
         maxPages,
-        sinceAt: window.sinceAt,
-        untilAt: window.untilAt,
       }),
       syncShopifyOrdersSalesLines(supabase, {
         mode,
@@ -72,7 +70,7 @@ async function runDailySync(request: NextRequest, modeOverride?: "manual" | "cro
       window,
       productsInventory,
       ordersSales,
-      note: "Daily sync completed for the previous one-day window.",
+      note: "Daily sync completed. Inventory is a full current snapshot; sales lines use the requested one-day window.",
     });
   } catch (error) {
     return NextResponse.json(

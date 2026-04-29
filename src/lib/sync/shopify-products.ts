@@ -109,6 +109,18 @@ function quantitiesMap(node: InventoryLevelNode) {
   ) as Record<string, number | undefined>;
 }
 
+function dateInTimeZone(value: string, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone,
+    year: "numeric",
+  }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 function mapVariant(
   variant: ShopifyVariantNode,
   syncedAt: string,
@@ -173,7 +185,7 @@ function mapVariant(
 
   const locations: LocationUpsert[] = [];
   const inventory: InventorySnapshotUpsert[] = [];
-  const snapshotDate = syncedAt.slice(0, 10);
+  const snapshotDate = dateInTimeZone(syncedAt, "Asia/Bangkok");
 
   for (const level of variant.inventoryItem?.inventoryLevels.nodes ?? []) {
     const locationId = extractShopifyNumericId(level.location.id);

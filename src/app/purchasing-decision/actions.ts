@@ -23,6 +23,19 @@ function nullableNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function autoNumber(value: string, calculatedValue: string) {
+  const parsed = nullableNumber(value);
+  const calculated = nullableNumber(calculatedValue);
+  if (parsed === null) {
+    return null;
+  }
+  if (calculated !== null && Math.abs(parsed - calculated) < 0.0001) {
+    return null;
+  }
+
+  return parsed;
+}
+
 function plannedNumber(
   value: string,
   source: string,
@@ -80,6 +93,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const suppliers = formData.getAll("supplier");
   const tags = formData.getAll("tags");
   const demandIndexes = formData.getAll("demandIndexHm");
+  const calculatedDemandIndexes = formData.getAll("calculatedDemandIndexHm");
   const safetyDays = formData.getAll("safetyDays");
   const safetySources = formData.getAll("safetySource");
   const originalSafetyDays = formData.getAll("originalSafetyDays");
@@ -125,7 +139,10 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         main_name_override: nullableText(textAt(mainNames, index)),
         supplier_override: nullableText(nextSupplier),
         tags_override: nextTags,
-        demand_index_override: nullableNumber(textAt(demandIndexes, index)),
+        demand_index_override: autoNumber(
+          textAt(demandIndexes, index),
+          textAt(calculatedDemandIndexes, index),
+        ),
         safety_days: plannedNumber(
           textAt(safetyDays, index),
           textAt(safetySources, index),
