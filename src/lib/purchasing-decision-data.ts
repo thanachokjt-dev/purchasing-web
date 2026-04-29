@@ -97,6 +97,7 @@ type DecisionControlRow = {
   lead_time_days: number | string | null;
   order_cycle_days: number | string | null;
   manual_rop_units: number | string | null;
+  order_qty_mode?: string | null;
   target_coverage_days: number | string | null;
   hide_from_purchasing: boolean | null;
   hide_reason: string | null;
@@ -137,6 +138,7 @@ export type PurchasingDecisionLine = {
   ropUnits: number;
   ropUnitsRaw: number;
   ropUnitsRounded: number;
+  orderQtyMode: "raw" | "rounded";
   manualRopUnits: number | null;
   coversSalesDuration: number | null;
   week: number;
@@ -396,7 +398,7 @@ async function fetchControls(supabase: SupabaseClient) {
   const query = await supabase
     .from("purchasing_decision_controls")
     .select(
-      "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+      "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note",
     );
   let data: unknown[] | null = query.data;
   let error = query.error;
@@ -900,6 +902,7 @@ export async function getPurchasingDecisionData({
     const ropUnitsRaw = Math.max(0, Math.ceil(demandIndexHm * planningDays));
     const ropUnitsRounded = roundUpToTen(ropUnitsRaw);
     const manualRopUnits = optionalInteger(control?.manual_rop_units);
+    const orderQtyMode = control?.order_qty_mode === "raw" ? "raw" : "rounded";
     const targetCoverageDays = optionalInteger(control?.target_coverage_days);
     const ropUnits = manualRopUnits ?? ropUnitsRounded;
     const onHandUnits = stockBySku.get(sku) ?? 0;
@@ -946,6 +949,7 @@ export async function getPurchasingDecisionData({
         ropUnits,
         ropUnitsRaw,
         ropUnitsRounded,
+        orderQtyMode,
         manualRopUnits,
         coversSalesDuration,
         week: Math.ceil(ropUnits / 4),

@@ -507,6 +507,7 @@ export default async function PurchasingDecisionPage({
                         lifetimeDailyAverage={line.lifetimeDailyAverage}
                         lastSaleDate={line.lastSaleDate}
                         orderCycleDays={line.orderCycleDays}
+                        orderQtyMode={line.orderQtyMode}
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
                         safetySource={line.safetySource}

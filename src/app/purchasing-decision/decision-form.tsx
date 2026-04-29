@@ -236,6 +236,7 @@ export function DecisionPlanningCells({
   lifetimeDailyAverage,
   lastSaleDate,
   orderCycleDays,
+  orderQtyMode,
   reorderPointUnits,
   safetyDays,
   safetySource,
@@ -254,6 +255,7 @@ export function DecisionPlanningCells({
   lifetimeDailyAverage: number;
   lastSaleDate: string | null;
   orderCycleDays: number;
+  orderQtyMode: "raw" | "rounded";
   reorderPointUnits: number;
   safetyDays: number;
   safetySource: "sku" | "supplier" | "default";
@@ -280,7 +282,7 @@ export function DecisionPlanningCells({
   }, [cycle, demand, lead, safety]);
   const netRawQty = Math.max(0, liveRawQty - comingQty);
   const netRoundedQty = roundUpToTen(netRawQty);
-  const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">("rounded");
+  const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">(orderQtyMode);
   const [manualOrderQty, setManualOrderQty] = useState<string | null>(null);
   const computedOrderQty = String(
     selectedMode === "raw" ? netRawQty : netRoundedQty,
@@ -401,6 +403,7 @@ export function DecisionPlanningCells({
         />
       </td>
       <td className="px-3 py-3 align-top">
+        <input name="orderQtyMode" type="hidden" value={selectedMode} />
         <input
           form="decision-create-po-form"
           name="poRawQty"

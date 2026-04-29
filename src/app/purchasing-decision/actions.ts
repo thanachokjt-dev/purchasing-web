@@ -110,6 +110,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const supplierLeadTimeDays = formData.getAll("supplierLeadTimeDays");
   const orderCycleDays = formData.getAll("orderCycleDays");
   const manualRopUnits = formData.getAll("manualRopUnits");
+  const orderQtyModes = formData.getAll("orderQtyMode");
   const targetCoverageDays = formData.getAll("targetCoverageDays");
   const hideReasons = formData.getAll("hideReason");
   const notes = formData.getAll("note");
@@ -167,6 +168,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         ),
         order_cycle_days: nullableNumber(textAt(orderCycleDays, index)),
         manual_rop_units: nullableNumber(textAt(manualRopUnits, index)),
+        order_qty_mode: textAt(orderQtyModes, index) === "raw" ? "raw" : "rounded",
         target_coverage_days: nullableNumber(textAt(targetCoverageDays, index)),
         hide_from_purchasing: hiddenSkus.has(sku),
         hide_reason: nullableText(textAt(hideReasons, index)),
@@ -184,7 +186,21 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     .from("purchasing_decision_controls")
     .upsert(rows, { onConflict: "sku" });
   if (error) {
-    throw new Error(error.message);
+    if (error.message.includes("order_qty_mode")) {
+      const rowsWithoutQtyMode = rows.map((row) => {
+        const { order_qty_mode: orderQtyMode, ...fallbackRow } = row;
+        void orderQtyMode;
+        return fallbackRow;
+      });
+      const retry = await supabase
+        .from("purchasing_decision_controls")
+        .upsert(rowsWithoutQtyMode, { onConflict: "sku" });
+      if (retry.error) {
+        throw new Error(retry.error.message);
+      }
+    } else {
+      throw new Error(error.message);
+    }
   }
 
   revalidatePath("/purchasing-decision");
