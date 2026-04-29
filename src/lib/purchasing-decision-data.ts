@@ -152,6 +152,12 @@ export type PurchasingDecisionData = {
   mode: "supabase" | "baseline";
   controlsReady: boolean;
   itemStatusOptions: string[];
+  supplierFilterOptions: Array<{
+    supplier: string;
+    orderQty: number;
+    onHandUnits: number;
+    lineCount: number;
+  }>;
   supplierOptions: string[];
   tagOptions: string[];
   lines: PurchasingDecisionLine[];
@@ -614,6 +620,7 @@ export async function getPurchasingDecisionData({
   supplier = "all",
   tag = "all",
   itemStatus = "all",
+  alert = "all",
   visibility = "active",
 }: {
   limit?: number | null;
@@ -621,6 +628,7 @@ export async function getPurchasingDecisionData({
   supplier?: string;
   tag?: string;
   itemStatus?: string;
+  alert?: string;
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
@@ -630,6 +638,7 @@ export async function getPurchasingDecisionData({
       mode: "baseline",
       controlsReady: false,
       itemStatusOptions: [],
+      supplierFilterOptions: [],
       supplierOptions: [],
       tagOptions: [],
       lines: [],
@@ -683,6 +692,7 @@ export async function getPurchasingDecisionData({
   const selectedSupplier = supplier.trim().toLowerCase();
   const selectedTag = tag.trim().toLowerCase();
   const selectedItemStatus = itemStatus.trim().toLowerCase();
+  const selectedAlert = alert.trim().toLowerCase();
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
   const activeSupplierNames = new Set(
@@ -854,6 +864,27 @@ export async function getPurchasingDecisionData({
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
 
+  const supplierFilterOptions = supplierOptions
+    .map((option) => {
+      const optionKey = option.toLowerCase();
+      const supplierLines = allLines.filter(
+        (line) => !line.hidden && line.supplier.toLowerCase() === optionKey,
+      );
+
+      return {
+        supplier: option,
+        orderQty: supplierLines.reduce((sum, line) => sum + line.ropUnits, 0),
+        onHandUnits: supplierLines.reduce((sum, line) => sum + line.onHandUnits, 0),
+        lineCount: supplierLines.length,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.orderQty - a.orderQty ||
+        b.onHandUnits - a.onHandUnits ||
+        a.supplier.localeCompare(b.supplier),
+    );
+
   const filteredLines = allLines
     .filter((line) => {
       const matchesSupplier =
@@ -867,6 +898,8 @@ export async function getPurchasingDecisionData({
       const matchesItemStatus =
         selectedItemStatus === "all" ||
         line.itemStatus.toLowerCase() === selectedItemStatus;
+      const matchesAlert =
+        selectedAlert === "all" || line.ropAlert === selectedAlert;
       const matchesVisibility =
         selectedVisibility === "all" ||
         (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
@@ -885,7 +918,14 @@ export async function getPurchasingDecisionData({
           .toLowerCase()
           .includes(query);
 
-      return matchesSupplier && matchesTag && matchesItemStatus && matchesVisibility && matchesQuery;
+      return (
+        matchesSupplier &&
+        matchesTag &&
+        matchesItemStatus &&
+        matchesAlert &&
+        matchesVisibility &&
+        matchesQuery
+      );
     })
     .sort((a, b) => {
       const statusRank = { order_now: 0, watch: 1, healthy: 2, hidden: 3 };
@@ -910,6 +950,7 @@ export async function getPurchasingDecisionData({
         ...allLines.map((line) => line.itemStatus).filter(Boolean),
       ]),
     ).sort((a, b) => a.localeCompare(b)),
+    supplierFilterOptions,
     supplierOptions,
     tagOptions: activeTagOptions.sort((a, b) => a.localeCompare(b)),
     lines: visibleLines,

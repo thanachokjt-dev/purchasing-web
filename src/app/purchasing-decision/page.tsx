@@ -74,15 +74,16 @@ function alertClass(status: string) {
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; status?: string; visibility?: string }>;
+  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; status?: string; alert?: string; visibility?: string }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
   const supplier = params.supplier ?? "all";
   const tag = params.tag ?? "all";
   const status = params.status ?? "all";
+  const alert = params.alert ?? "all";
   const visibility = params.visibility ?? "active";
-  const data = await getPurchasingDecisionData({ q, supplier, tag, itemStatus: status, visibility });
+  const data = await getPurchasingDecisionData({ q, supplier, tag, itemStatus: status, alert, visibility });
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
@@ -161,7 +162,7 @@ export default async function PurchasingDecisionPage({
                   then save all visible rows in one submit.
                 </p>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_180px_160px_auto]">
+              <form className="grid gap-3 md:grid-cols-[1fr_260px_180px_180px_160px_160px_auto]">
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Search
@@ -181,9 +182,9 @@ export default async function PurchasingDecisionPage({
                     <option value="all">All suppliers</option>
                     <option value="__unset">Not set in sheet</option>
                     <option value="__unmapped">Unmapped supplier</option>
-                    {data.supplierOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                    {data.supplierFilterOptions.map((option) => (
+                      <option key={option.supplier} value={option.supplier}>
+                        {option.supplier} | qty {formatNumber(option.orderQty)} | on-hand {formatNumber(option.onHandUnits)}
                       </option>
                     ))}
                   </select>
@@ -226,6 +227,19 @@ export default async function PurchasingDecisionPage({
                     <option value="active">Active only</option>
                     <option value="hidden">Hidden list</option>
                     <option value="all">All</option>
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+                    Alert
+                  </span>
+                  <select className={inputClass} defaultValue={alert} name="alert">
+                    <option value="all">All alerts</option>
+                    {["order_now", "watch", "healthy", "hidden"].map((option) => (
+                      <option key={option} value={option}>
+                        {alertLabel(option)}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <button
