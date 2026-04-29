@@ -27,9 +27,15 @@ function plannedNumber(
   value: string,
   source: string,
   supplierDefault: string,
+  originalValue: string,
 ) {
   const parsed = nullableNumber(value);
   const defaultValue = nullableNumber(supplierDefault);
+  const original = nullableNumber(originalValue);
+  if (source !== "sku" && defaultValue !== null && parsed === original) {
+    return null;
+  }
+
   if (
     parsed !== null &&
     defaultValue !== null &&
@@ -54,6 +60,11 @@ export async function savePurchasingDecisionAction(formData: FormData) {
       .filter((supplier) => supplier.isActive)
       .map((supplier) => supplier.supplierName.toLowerCase()),
   );
+  const supplierDefaultByName = new Map(
+    setupData.suppliers
+      .filter((supplier) => supplier.isActive)
+      .map((supplier) => [supplier.supplierName.toLowerCase(), supplier]),
+  );
   const allowedTags = new Set(
     setupData.tags
       .filter((tag) => tag.isActive)
@@ -71,9 +82,11 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const demandIndexes = formData.getAll("demandIndexHm");
   const safetyDays = formData.getAll("safetyDays");
   const safetySources = formData.getAll("safetySource");
+  const originalSafetyDays = formData.getAll("originalSafetyDays");
   const supplierSafetyDays = formData.getAll("supplierSafetyDays");
   const leadTimeDays = formData.getAll("leadTimeDays");
   const leadTimeSources = formData.getAll("leadTimeSource");
+  const originalLeadTimeDays = formData.getAll("originalLeadTimeDays");
   const supplierLeadTimeDays = formData.getAll("supplierLeadTimeDays");
   const orderCycleDays = formData.getAll("orderCycleDays");
   const manualRopUnits = formData.getAll("manualRopUnits");
@@ -92,6 +105,15 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     const nextSupplier = allowedSuppliers.has(supplierValue.toLowerCase())
       ? supplierValue
       : "";
+    const supplierDefault = supplierDefaultByName.get(nextSupplier.toLowerCase());
+    const supplierSafetyDefault =
+      supplierDefault && supplierDefault.safetyDays > 0
+        ? String(supplierDefault.safetyDays)
+        : textAt(supplierSafetyDays, index);
+    const supplierLeadDefault =
+      supplierDefault && supplierDefault.leadTimeDays > 0
+        ? String(supplierDefault.leadTimeDays)
+        : textAt(supplierLeadTimeDays, index);
     const nextTags = parseDecisionTags(textAt(tags, index)).filter((tag) =>
       allowedTags.has(tag.toLowerCase()),
     );
@@ -107,12 +129,14 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         safety_days: plannedNumber(
           textAt(safetyDays, index),
           textAt(safetySources, index),
-          textAt(supplierSafetyDays, index),
+          supplierSafetyDefault,
+          textAt(originalSafetyDays, index),
         ),
         lead_time_days: plannedNumber(
           textAt(leadTimeDays, index),
           textAt(leadTimeSources, index),
-          textAt(supplierLeadTimeDays, index),
+          supplierLeadDefault,
+          textAt(originalLeadTimeDays, index),
         ),
         order_cycle_days: nullableNumber(textAt(orderCycleDays, index)),
         manual_rop_units: nullableNumber(textAt(manualRopUnits, index)),
@@ -129,9 +153,12 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     return;
   }
 
-  await supabase
+  const { error } = await supabase
     .from("purchasing_decision_controls")
     .upsert(rows, { onConflict: "sku" });
+  if (error) {
+    throw new Error(error.message);
+  }
 
   revalidatePath("/purchasing-decision");
   revalidatePath("/");

@@ -166,6 +166,7 @@ export function DecisionPlanningCells({
       </td>
       <td className="px-3 py-3 align-top">
         <input name="safetySource" type="hidden" value={safetySource} />
+        <input name="originalSafetyDays" type="hidden" value={safetyDays} />
         <input
           name="supplierSafetyDays"
           type="hidden"
@@ -189,6 +190,7 @@ export function DecisionPlanningCells({
       </td>
       <td className="px-3 py-3 align-top">
         <input name="leadTimeSource" type="hidden" value={leadTimeSource} />
+        <input name="originalLeadTimeDays" type="hidden" value={leadTimeDays} />
         <input
           name="supplierLeadTimeDays"
           type="hidden"

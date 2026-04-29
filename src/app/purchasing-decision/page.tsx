@@ -67,13 +67,14 @@ function alertClass(status: string) {
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; supplier?: string; visibility?: string }>;
+  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; visibility?: string }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
   const supplier = params.supplier ?? "all";
+  const tag = params.tag ?? "all";
   const visibility = params.visibility ?? "active";
-  const data = await getPurchasingDecisionData({ q, supplier, visibility });
+  const data = await getPurchasingDecisionData({ q, supplier, tag, visibility });
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
@@ -152,7 +153,7 @@ export default async function PurchasingDecisionPage({
                   then save all visible rows in one submit.
                 </p>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_220px_160px_auto]">
+              <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_160px_auto]">
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Search
@@ -170,7 +171,22 @@ export default async function PurchasingDecisionPage({
                   </span>
                   <select className={inputClass} defaultValue={supplier} name="supplier">
                     <option value="all">All suppliers</option>
+                    <option value="__unset">Not set in sheet</option>
+                    <option value="__unmapped">Unmapped supplier</option>
                     {data.supplierOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+                    Tags
+                  </span>
+                  <select className={inputClass} defaultValue={tag} name="tag">
+                    <option value="all">All tags</option>
+                    {data.tagOptions.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>

@@ -87,6 +87,7 @@ export type PurchasingDecisionLine = {
   mainName: string;
   tags: string[];
   supplier: string;
+  supplierSetInSheet: boolean;
   supplierSource: "decision" | "manual" | "excel" | "shopify_vendor" | "setup" | "pending";
   onHandUnits: number;
   totalSale: number;
@@ -479,15 +480,45 @@ function ropStatus(hidden: boolean, onHand: number, coming: number, ropUnits: nu
   return "healthy" as const;
 }
 
+const sizeOrder = new Map(
+  ["xxs", "2xs", "xs", "s", "m", "l", "xl", "2xl", "3xl"].map((size, index) => [
+    size,
+    index,
+  ]),
+);
+
+function normalizedSizeToken(value: string) {
+  const normalized = value.toLowerCase().replace(/\b2xs\b/g, "xxs");
+  const match = normalized.match(/(?:^|[\s/_-])(xxs|xs|s|m|l|xl|2xl|3xl)(?:$|[\s/_-])/);
+  return match?.[1] ?? "";
+}
+
+function sizeRank(line: PurchasingDecisionLine) {
+  const skuSize = normalizedSizeToken(line.sku);
+  const productSize = normalizedSizeToken(line.productName);
+  const shopifySize = normalizedSizeToken(line.shopifyProductName);
+  const size = skuSize || productSize || shopifySize;
+  return sizeOrder.get(size) ?? 99;
+}
+
+function productGroupName(line: PurchasingDecisionLine) {
+  return line.productName
+    .replace(/\s*\/\s*(?:2XS|XXS|XS|S|M|L|XL|2XL|3XL)\s*$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
 export async function getPurchasingDecisionData({
   limit = 120,
   q = "",
   supplier = "all",
+  tag = "all",
   visibility = "active",
 }: {
   limit?: number | null;
   q?: string;
   supplier?: string;
+  tag?: string;
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
@@ -547,6 +578,7 @@ export async function getPurchasingDecisionData({
     : buildManualSupplierBySku((manualSupplierResult.data ?? []) as ManualSupplierRow[]);
   const query = q.trim().toLowerCase();
   const selectedSupplier = supplier.trim().toLowerCase();
+  const selectedTag = tag.trim().toLowerCase();
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
   const activeSupplierNames = new Set(
@@ -658,6 +690,7 @@ export async function getPurchasingDecisionData({
         mainName: resolvedMainName,
         tags,
         supplier: lineSupplier.supplier,
+        supplierSetInSheet: Boolean(compactText(control?.supplier_override)),
         supplierSource: lineSupplier.source,
         onHandUnits,
         totalSale: sales.total,
@@ -708,7 +741,13 @@ export async function getPurchasingDecisionData({
   const filteredLines = allLines
     .filter((line) => {
       const matchesSupplier =
-        selectedSupplier === "all" || line.supplier.toLowerCase() === selectedSupplier;
+        selectedSupplier === "all" ||
+        (selectedSupplier === "__unset" && !line.supplierSetInSheet) ||
+        (selectedSupplier === "__unmapped" && line.supplierSource === "pending") ||
+        line.supplier.toLowerCase() === selectedSupplier;
+      const matchesTag =
+        selectedTag === "all" ||
+        line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
       const matchesVisibility =
         selectedVisibility === "all" ||
         (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
@@ -726,14 +765,15 @@ export async function getPurchasingDecisionData({
           .toLowerCase()
           .includes(query);
 
-      return matchesSupplier && matchesVisibility && matchesQuery;
+      return matchesSupplier && matchesTag && matchesVisibility && matchesQuery;
     })
     .sort((a, b) => {
       const statusRank = { order_now: 0, watch: 1, healthy: 2, hidden: 3 };
       return (
+        a.mainName.localeCompare(b.mainName) ||
+        productGroupName(a).localeCompare(productGroupName(b)) ||
+        sizeRank(a) - sizeRank(b) ||
         statusRank[a.ropAlert] - statusRank[b.ropAlert] ||
-        b.ropUnits - a.ropUnits ||
-        b.totalSale - a.totalSale ||
         a.sku.localeCompare(b.sku)
       );
     });
