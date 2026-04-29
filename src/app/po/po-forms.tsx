@@ -1384,3 +1384,39 @@ export function PrintDocumentButton({
     </button>
   );
 }
+
+export function DraftApprovalEmailButton({ emailText }: { emailText: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyEmail() {
+    setOpen(true);
+    try {
+      await navigator.clipboard.writeText(emailText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-2">
+      <button
+        className="inline-flex h-10 items-center justify-center rounded-md border border-[#cfd6df] bg-white px-4 text-sm font-semibold text-[#364252]"
+        onClick={copyEmail}
+        type="button"
+      >
+        {copied ? "Copied e-mail" : "Draft e-mail"}
+      </button>
+      {open ? (
+        <textarea
+          className="min-h-52 w-full rounded-md border border-[#cfd6df] bg-[#fbfcfd] p-3 text-sm leading-6 text-[#172026]"
+          onFocus={(event) => event.target.select()}
+          readOnly
+          value={emailText}
+        />
+      ) : null}
+    </div>
+  );
+}

@@ -6,6 +6,7 @@ import {
   AddPoItemForm,
   BatchReceiveFormBar,
   BatchReceiveLineFields,
+  DraftApprovalEmailButton,
   LandedCostAllocationForm,
   PoHeaderRefsForm,
   PoDraftLinesForm,
@@ -25,6 +26,12 @@ const formatCurrency = (value: number, currency: string) =>
     maximumFractionDigits: 0,
     minimumFractionDigits: 0,
     style: "currency",
+  }).format(value);
+
+const formatDecimal = (value: number, digits = 1) =>
+  new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
   }).format(value);
 
 const formatDateTime = (value: string | null) => {
@@ -138,10 +145,78 @@ function quoteMatrixRows(items: DetailItem[]) {
     ),
   ).sort();
 
+  const rowValues = Array.from(rows.values());
+  const maxQty = Math.max(
+    0,
+    ...rowValues.flatMap((row) =>
+      Array.from(row.items.values()).map((item) => item.orderedQty),
+    ),
+  );
+
   return {
-    rows: Array.from(rows.values()).sort((a, b) => a.productName.localeCompare(b.productName)),
+    maxQty,
+    rows: rowValues.sort((a, b) => a.productName.localeCompare(b.productName)),
     sizes: [...CORE_SIZE_COLUMNS, ...extraSizes],
   };
+}
+
+function qtyHeatStyle(value: number, maxValue: number) {
+  if (!value) {
+    return {
+      backgroundColor: "#111827",
+      color: "#ffffff",
+    };
+  }
+
+  const ratio = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
+  const hue = 4 + ratio * 128;
+  const saturation = 62;
+  const lightness = 93 - ratio * 8;
+
+  return {
+    backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
+    color: "#172026",
+  };
+}
+
+function approvalEmailText({
+  balance,
+  coverDays,
+  order,
+  paidTotal,
+}: {
+  balance: number;
+  coverDays: number | null;
+  order: NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["order"];
+  paidTotal: number;
+}) {
+  const coverLine =
+    coverDays === null
+      ? "Coverage: Demand HM data is not available for every line, so coverage days cannot be calculated reliably."
+      : `Coverage: this PO covers approximately ${formatDecimal(coverDays, 0)} days of demand based on current Demand HM.`;
+
+  return [
+    "Subject: ขออนุมัติจ่ายเงิน PO " + order.poId,
+    "",
+    "เรียนคุณวิลล์",
+    "",
+    `รบกวนขออนุมัติจ่ายเงินสำหรับ PO ${order.poId}`,
+    `Supplier: ${order.supplierName}`,
+    `PO Date: ${order.poDate ? order.poDate.slice(0, 10) : "-"}`,
+    order.quotationReference ? `Quotation: ${order.quotationReference}` : null,
+    order.supplierInvoiceNo ? `Supplier invoice: ${order.supplierInvoiceNo}` : null,
+    "",
+    `PO amount: ${formatCurrency(order.poAmountForeign, order.currency)}`,
+    `Paid already: ${formatCurrency(paidTotal, order.currency)}`,
+    `Request approval amount / balance: ${formatCurrency(balance, order.currency)}`,
+    coverLine,
+    "",
+    "เหตุผล: เป็นรายการสั่งซื้อเพื่อเติม stock ตาม PO workflow และยอดคงเหลือหลังหักยอดที่ชำระแล้ว",
+    "",
+    "ขอบคุณครับ",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 export default async function PoDetailPage({
@@ -171,6 +246,18 @@ export default async function PoDetailPage({
     0,
   );
   const paymentBalance = Math.max(0, order.poAmountForeign - paidTotal);
+  const demandTotal = data.items.reduce(
+    (sum, item) => sum + Number(item.demandIndexHm ?? 0),
+    0,
+  );
+  const orderCoverDays =
+    demandTotal > 0 ? data.items.reduce((sum, item) => sum + item.qty, 0) / demandTotal : null;
+  const approvalEmail = approvalEmailText({
+    balance: paymentBalance,
+    coverDays: orderCoverDays,
+    order,
+    paidTotal,
+  });
   const receiptsByItemId = new Map<string, typeof data.receipts>();
   for (const receipt of data.receipts) {
     const itemId = receipt.po_item_id;
@@ -352,6 +439,16 @@ export default async function PoDetailPage({
                 poAmount={order.poAmountForeign}
                 poId={order.poId}
               />
+              <div className="mt-4 rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-4">
+                <div className="mb-3 grid gap-1 text-sm text-[#52606d]">
+                  <p className="font-semibold text-[#172026]">Approval e-mail draft</p>
+                  <p>
+                    Cover {orderCoverDays === null ? "-" : `${formatDecimal(orderCoverDays, 0)} days`} / request{" "}
+                    {formatCurrency(paymentBalance, order.currency)}
+                  </p>
+                </div>
+                <DraftApprovalEmailButton emailText={approvalEmail} />
+              </div>
             </div>
           </section>
         ) : null}
@@ -463,8 +560,9 @@ export default async function PoDetailPage({
                       const cell = row.items.get(size);
                       return (
                         <td
-                          className="min-w-20 border-l border-[#dfe4ea] bg-[#e8f4fb] px-3 py-3 text-right"
+                          className="min-w-20 border-l border-[#dfe4ea] px-3 py-3 text-right"
                           key={size}
+                          style={qtyHeatStyle(cell?.orderedQty ?? 0, matrix.maxQty)}
                         >
                           <p className="font-mono font-semibold">{cell ? formatNumber(cell.orderedQty) : ""}</p>
                           <p className="mt-1 font-mono text-sm font-semibold italic text-[#172026]">
@@ -729,6 +827,7 @@ function PrintMatrixDocument({
       <table className="print-matrix">
         <thead>
           <tr>
+            <th>Image</th>
             <th>Product</th>
             {matrix.sizes.map((size) => (
               <th key={size}>{size}</th>
@@ -739,10 +838,28 @@ function PrintMatrixDocument({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.productName}>
+              <td>
+                {row.imageUrl ? (
+                  <Image
+                    alt={row.productName}
+                    className="print-product-image"
+                    height={96}
+                    src={row.imageUrl}
+                    width={96}
+                  />
+                ) : (
+                  ""
+                )}
+              </td>
               <td>{row.productName}</td>
-              {matrix.sizes.map((size) => (
-                <td key={size}>{row.items.get(size)?.orderedQty || ""}</td>
-              ))}
+              {matrix.sizes.map((size) => {
+                const orderedQty = row.items.get(size)?.orderedQty ?? 0;
+                return (
+                  <td key={size} style={qtyHeatStyle(orderedQty, matrix.maxQty)}>
+                    {orderedQty || ""}
+                  </td>
+                );
+              })}
               <td>{row.totalQty}</td>
             </tr>
           ))}

@@ -200,6 +200,7 @@ export type PoCatalogItemOption = {
   lastFreightUnitCost: number;
   lastLandedUnitCost: number;
   lastPoId: string;
+  demandIndexHm: number;
   recommendedRawQty: number;
   recommendedRoundQty: number;
   recommendedQty: number;
@@ -207,6 +208,7 @@ export type PoCatalogItemOption = {
 };
 
 type PortalItem = PoPortalItem & {
+  demandIndexHm?: number;
   freightUnitCost?: number;
   imageUrl?: string | null;
   itemUuid?: string;
@@ -817,6 +819,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         lastFreightUnitCost: numeric(lastPrice?.freight_unit_cost),
         lastLandedUnitCost: numeric(lastPrice?.landed_unit_cost),
         lastPoId: lastPrice?.po_id ?? "",
+        demandIndexHm: decisionLine?.demandIndexHm ?? 0,
         recommendedRawQty: decisionLine?.ropUnitsRaw ?? 0,
         recommendedRoundQty: decisionLine?.ropUnitsRounded ?? 0,
         recommendedQty: decisionLine?.ropUnits ?? 0,
@@ -857,6 +860,7 @@ export async function getPoPortalDetailData(poId: string) {
         .filter((item) => item.poId === poId)
         .map((item) => ({
           ...item,
+          demandIndexHm: 0,
           freightUnitCost: 0,
           imageUrl: null,
           itemUuid: undefined,
@@ -942,6 +946,7 @@ export async function getPoPortalDetailData(poId: string) {
     paymentTerms: supplier.payment_terms ?? "",
   }));
   const catalogItems = await getPoCatalogItems(supplierOptions);
+  const catalogItemBySku = new Map(catalogItems.map((item) => [item.sku, item]));
 
   let itemQuery = await supabase
     .from("po_items")
@@ -1052,6 +1057,7 @@ export async function getPoPortalDetailData(poId: string) {
   const items = supabaseItems.map((item) =>
     ({
       ...mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(item.sku ?? "")),
+      demandIndexHm: catalogItemBySku.get(item.sku ?? "")?.demandIndexHm ?? 0,
       onHand: onHandBySku.get(item.sku ?? "") ?? 0,
     }),
   );
