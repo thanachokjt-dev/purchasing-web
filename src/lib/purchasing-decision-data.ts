@@ -67,6 +67,13 @@ type SalesStats = {
   demandIndex: number;
 };
 
+export type DemandFormulaSettings = {
+  lifetimeWeight: number;
+  sellingDayWeight: number;
+  recentFloorPercent: number;
+  capAtSellingDayAverage: boolean;
+};
+
 type IncomingRow = {
   sku: string | null;
   active_incoming_qty: number | string | null;
@@ -151,6 +158,7 @@ export type PurchasingDecisionLine = {
 export type PurchasingDecisionData = {
   mode: "supabase" | "baseline";
   controlsReady: boolean;
+  demandFormula: DemandFormulaSettings;
   itemStatusOptions: string[];
   supplierFilterOptions: Array<{
     supplier: string;
@@ -252,20 +260,85 @@ function saleSpanDays(firstDate: string | null, lastDate: string | null) {
   return Math.max(1, Math.floor((last - first) / (24 * 60 * 60 * 1000)) + 1);
 }
 
+const DEFAULT_DEMAND_FORMULA: DemandFormulaSettings = {
+  lifetimeWeight: 35,
+  sellingDayWeight: 65,
+  recentFloorPercent: 75,
+  capAtSellingDayAverage: true,
+};
+
+function boundedNumber(
+  value: number | string | null | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function demandFormulaFromParams({
+  capSelling,
+  lifetimeWeight,
+  recentFloor,
+  sellingWeight,
+}: {
+  capSelling?: string;
+  lifetimeWeight?: number | string | null;
+  recentFloor?: number | string | null;
+  sellingWeight?: number | string | null;
+}): DemandFormulaSettings {
+  return {
+    lifetimeWeight: boundedNumber(
+      lifetimeWeight,
+      DEFAULT_DEMAND_FORMULA.lifetimeWeight,
+      0,
+      100,
+    ),
+    sellingDayWeight: boundedNumber(
+      sellingWeight,
+      DEFAULT_DEMAND_FORMULA.sellingDayWeight,
+      0,
+      100,
+    ),
+    recentFloorPercent: boundedNumber(
+      recentFloor,
+      DEFAULT_DEMAND_FORMULA.recentFloorPercent,
+      0,
+      200,
+    ),
+    capAtSellingDayAverage: capSelling !== "false",
+  };
+}
+
 function averageDemandFromStats(stats: {
   total: number;
   firstSaleDate: string | null;
   lastSaleDate: string | null;
+  sold30: number;
   sellingDays: number;
-}) {
+}, formula: DemandFormulaSettings) {
   const spanDays = saleSpanDays(stats.firstSaleDate, stats.lastSaleDate);
   const lifetimeDailyAverage = spanDays > 0 ? stats.total / spanDays : 0;
   const sellingDayAverage =
     stats.sellingDays > 0 ? stats.total / stats.sellingDays : 0;
-  const demandIndex =
-    lifetimeDailyAverage > 0 && sellingDayAverage > 0
-      ? (lifetimeDailyAverage + sellingDayAverage) / 2
+  const weightTotal = formula.lifetimeWeight + formula.sellingDayWeight;
+  const weightedBase =
+    weightTotal > 0
+      ? (lifetimeDailyAverage * formula.lifetimeWeight +
+          sellingDayAverage * formula.sellingDayWeight) /
+        weightTotal
       : lifetimeDailyAverage || sellingDayAverage;
+  const recentFloor = (stats.sold30 / 30) * (formula.recentFloorPercent / 100);
+  const uncappedDemand = Math.max(weightedBase, recentFloor);
+  const demandIndex =
+    formula.capAtSellingDayAverage && sellingDayAverage > 0
+      ? Math.min(uncappedDemand, sellingDayAverage)
+      : uncappedDemand;
 
   return {
     demandIndex,
@@ -394,7 +467,7 @@ function buildManualSupplierBySku(rows: ManualSupplierRow[]) {
   return bySku;
 }
 
-function buildSalesBySku(rows: SalesRow[]) {
+function buildSalesBySku(rows: SalesRow[], formula: DemandFormulaSettings) {
   const d30 = daysAgo(30);
   const bySku = new Map<
     string,
@@ -442,8 +515,9 @@ function buildSalesBySku(rows: SalesRow[]) {
         total: stats.total,
         firstSaleDate: stats.firstSaleDate,
         lastSaleDate: stats.lastSaleDate,
+        sold30: stats.sold30,
         sellingDays: stats.saleDates.size,
-      });
+      }, formula);
 
       return [
         sku,
@@ -460,7 +534,10 @@ function buildSalesBySku(rows: SalesRow[]) {
   );
 }
 
-function buildSalesBySkuFromSummary(rows: SalesSummaryRow[]) {
+function buildSalesBySkuFromSummary(
+  rows: SalesSummaryRow[],
+  formula: DemandFormulaSettings,
+) {
   const bySku = new Map<string, SalesStats>();
 
   for (const row of rows) {
@@ -471,23 +548,30 @@ function buildSalesBySkuFromSummary(rows: SalesSummaryRow[]) {
 
     const total = numeric(row.total_sale);
     const sold30 = numeric(row.sold_30);
-    const demand30 = sold30 / 30;
+    const averages = averageDemandFromStats({
+      firstSaleDate: null,
+      lastSaleDate: null,
+      sellingDays: 0,
+      sold30,
+      total,
+    }, formula);
     bySku.set(sku, {
       total,
       sold30,
       firstSaleDate: null,
       lastSaleDate: null,
       sellingDays: 0,
-      lifetimeDailyAverage: demand30,
-      sellingDayAverage: demand30,
-      demandIndex: demand30,
+      ...averages,
     });
   }
 
   return bySku;
 }
 
-async function fetchSalesBySku(supabase: SupabaseClient) {
+async function fetchSalesBySku(
+  supabase: SupabaseClient,
+  formula: DemandFormulaSettings,
+) {
   try {
     const rawSalesRows = await fetchAll<SalesRow>("Sales lines", (from, to) =>
       supabase
@@ -496,7 +580,7 @@ async function fetchSalesBySku(supabase: SupabaseClient) {
         .range(from, to),
     );
 
-    return buildSalesBySku(rawSalesRows);
+    return buildSalesBySku(rawSalesRows, formula);
   } catch {
     const { data, error } = await supabase
       .from("purchasing_sales_by_sku")
@@ -506,7 +590,7 @@ async function fetchSalesBySku(supabase: SupabaseClient) {
       return new Map<string, SalesStats>();
     }
 
-    return buildSalesBySkuFromSummary((data ?? []) as SalesSummaryRow[]);
+    return buildSalesBySkuFromSummary((data ?? []) as SalesSummaryRow[], formula);
   }
 }
 
@@ -633,6 +717,10 @@ export async function getPurchasingDecisionData({
   tag = "all",
   itemStatus = "all",
   alert = "all",
+  capSelling = "true",
+  lifetimeWeight = DEFAULT_DEMAND_FORMULA.lifetimeWeight,
+  recentFloor = DEFAULT_DEMAND_FORMULA.recentFloorPercent,
+  sellingWeight = DEFAULT_DEMAND_FORMULA.sellingDayWeight,
   visibility = "active",
 }: {
   limit?: number | null;
@@ -641,14 +729,25 @@ export async function getPurchasingDecisionData({
   tag?: string;
   itemStatus?: string;
   alert?: string;
+  capSelling?: string;
+  lifetimeWeight?: number | string | null;
+  recentFloor?: number | string | null;
+  sellingWeight?: number | string | null;
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
+  const demandFormula = demandFormulaFromParams({
+    capSelling,
+    lifetimeWeight,
+    recentFloor,
+    sellingWeight,
+  });
 
   if (!supabase) {
     return {
       mode: "baseline",
       controlsReady: false,
+      demandFormula,
       itemStatusOptions: [],
       supplierFilterOptions: [],
       supplierOptions: [],
@@ -684,7 +783,7 @@ export async function getPurchasingDecisionData({
         .range(from, to),
     ),
     fetchLatestInventoryRows(supabase),
-    fetchSalesBySku(supabase),
+    fetchSalesBySku(supabase, demandFormula),
     supabase
       .from("po_incoming_by_sku")
       .select("sku,active_incoming_qty,pending_approval_qty"),
@@ -962,6 +1061,7 @@ export async function getPurchasingDecisionData({
   return {
     mode: "supabase",
     controlsReady: controlResult.controlsReady,
+    demandFormula,
     itemStatusOptions: Array.from(
       new Set([
         "Available",

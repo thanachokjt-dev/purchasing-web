@@ -91,6 +91,141 @@ export function SelectionButtons() {
   );
 }
 
+export function DemandFormulaHeaderButton({
+  capAtSellingDayAverage,
+  lifetimeWeight,
+  recentFloorPercent,
+  sellingDayWeight,
+}: {
+  capAtSellingDayAverage: boolean;
+  lifetimeWeight: number;
+  recentFloorPercent: number;
+  sellingDayWeight: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [life, setLife] = useState(String(lifetimeWeight));
+  const [selling, setSelling] = useState(String(sellingDayWeight));
+  const [floor, setFloor] = useState(String(recentFloorPercent));
+  const [cap, setCap] = useState(capAtSellingDayAverage);
+
+  function applyFormula() {
+    const params = new URLSearchParams(window.location.search);
+    params.set("lifetimeWeight", life || "35");
+    params.set("sellingWeight", selling || "65");
+    params.set("recentFloor", floor || "75");
+    params.set("capSelling", cap ? "true" : "false");
+    window.location.search = params.toString();
+  }
+
+  function resetFormula() {
+    setLife("35");
+    setSelling("65");
+    setFloor("75");
+    setCap(true);
+  }
+
+  return (
+    <>
+      <button
+        className="inline-flex items-center justify-end text-right font-semibold underline decoration-dotted underline-offset-4"
+        onClick={() => setOpen(true)}
+        type="button"
+      >
+        Demand HM
+      </button>
+      {open ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 px-4">
+          <div className="w-full max-w-xl rounded-lg border border-[#dfe4ea] bg-white p-5 text-left text-sm normal-case tracking-normal shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-[#172026]">Demand HM Formula</h3>
+                <p className="mt-1 text-[#667380]">
+                  Weighted demand blends conservative lifetime sales with selling-day demand,
+                  then uses recent 30D momentum as a floor.
+                </p>
+              </div>
+              <button
+                className="rounded-md border border-[#cfd6df] px-2 py-1 text-xs font-semibold text-[#52606d]"
+                onClick={() => setOpen(false)}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 rounded-md bg-[#fbfcfd] p-3 font-mono text-xs text-[#42505c]">
+              <p>lifetimeAvg = total sold / days from first sale to last sale</p>
+              <p>sellingDayAvg = total sold / days that actually sold</p>
+              <p>base = lifetimeAvg x lifetime% + sellingDayAvg x selling-day%</p>
+              <p>floor = Demand 30D x recent floor%</p>
+              <p>Demand HM = max(base, floor), optionally capped at sellingDayAvg</p>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+                Lifetime %
+                <input
+                  className="h-10 rounded-md border border-[#cfd6df] px-3 font-mono text-sm"
+                  min="0"
+                  max="100"
+                  onChange={(event) => setLife(event.target.value)}
+                  type="number"
+                  value={life}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+                Selling-day %
+                <input
+                  className="h-10 rounded-md border border-[#cfd6df] px-3 font-mono text-sm"
+                  min="0"
+                  max="100"
+                  onChange={(event) => setSelling(event.target.value)}
+                  type="number"
+                  value={selling}
+                />
+              </label>
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+                30D floor %
+                <input
+                  className="h-10 rounded-md border border-[#cfd6df] px-3 font-mono text-sm"
+                  min="0"
+                  max="200"
+                  onChange={(event) => setFloor(event.target.value)}
+                  type="number"
+                  value={floor}
+                />
+              </label>
+            </div>
+            <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-[#52606d]">
+              <input
+                checked={cap}
+                className="size-4 accent-[#172026]"
+                onChange={(event) => setCap(event.target.checked)}
+                type="checkbox"
+              />
+              Cap Demand HM at selling-day demand
+            </label>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+              <button
+                className="h-10 rounded-md border border-[#cfd6df] px-4 text-sm font-semibold text-[#52606d]"
+                onClick={resetFormula}
+                type="button"
+              >
+                Reset 35/65
+              </button>
+              <button
+                className="h-10 rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
+                onClick={applyFormula}
+                type="button"
+              >
+                Apply Formula
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,

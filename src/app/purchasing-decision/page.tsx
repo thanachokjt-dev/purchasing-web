@@ -7,6 +7,7 @@ import {
 } from "@/app/purchasing-decision/actions";
 import {
   DecisionCreatePoButton,
+  DemandFormulaHeaderButton,
   DecisionPlanningCells,
   DecisionSaveButton,
   SelectionButtons,
@@ -74,7 +75,18 @@ function alertClass(status: string) {
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; status?: string; alert?: string; visibility?: string }>;
+  searchParams: Promise<{
+    alert?: string;
+    capSelling?: string;
+    lifetimeWeight?: string;
+    q?: string;
+    recentFloor?: string;
+    sellingWeight?: string;
+    status?: string;
+    supplier?: string;
+    tag?: string;
+    visibility?: string;
+  }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
@@ -83,7 +95,18 @@ export default async function PurchasingDecisionPage({
   const status = params.status ?? "all";
   const alert = params.alert ?? "all";
   const visibility = params.visibility ?? "active";
-  const data = await getPurchasingDecisionData({ q, supplier, tag, itemStatus: status, alert, visibility });
+  const data = await getPurchasingDecisionData({
+    alert,
+    capSelling: params.capSelling,
+    itemStatus: status,
+    lifetimeWeight: params.lifetimeWeight,
+    q,
+    recentFloor: params.recentFloor,
+    sellingWeight: params.sellingWeight,
+    supplier,
+    tag,
+    visibility,
+  });
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
@@ -163,6 +186,14 @@ export default async function PurchasingDecisionPage({
                 </p>
               </div>
               <form className="grid gap-3 md:grid-cols-[1fr_260px_180px_180px_160px_160px_auto]">
+                <input name="lifetimeWeight" type="hidden" value={data.demandFormula.lifetimeWeight} />
+                <input name="sellingWeight" type="hidden" value={data.demandFormula.sellingDayWeight} />
+                <input name="recentFloor" type="hidden" value={data.demandFormula.recentFloorPercent} />
+                <input
+                  name="capSelling"
+                  type="hidden"
+                  value={data.demandFormula.capAtSellingDayAverage ? "true" : "false"}
+                />
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Search
@@ -297,7 +328,14 @@ export default async function PurchasingDecisionPage({
                     <th className="px-3 py-3 text-right font-semibold">On-hand</th>
                     <th className="px-3 py-3 text-right font-semibold">Total sale</th>
                     <th className="px-3 py-3 text-right font-semibold">Demand 30D</th>
-                    <th className="px-3 py-3 text-right font-semibold">Demand HM</th>
+                    <th className="px-3 py-3 text-right font-semibold">
+                      <DemandFormulaHeaderButton
+                        capAtSellingDayAverage={data.demandFormula.capAtSellingDayAverage}
+                        lifetimeWeight={data.demandFormula.lifetimeWeight}
+                        recentFloorPercent={data.demandFormula.recentFloorPercent}
+                        sellingDayWeight={data.demandFormula.sellingDayWeight}
+                      />
+                    </th>
                     <th className="px-3 py-3 text-right font-semibold">Safety</th>
                     <th className="px-3 py-3 text-right font-semibold">Lead</th>
                     <th className="px-3 py-3 text-right font-semibold">Cycle</th>
