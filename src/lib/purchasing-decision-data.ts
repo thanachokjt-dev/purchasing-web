@@ -328,11 +328,21 @@ function averageDemandFromStats(stats: {
   const lifetimeDailyAverage = spanDays > 0 ? stats.total / spanDays : 0;
   const sellingDayAverage =
     stats.sellingDays > 0 ? stats.total / stats.sellingDays : 0;
-  const weightTotal = formula.lifetimeWeight + formula.sellingDayWeight;
+  const saleDensity = spanDays > 0 ? stats.sellingDays / spanDays : 0;
+  const slowMoverReliability = Math.min(
+    1,
+    saleDensity * 1.2,
+    stats.sellingDays > 0 ? stats.sellingDays / 180 : 0,
+    stats.total > 0 ? stats.total / 320 : 0,
+  );
+  const effectiveSellingWeight = formula.sellingDayWeight * slowMoverReliability;
+  const effectiveLifetimeWeight =
+    slowMoverReliability < 1 ? 100 - effectiveSellingWeight : formula.lifetimeWeight;
+  const weightTotal = effectiveLifetimeWeight + effectiveSellingWeight;
   const weightedBase =
     weightTotal > 0
-      ? (lifetimeDailyAverage * formula.lifetimeWeight +
-          sellingDayAverage * formula.sellingDayWeight) /
+      ? (lifetimeDailyAverage * effectiveLifetimeWeight +
+          sellingDayAverage * effectiveSellingWeight) /
         weightTotal
       : lifetimeDailyAverage || sellingDayAverage;
   const recentFloor = (stats.sold30 / 30) * (formula.recentFloorPercent / 100);

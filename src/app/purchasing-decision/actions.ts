@@ -27,11 +27,14 @@ function nullableNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function autoNumber(value: string, calculatedValue: string) {
+function autoNumber(value: string, calculatedValue: string, forceOverride = false) {
   const parsed = nullableNumber(value);
   const calculated = nullableNumber(calculatedValue);
   if (parsed === null) {
     return null;
+  }
+  if (forceOverride) {
+    return parsed;
   }
   if (calculated !== null && Math.abs(parsed - calculated) < 0.0001) {
     return null;
@@ -99,6 +102,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const shopifyItemStatuses = formData.getAll("shopifyItemStatus");
   const tags = formData.getAll("tags");
   const demandIndexes = formData.getAll("demandIndexHm");
+  const demandOverrideAccepted = formData.getAll("demandOverrideAccepted");
   const calculatedDemandIndexes = formData.getAll("calculatedDemandIndexHm");
   const safetyDays = formData.getAll("safetyDays");
   const safetySources = formData.getAll("safetySource");
@@ -153,6 +157,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         demand_index_override: autoNumber(
           textAt(demandIndexes, index),
           textAt(calculatedDemandIndexes, index),
+          textAt(demandOverrideAccepted, index) === "true",
         ),
         safety_days: plannedNumber(
           textAt(safetyDays, index),

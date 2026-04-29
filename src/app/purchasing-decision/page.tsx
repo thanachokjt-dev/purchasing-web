@@ -500,7 +500,7 @@ export default async function PurchasingDecisionPage({
                       <DecisionPlanningCells
                         calculatedDemandIndexHm={line.calculatedDemandIndexHm}
                         comingQty={line.coming}
-                        demandIndexHm={line.demandIndexHm}
+                        demandIndexOverride={line.demandIndexOverride}
                         firstSaleDate={line.firstSaleDate}
                         leadTimeDays={line.leadTimeDays}
                         leadTimeSource={line.leadTimeSource}

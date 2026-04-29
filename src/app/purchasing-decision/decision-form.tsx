@@ -156,6 +156,7 @@ export function DemandFormulaHeaderButton({
               <p>lifetimeAvg = total sold / days from first sale to last sale</p>
               <p>sellingDayAvg = total sold / days that actually sold</p>
               <p>base = lifetimeAvg x lifetime% + sellingDayAvg x selling-day%</p>
+              <p>slow movers reduce selling-day weight by sales reliability</p>
               <p>floor = Demand 30D x recent floor%</p>
               <p>Demand HM = max(base, floor), optionally capped at sellingDayAvg</p>
             </div>
@@ -229,7 +230,7 @@ export function DemandFormulaHeaderButton({
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
-  demandIndexHm,
+  demandIndexOverride,
   firstSaleDate,
   leadTimeDays,
   leadTimeSource,
@@ -248,7 +249,7 @@ export function DecisionPlanningCells({
 }: {
   calculatedDemandIndexHm: number;
   comingQty: number;
-  demandIndexHm: number;
+  demandIndexOverride: number | null;
   firstSaleDate: string | null;
   leadTimeDays: number;
   leadTimeSource: "sku" | "supplier" | "default";
@@ -265,21 +266,27 @@ export function DecisionPlanningCells({
   supplierLeadTimeDays: number | null;
   supplierSafetyDays: number | null;
 }) {
-  const [demand, setDemand] = useState(formatDecimal(demandIndexHm, 4));
+  const [demand, setDemand] = useState(
+    demandIndexOverride === null ? "" : formatDecimal(demandIndexOverride, 4),
+  );
+  const [acceptedDemandOverride, setAcceptedDemandOverride] = useState(
+    demandIndexOverride !== null,
+  );
   const [safety, setSafety] = useState(String(safetyDays));
   const [lead, setLead] = useState(String(leadTimeDays));
   const [cycle, setCycle] = useState(String(orderCycleDays));
+  const liveDemand = demand ? numberOrZero(demand) : calculatedDemandIndexHm;
   const liveReorderPoint = useMemo(() => {
-    const nextValue = Math.ceil(numberOrZero(demand) * (numberOrZero(safety) + numberOrZero(lead)));
+    const nextValue = Math.ceil(liveDemand * (numberOrZero(safety) + numberOrZero(lead)));
     return Number.isFinite(nextValue) ? Math.max(0, nextValue) : reorderPointUnits;
-  }, [demand, lead, reorderPointUnits, safety]);
+  }, [lead, liveDemand, reorderPointUnits, safety]);
   const liveRawQty = useMemo(() => {
     const nextValue = Math.ceil(
-      numberOrZero(demand) *
+      liveDemand *
         (numberOrZero(safety) + numberOrZero(lead) + numberOrZero(cycle)),
     );
     return Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0;
-  }, [cycle, demand, lead, safety]);
+  }, [cycle, lead, liveDemand, safety]);
   const netRawQty = Math.max(0, liveRawQty - comingQty);
   const netRoundedQty = roundUpToTen(netRawQty);
   const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">(orderQtyMode);
@@ -303,18 +310,34 @@ export function DecisionPlanningCells({
           value={formatDecimal(calculatedDemandIndexHm, 4)}
         />
         <input
+          name="demandOverrideAccepted"
+          type="hidden"
+          value={acceptedDemandOverride && demand ? "true" : "false"}
+        />
+        <input
           className={compactInputClass}
           min="0"
           name="demandIndexHm"
-          onChange={(event) => setDemand(event.target.value)}
+          onChange={(event) => {
+            setDemand(event.target.value);
+            setAcceptedDemandOverride(Boolean(event.target.value));
+          }}
+          placeholder={formatDecimal(calculatedDemandIndexHm, 4)}
           step="0.0001"
           title={`Calculated ${formatDecimal(calculatedDemandIndexHm, 4)} from ${firstSaleDate ?? "-"} to ${lastSaleDate ?? "-"} plus ${sellingDays} selling days`}
           type="number"
           value={demand}
         />
-        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
-          calc {formatDecimal(calculatedDemandIndexHm, 2)}
-        </p>
+        <button
+          className="mt-1 w-full rounded border border-[#cfd6df] px-1 py-0.5 text-[10px] font-semibold text-[#52606d]"
+          onClick={() => {
+            setDemand(formatDecimal(calculatedDemandIndexHm, 4));
+            setAcceptedDemandOverride(true);
+          }}
+          type="button"
+        >
+          Fill calc {formatDecimal(calculatedDemandIndexHm, 2)}
+        </button>
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
           {formatDecimal(lifetimeDailyAverage, 2)} / {formatDecimal(sellingDayAverage, 2)}
         </p>
