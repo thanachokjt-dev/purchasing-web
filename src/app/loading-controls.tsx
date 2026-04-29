@@ -149,10 +149,7 @@ export function GlobalLoadingOverlay() {
       aria-hidden={!visible}
       className={`global-loading-overlay ${visible ? "global-loading-overlay-visible" : ""}`}
     >
-      <div className="global-loading-panel">
-        <LoadingWordmark />
-        <span className="global-loading-line" />
-      </div>
+      <LoadingWordmark />
     </div>
   );
 }
