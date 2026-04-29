@@ -22,6 +22,7 @@ export const dynamic = "force-dynamic";
 const inputClass =
   "h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const readOnlyMetricClass = "px-3 py-3 text-right font-mono text-sm text-[#172026]";
+const itemStatusOptions = ["ACTIVE", "DRAFT", "ARCHIVED"];
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -255,13 +256,15 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="max-w-full overflow-x-auto">
-              <table className="min-w-[2360px] text-left text-sm">
+              <table className="min-w-[2500px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className="px-3 py-3 font-semibold">Pick</th>
                     <th className="px-3 py-3 font-semibold">SKU</th>
+                    <th className="px-3 py-3 font-semibold">Hide</th>
                     <th className="px-3 py-3 font-semibold">Product</th>
                     <th className="px-3 py-3 font-semibold">Main name</th>
+                    <th className="px-3 py-3 font-semibold">Item status</th>
                     <th className="px-3 py-3 font-semibold">Tags</th>
                     <th className="px-3 py-3 font-semibold">Sup</th>
                     <th className="px-3 py-3 text-right font-semibold">On-hand</th>
@@ -282,7 +285,6 @@ export default async function PurchasingDecisionPage({
                     <th className="px-3 py-3 text-right font-semibold">At order</th>
                     <th className="px-3 py-3 text-right font-semibold">Coming</th>
                     <th className="px-3 py-3 text-right font-semibold">Value</th>
-                    <th className="px-3 py-3 font-semibold">Hide</th>
                     <th className="px-3 py-3 font-semibold">Note</th>
                   </tr>
                 </thead>
@@ -328,6 +330,25 @@ export default async function PurchasingDecisionPage({
                           {line.supplierSource}
                         </p>
                       </td>
+                      <td className="min-w-[180px] px-3 py-3 align-top">
+                        <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#52606d]">
+                          <input
+                            className="size-4 accent-[#172026]"
+                            defaultChecked={line.hidden}
+                            name="hiddenSku"
+                            type="checkbox"
+                            value={line.sku}
+                          />
+                          <EyeOff size={14} />
+                          Hide
+                        </label>
+                        <input
+                          className={inputClass}
+                          defaultValue={line.hideReason}
+                          name="hideReason"
+                          placeholder="Event / markdown"
+                        />
+                      </td>
                       <td className="min-w-[280px] px-3 py-3 align-top">
                         <div className="flex items-start gap-3">
                           {line.imageUrl ? (
@@ -356,6 +377,31 @@ export default async function PurchasingDecisionPage({
                           defaultValue={line.mainName}
                           name="mainName"
                         />
+                      </td>
+                      <td className="min-w-[160px] px-3 py-3 align-top">
+                        <input
+                          name="shopifyItemStatus"
+                          type="hidden"
+                          value={line.shopifyItemStatus}
+                        />
+                        <select
+                          className={inputClass}
+                          defaultValue={line.itemStatus}
+                          name="itemStatus"
+                        >
+                          {Array.from(
+                            new Set([line.itemStatus, line.shopifyItemStatus, ...itemStatusOptions])
+                          )
+                            .filter(Boolean)
+                            .map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+                          shopify {line.shopifyItemStatus}
+                        </p>
                       </td>
                       <td className="min-w-[190px] px-3 py-3 align-top">
                         <TagDropdownSelect initialTags={line.tags} options={data.tagOptions} />
@@ -425,25 +471,6 @@ export default async function PurchasingDecisionPage({
                         <p className="mt-1 text-xs text-[#6b7785]">
                           coming {formatMoney(line.comingValue)}
                         </p>
-                      </td>
-                      <td className="min-w-[190px] px-3 py-3 align-top">
-                        <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#52606d]">
-                          <input
-                            className="size-4 accent-[#172026]"
-                            defaultChecked={line.hidden}
-                            name="hiddenSku"
-                            type="checkbox"
-                            value={line.sku}
-                          />
-                          <EyeOff size={14} />
-                          Hide
-                        </label>
-                        <input
-                          className={inputClass}
-                          defaultValue={line.hideReason}
-                          name="hideReason"
-                          placeholder="Event / markdown"
-                        />
                       </td>
                       <td className="min-w-[220px] px-3 py-3 align-top">
                         <input

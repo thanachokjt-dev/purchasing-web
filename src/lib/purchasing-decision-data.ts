@@ -10,6 +10,7 @@ type ProductRelation =
       tags: string[] | null;
       product_type: string | null;
       product_image_url: string | null;
+      status: string | null;
     }
   | {
       product_title: string | null;
@@ -17,6 +18,7 @@ type ProductRelation =
       tags: string[] | null;
       product_type: string | null;
       product_image_url: string | null;
+      status: string | null;
     }[]
   | null;
 
@@ -28,6 +30,7 @@ type VariantRow = {
   option3_value: string | null;
   price: number | string | null;
   variant_image_url: string | null;
+  effective_status: string | null;
   products: ProductRelation;
 };
 
@@ -79,6 +82,7 @@ type DecisionControlRow = {
   product_name_override: string | null;
   main_name_override: string | null;
   supplier_override: string | null;
+  item_status_override: string | null;
   tags_override: string[] | null;
   demand_index_override: number | string | null;
   safety_days: number | string | null;
@@ -96,6 +100,8 @@ export type PurchasingDecisionLine = {
   productName: string;
   shopifyProductName: string;
   mainName: string;
+  itemStatus: string;
+  shopifyItemStatus: string;
   tags: string[];
   supplier: string;
   supplierSetInSheet: boolean;
@@ -306,11 +312,23 @@ async function fetchLatestInventoryRows(supabase: SupabaseClient) {
 }
 
 async function fetchControls(supabase: SupabaseClient) {
-  const { data, error } = await supabase
+  const query = await supabase
     .from("purchasing_decision_controls")
     .select(
-      "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+      "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
     );
+  let data: unknown[] | null = query.data;
+  let error = query.error;
+
+  if (error) {
+    const fallback = await supabase
+      .from("purchasing_decision_controls")
+      .select(
+        "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+      );
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     return {
@@ -634,7 +652,7 @@ export async function getPurchasingDecisionData({
       supabase
         .from("product_variants")
         .select(
-          "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,products(product_title,vendor,tags,product_type,product_image_url)",
+          "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,effective_status,products(product_title,vendor,tags,product_type,product_image_url,status)",
         )
         .order("sku", { ascending: true })
         .range(from, to),
@@ -693,6 +711,9 @@ export async function getPurchasingDecisionData({
       compactText(control?.product_name_override) || shopifyProductName;
     const resolvedMainName =
       compactText(control?.main_name_override) || mainNameFromRow(row);
+    const shopifyItemStatus =
+      compactText(row.effective_status) || compactText(product?.status) || "ACTIVE";
+    const itemStatus = compactText(control?.item_status_override) || shopifyItemStatus;
     const shopifyTags = product?.tags ?? [];
     const sourceTags =
       control?.tags_override && control.tags_override.length
@@ -769,6 +790,8 @@ export async function getPurchasingDecisionData({
         productName: resolvedProductName,
         shopifyProductName,
         mainName: resolvedMainName,
+        itemStatus,
+        shopifyItemStatus,
         tags,
         supplier: lineSupplier.supplier,
         supplierSetInSheet: Boolean(compactText(control?.supplier_override)),
@@ -844,6 +867,7 @@ export async function getPurchasingDecisionData({
           line.sku,
           line.productName,
           line.mainName,
+          line.itemStatus,
           line.supplier,
           line.tags.join(" "),
           line.hideReason,

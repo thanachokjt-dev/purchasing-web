@@ -14,6 +14,10 @@ function nullableText(value: string) {
   return value || null;
 }
 
+function overrideText(value: string, sourceValue: string) {
+  return value && value !== sourceValue ? value : null;
+}
+
 function nullableNumber(value: string) {
   if (!value) {
     return null;
@@ -91,6 +95,8 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const productNames = formData.getAll("productName");
   const mainNames = formData.getAll("mainName");
   const suppliers = formData.getAll("supplier");
+  const itemStatuses = formData.getAll("itemStatus");
+  const shopifyItemStatuses = formData.getAll("shopifyItemStatus");
   const tags = formData.getAll("tags");
   const demandIndexes = formData.getAll("demandIndexHm");
   const calculatedDemandIndexes = formData.getAll("calculatedDemandIndexHm");
@@ -138,6 +144,10 @@ export async function savePurchasingDecisionAction(formData: FormData) {
         product_name_override: nullableText(textAt(productNames, index)),
         main_name_override: nullableText(textAt(mainNames, index)),
         supplier_override: nullableText(nextSupplier),
+        item_status_override: overrideText(
+          textAt(itemStatuses, index),
+          textAt(shopifyItemStatuses, index),
+        ),
         tags_override: nextTags,
         demand_index_override: autoNumber(
           textAt(demandIndexes, index),
