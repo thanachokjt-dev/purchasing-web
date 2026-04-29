@@ -18,6 +18,7 @@ import {
   updatePoPaymentsAction,
   type PoActionState,
 } from "@/app/po/actions";
+import { LoadingLabel } from "@/app/loading-controls";
 
 type SupplierOption = {
   supplierCode: string;
@@ -388,7 +389,9 @@ export function CreatePoForm({
           <input className={inputClass} name="remark" />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Creating..." : "Open Draft PO"}
+          <LoadingLabel loading={pending} loadingText="Creating...">
+            Open Draft PO
+          </LoadingLabel>
         </button>
       </div>
       <ActionMessage state={state} />
@@ -409,7 +412,9 @@ export function AddPoItemForm({ poId }: { poId: string }) {
         <input className={inputClass} min="0" name="unitPrice" placeholder="Price" step="0.0001" type="number" />
         <input className={inputClass} min="0" name="freightUnitCost" placeholder="Freight/unit" step="0.0001" type="number" />
         <button className={buttonClass} disabled={pending} type="submit">
-          Add line
+          <LoadingLabel loading={pending} loadingText="Adding...">
+            Add line
+          </LoadingLabel>
         </button>
       </div>
       <ActionMessage state={state} />
@@ -453,7 +458,9 @@ export function PoHeaderRefsForm({
         />
       </label>
       <button className={buttonClass} disabled={pending} type="submit">
-        {pending ? "Saving..." : "Save refs"}
+        <LoadingLabel loading={pending} loadingText="Saving...">
+          Save refs
+        </LoadingLabel>
       </button>
       <ActionMessage state={state} />
     </form>
@@ -544,7 +551,9 @@ export function SmartAddPoItemForm({
           />
         </div>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Adding..." : `Add ${selectedSkus.length || ""} line${selectedSkus.length === 1 ? "" : "s"}`}
+          <LoadingLabel loading={pending} loadingText="Adding...">
+            {`Add ${selectedSkus.length || ""} line${selectedSkus.length === 1 ? "" : "s"}`}
+          </LoadingLabel>
         </button>
       </div>
 
@@ -919,7 +928,9 @@ export function PoDraftLinesForm({
       <div className="flex flex-col gap-3 border-t border-[#e2e7ed] p-5 sm:flex-row sm:items-center sm:justify-between">
         <ActionMessage state={state} />
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Saving..." : "Save Draft Details"}
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Save Draft Details
+          </LoadingLabel>
         </button>
       </div>
     </form>
@@ -982,7 +993,9 @@ export function LandedCostAllocationForm({
           />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Allocating..." : "Allocate"}
+          <LoadingLabel loading={pending} loadingText="Allocating...">
+            Allocate
+          </LoadingLabel>
         </button>
       </div>
       <ActionMessage state={state} />
@@ -1036,7 +1049,9 @@ export function AddPaymentForm({
           <input className={inputClass} name="reference" placeholder="Slip / invoice" />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Saving..." : "Add Payment"}
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Add Payment
+          </LoadingLabel>
         </button>
       </div>
       <label className={labelClass}>
@@ -1165,7 +1180,9 @@ export function PaymentScheduleForm({
       <div className="flex items-center justify-between gap-3">
         <ActionMessage state={state} />
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Saving..." : "Save Payments"}
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Save Payments
+          </LoadingLabel>
         </button>
       </div>
     </form>
@@ -1196,7 +1213,9 @@ export function StatusActionForm({
           ))}
         </select>
         <button className={buttonClass} disabled={pending} type="submit">
-          Save
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Save
+          </LoadingLabel>
         </button>
       </div>
       <ActionMessage state={state} />
@@ -1236,7 +1255,9 @@ export function DeleteDraftPoForm({
         disabled={pending}
         type="submit"
       >
-        {pending ? "Deleting..." : "Delete Draft"}
+        <LoadingLabel loading={pending} loadingText="Deleting...">
+          Delete Draft
+        </LoadingLabel>
       </button>
       <ActionMessage state={state} />
     </form>
@@ -1272,7 +1293,9 @@ export function ReceiveItemForm({
         />
         <input className={inputClass} name="receivedBy" placeholder="By" />
         <button className={buttonClass} disabled={pending} type="submit">
-          Receive
+          <LoadingLabel loading={pending} loadingText="Receiving...">
+            Receive
+          </LoadingLabel>
         </button>
       </div>
       <ActionMessage state={state} />
@@ -1305,7 +1328,9 @@ export function BatchReceiveFormBar({
           <input className={inputClass} name="note" placeholder="Optional note for this batch" />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
-          {pending ? "Saving..." : "Save Receipts"}
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Save Receipts
+          </LoadingLabel>
         </button>
       </form>
       <ActionMessage state={state} />
@@ -1368,35 +1393,45 @@ export function PrintDocumentButton({
   label: string;
   mode: "quote" | "receiving";
 }) {
+  const [printing, setPrinting] = useState(false);
+
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
       onClick={() => {
+        setPrinting(true);
         document.documentElement.dataset.printMode = mode;
         window.print();
         window.setTimeout(() => {
           delete document.documentElement.dataset.printMode;
+          setPrinting(false);
         }, 300);
       }}
       type="button"
     >
-      {label}
+      <LoadingLabel loading={printing} loadingText="Preparing...">
+        {label}
+      </LoadingLabel>
     </button>
   );
 }
 
 export function DraftApprovalEmailButton({ emailText }: { emailText: string }) {
   const [open, setOpen] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
 
   async function copyEmail() {
     setOpen(true);
+    setCopying(true);
     try {
       await navigator.clipboard.writeText(emailText);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
       setCopied(false);
+    } finally {
+      setCopying(false);
     }
   }
 
@@ -1407,7 +1442,9 @@ export function DraftApprovalEmailButton({ emailText }: { emailText: string }) {
         onClick={copyEmail}
         type="button"
       >
-        {copied ? "Copied e-mail" : "Draft e-mail"}
+        <LoadingLabel loading={copying} loadingText="Copying...">
+          {copied ? "Copied e-mail" : "Draft e-mail"}
+        </LoadingLabel>
       </button>
       {open ? (
         <textarea

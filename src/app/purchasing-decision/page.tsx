@@ -16,6 +16,7 @@ import {
 import {
   getPurchasingDecisionData,
 } from "@/lib/purchasing-decision-data";
+import { PendingSubmitButton } from "@/app/loading-controls";
 import { formatNumber } from "@/lib/baseline-data";
 
 export const dynamic = "force-dynamic";
@@ -273,13 +274,13 @@ export default async function PurchasingDecisionPage({
                     ))}
                   </select>
                 </label>
-                <button
+                <PendingSubmitButton
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-4 text-sm font-semibold text-[#364252]"
-                  type="submit"
+                  loadingText="Filtering..."
                 >
                   <Filter size={16} />
                   Filter
-                </button>
+                </PendingSubmitButton>
               </form>
             </div>
             <div className="flex flex-wrap gap-2 text-sm">

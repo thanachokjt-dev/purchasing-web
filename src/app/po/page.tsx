@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { getPoPortalData } from "@/lib/po-portal";
 import { formatNumber } from "@/lib/baseline-data";
+import { PendingSubmitButton } from "@/app/loading-controls";
 import {
   AddPoItemForm,
   CreatePoForm,
@@ -269,9 +270,12 @@ export default async function PoPortalPage({
                     </option>
                   ))}
                 </select>
-                <button className="h-10 rounded-md bg-[#172026] px-4 text-sm font-semibold text-white" type="submit">
+                <PendingSubmitButton
+                  className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  loadingText="Filtering..."
+                >
                   Filter
-                </button>
+                </PendingSubmitButton>
               </form>
               {(q || selectedStatus !== "all") ? (
                 <Link className="mt-3 inline-flex text-sm font-semibold text-[#255f85]" href="/po">

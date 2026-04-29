@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { LoadingLabel } from "@/app/loading-controls";
 
 const compactInputClass =
   "h-9 w-20 rounded-md border border-[#cfd6df] bg-white px-2 text-right font-mono text-sm text-[#172026] outline-none focus:border-[#255f85]";
@@ -42,22 +43,34 @@ export function DecisionSaveButton() {
       disabled={pending}
       type="submit"
     >
-      {pending ? "Saving..." : "Save visible rows"}
+      <LoadingLabel loading={pending} loadingText="Saving...">
+        Save visible rows
+      </LoadingLabel>
     </button>
   );
 }
 
 export function DecisionCreatePoButton() {
   const { pending } = useFormStatus();
+  const [clicked, setClicked] = useState(false);
+  const loading = pending || clicked;
 
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={pending}
+      disabled={loading}
       form="decision-create-po-form"
+      onClick={() => {
+        const hasSelectedSku = document.querySelector("[data-decision-select='sku']:checked");
+        if (hasSelectedSku) {
+          setClicked(true);
+        }
+      }}
       type="submit"
     >
-      {pending ? "Creating..." : "Create PO"}
+      <LoadingLabel loading={loading} loadingText="Creating...">
+        Create PO
+      </LoadingLabel>
     </button>
   );
 }
@@ -107,8 +120,10 @@ export function DemandFormulaHeaderButton({
   const [selling, setSelling] = useState(String(sellingDayWeight));
   const [floor, setFloor] = useState(String(recentFloorPercent));
   const [cap, setCap] = useState(capAtSellingDayAverage);
+  const [applying, setApplying] = useState(false);
 
   function applyFormula() {
+    setApplying(true);
     const params = new URLSearchParams(window.location.search);
     params.set("lifetimeWeight", life || "35");
     params.set("sellingWeight", selling || "65");
@@ -217,7 +232,9 @@ export function DemandFormulaHeaderButton({
                 onClick={applyFormula}
                 type="button"
               >
-                Apply Formula
+                <LoadingLabel loading={applying} loadingText="Applying...">
+                  Apply Formula
+                </LoadingLabel>
               </button>
             </div>
           </div>

@@ -18,6 +18,16 @@ body {
   font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
 }
 
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-spin {
+  animation: loading-spin 0.75s linear infinite;
+}
+
 .print-only {
   height: 1px;
   left: -10000px;

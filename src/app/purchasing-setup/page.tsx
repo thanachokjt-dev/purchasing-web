@@ -5,6 +5,7 @@ import {
   savePurchasingTagAction,
   saveSupplierSetupAction,
 } from "@/app/purchasing-setup/actions";
+import { PendingSubmitButton } from "@/app/loading-controls";
 import { getPurchasingSetupData } from "@/lib/purchasing-setup";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ const smallInputClass =
   "h-9 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
 const buttonClass =
-  "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white";
+  "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
 
 export default async function PurchasingSetupPage() {
   const data = await getPurchasingSetupData();
@@ -187,9 +188,9 @@ export default async function PurchasingSetupPage() {
                         <input defaultChecked={supplier.isActive} name="isActive" type="checkbox" />
                         Active supplier
                       </label>
-                      <button className={buttonClass} type="submit">
+                      <PendingSubmitButton className={buttonClass} loadingText="Saving...">
                         Save Supplier
-                      </button>
+                      </PendingSubmitButton>
                     </div>
                   </form>
 
@@ -223,9 +224,12 @@ export default async function PurchasingSetupPage() {
                       <input className={smallInputClass} name="email" placeholder="Email" type="email" />
                       <input className={smallInputClass} name="phone" placeholder="Phone" />
                       <input className={smallInputClass} name="lineId" placeholder="Line ID" />
-                      <button className="h-9 rounded-md bg-[#172026] px-3 text-xs font-semibold text-white" type="submit">
+                      <PendingSubmitButton
+                        className="inline-flex h-9 items-center justify-center rounded-md bg-[#172026] px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        loadingText="Adding..."
+                      >
                         Add Contact
-                      </button>
+                      </PendingSubmitButton>
                       <label className="flex items-center gap-2 text-xs font-semibold text-[#52606d] lg:col-span-2">
                         <input name="isPrimary" type="checkbox" />
                         Primary contact
@@ -271,9 +275,9 @@ export default async function PurchasingSetupPage() {
                 <input defaultChecked name="isActive" type="checkbox" />
                 Active tag
               </label>
-              <button className={buttonClass} type="submit">
+              <PendingSubmitButton className={buttonClass} loadingText="Saving...">
                 Save Tag
-              </button>
+              </PendingSubmitButton>
             </form>
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
