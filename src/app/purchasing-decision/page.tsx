@@ -73,6 +73,29 @@ function alertClass(status: string) {
   return "bg-[#eaf6ef] text-[#1f6b3d]";
 }
 
+function sameText(left: string, right: string) {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function statusHelpText(itemStatus: string, shopifyItemStatus: string) {
+  if (!itemStatus) {
+    return "No status";
+  }
+  if (!shopifyItemStatus || sameText(itemStatus, shopifyItemStatus)) {
+    return `Shopify: ${shopifyItemStatus || itemStatus}`;
+  }
+
+  return `Sheet override: ${itemStatus} | Shopify: ${shopifyItemStatus}`;
+}
+
+function statusHelpClass(itemStatus: string, shopifyItemStatus: string) {
+  if (!shopifyItemStatus || sameText(itemStatus, shopifyItemStatus)) {
+    return "text-[#7a8794]";
+  }
+
+  return "text-[#255f85]";
+}
+
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
@@ -471,8 +494,13 @@ export default async function PurchasingDecisionPage({
                               </option>
                             ))}
                         </select>
-                        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
-                          shopify {line.shopifyItemStatus}
+                        <p
+                          className={`mt-1 text-right font-mono text-[10px] ${statusHelpClass(
+                            line.itemStatus,
+                            line.shopifyItemStatus,
+                          )}`}
+                        >
+                          {statusHelpText(line.itemStatus, line.shopifyItemStatus)}
                         </p>
                       </td>
                       <td className="min-w-[190px] px-3 py-3 align-top">
