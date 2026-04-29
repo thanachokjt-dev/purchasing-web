@@ -104,6 +104,38 @@ export function SelectionButtons() {
   );
 }
 
+export function HideSelectionButtons() {
+  function setHidden(checked: boolean) {
+    document
+      .querySelectorAll<HTMLInputElement>("[data-decision-hide='sku']")
+      .forEach((input) => {
+        input.checked = checked;
+      });
+  }
+
+  return (
+    <div className="grid gap-1">
+      <span>Hide</span>
+      <div className="flex items-center gap-1 normal-case tracking-normal">
+        <button
+          className="h-7 rounded-md border border-[#cfd6df] bg-white px-2 text-[11px] font-semibold text-[#364252]"
+          onClick={() => setHidden(true)}
+          type="button"
+        >
+          Select all
+        </button>
+        <button
+          className="h-7 rounded-md border border-[#cfd6df] bg-white px-2 text-[11px] font-semibold text-[#667380]"
+          onClick={() => setHidden(false)}
+          type="button"
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function DemandFormulaHeaderButton({
   capAtSellingDayAverage,
   lifetimeWeight,

@@ -11,6 +11,7 @@ import {
   DemandFormulaHeaderButton,
   DecisionPlanningCells,
   DecisionSaveButton,
+  HideSelectionButtons,
   SelectionButtons,
   TagDropdownSelect,
 } from "@/app/purchasing-decision/decision-form";
@@ -346,7 +347,9 @@ export default async function PurchasingDecisionPage({
                   <tr>
                     <th className="px-3 py-3 font-semibold">Pick</th>
                     <th className="px-3 py-3 font-semibold">SKU</th>
-                    <th className="px-3 py-3 font-semibold">Hide</th>
+                    <th className="px-3 py-3 font-semibold">
+                      <HideSelectionButtons />
+                    </th>
                     <th className="px-3 py-3 font-semibold">Product</th>
                     <th className="px-3 py-3 font-semibold">Main name</th>
                     <th className="px-3 py-3 font-semibold">Item status</th>
@@ -432,6 +435,7 @@ export default async function PurchasingDecisionPage({
                         <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#52606d]">
                           <input
                             className="size-4 accent-[#172026]"
+                            data-decision-hide="sku"
                             defaultChecked={line.hidden}
                             name="hiddenSku"
                             type="checkbox"
