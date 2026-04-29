@@ -827,8 +827,8 @@ function PrintMatrixDocument({
       <table className="print-matrix">
         <thead>
           <tr>
-            <th>Image</th>
             <th>Product</th>
+            <th>Image</th>
             {matrix.sizes.map((size) => (
               <th key={size}>{size}</th>
             ))}
@@ -838,20 +838,22 @@ function PrintMatrixDocument({
         <tbody>
           {matrix.rows.map((row) => (
             <tr key={row.productName}>
+              <td>{row.productName}</td>
               <td>
                 {row.imageUrl ? (
                   <Image
                     alt={row.productName}
                     className="print-product-image"
                     height={96}
+                    loading="eager"
                     src={row.imageUrl}
+                    unoptimized
                     width={96}
                   />
                 ) : (
                   ""
                 )}
               </td>
-              <td>{row.productName}</td>
               {matrix.sizes.map((size) => {
                 const orderedQty = row.items.get(size)?.orderedQty ?? 0;
                 return (

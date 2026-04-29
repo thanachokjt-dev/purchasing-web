@@ -19,7 +19,14 @@ body {
 }
 
 .print-only {
-  display: none;
+  height: 1px;
+  left: -10000px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 297mm;
 }
 
 @media print {
@@ -38,6 +45,14 @@ body {
 
   .print-only {
     display: none;
+    height: auto;
+    left: auto;
+    opacity: 1;
+    overflow: visible;
+    pointer-events: auto;
+    position: static;
+    top: auto;
+    width: auto;
     color: #111827;
     font-family: Arial, Helvetica, sans-serif;
   }
@@ -92,12 +107,12 @@ body {
     text-align: center;
   }
 
-  .print-matrix td:not(:nth-child(2)) {
+  .print-matrix td:not(:first-child) {
     font-family: Arial, Helvetica, sans-serif;
     text-align: center;
   }
 
-  .print-matrix td:nth-child(2) {
+  .print-matrix td:first-child {
     font-weight: 600;
     min-width: 220px;
   }
