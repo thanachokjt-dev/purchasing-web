@@ -86,6 +86,18 @@ const statusOptions = [
   "cancelled",
 ];
 
+function draftLineKey(item: DraftLineItem) {
+  return item.itemUuid || `${item.sku}:${item.lineNo}`;
+}
+
+function roundQtyUpToTen(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.ceil(value / 10) * 10;
+}
+
 function ActionMessage({ state }: { state: PoActionState }) {
   if (!state.message) {
     return null;
@@ -650,6 +662,13 @@ export function PoDraftLinesForm({
   const [lines, setLines] = useState(items);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [adjustPercent, setAdjustPercent] = useState("");
+  const initialQtyByLine = useMemo(
+    () =>
+      new Map(
+        items.map((item) => [draftLineKey(item), item.qty]),
+      ),
+    [items],
+  );
 
   function updateLine(index: number, patch: Partial<DraftLineItem>) {
     setLines((current) =>
@@ -679,6 +698,10 @@ export function PoDraftLinesForm({
     setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
   }
 
+  function initialQtyForLine(line: DraftLineItem) {
+    return initialQtyByLine.get(draftLineKey(line)) ?? line.qty;
+  }
+
   function adjustAllQty() {
     const percent = Number(adjustPercent);
     if (!Number.isFinite(percent)) {
@@ -686,11 +709,24 @@ export function PoDraftLinesForm({
     }
     const factor = 1 + percent / 100;
     setLines((current) =>
+      current.map((line) => {
+        const baseQty = initialQtyForLine(line);
+        return {
+          ...line,
+          qty: roundQtyUpToTen(baseQty * factor),
+        };
+      }),
+    );
+  }
+
+  function resetAdjustedQty() {
+    setLines((current) =>
       current.map((line) => ({
         ...line,
-        qty: Math.max(0, Math.round(line.qty * factor)),
+        qty: initialQtyForLine(line),
       })),
     );
+    setAdjustPercent("");
   }
 
   function applyVat(mode: "include" | "exclude") {
@@ -741,6 +777,9 @@ export function PoDraftLinesForm({
         </label>
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={adjustAllQty} type="button">
           Apply Qty %
+        </button>
+        <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={resetAdjustedQty} type="button">
+          Reset Qty
         </button>
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={() => applyVat("include")} type="button">
           Include VAT 7%
