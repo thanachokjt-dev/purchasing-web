@@ -722,6 +722,16 @@ function productGroupName(line: PurchasingDecisionLine) {
     .toLowerCase();
 }
 
+function selectedAlertsFromParam(alert: string | string[]) {
+  const allowedAlerts = new Set(["order_now", "watch", "healthy", "hidden"]);
+  const selectedAlerts = (Array.isArray(alert) ? alert : [alert])
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => allowedAlerts.has(value));
+
+  return selectedAlerts.length ? new Set(selectedAlerts) : null;
+}
+
 export async function getPurchasingDecisionData({
   limit = 120,
   q = "",
@@ -740,7 +750,7 @@ export async function getPurchasingDecisionData({
   supplier?: string;
   tag?: string;
   itemStatus?: string;
-  alert?: string;
+  alert?: string | string[];
   capSelling?: string;
   lifetimeWeight?: number | string | null;
   recentFloor?: number | string | null;
@@ -815,7 +825,7 @@ export async function getPurchasingDecisionData({
   const selectedSupplier = supplier.trim().toLowerCase();
   const selectedTag = tag.trim().toLowerCase();
   const selectedItemStatus = itemStatus.trim().toLowerCase();
-  const selectedAlert = alert.trim().toLowerCase();
+  const selectedAlerts = selectedAlertsFromParam(alert);
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
   const activeSupplierNames = new Set(
@@ -1031,7 +1041,7 @@ export async function getPurchasingDecisionData({
         selectedItemStatus === "all" ||
         line.itemStatus.toLowerCase() === selectedItemStatus;
       const matchesAlert =
-        selectedAlert === "all" || line.ropAlert === selectedAlert;
+        !selectedAlerts || selectedAlerts.has(line.ropAlert);
       const matchesVisibility =
         selectedVisibility === "all" ||
         (selectedVisibility === "hidden" ? line.hidden : !line.hidden);

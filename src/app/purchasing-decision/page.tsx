@@ -6,6 +6,7 @@ import {
   savePurchasingDecisionAction,
 } from "@/app/purchasing-decision/actions";
 import {
+  AlertFilterSelect,
   DecisionCreatePoButton,
   DemandFormulaHeaderButton,
   DecisionPlanningCells,
@@ -24,6 +25,10 @@ export const dynamic = "force-dynamic";
 const inputClass =
   "h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const readOnlyMetricClass = "px-3 py-3 text-right font-mono text-sm text-[#172026]";
+const alertOptions = ["order_now", "watch", "healthy", "hidden"].map((value) => ({
+  label: alertLabel(value),
+  value,
+}));
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -73,6 +78,16 @@ function alertClass(status: string) {
   return "bg-[#eaf6ef] text-[#1f6b3d]";
 }
 
+function normalizeSelectedAlerts(alert: string | string[] | undefined) {
+  const values = Array.isArray(alert) ? alert : [alert ?? "all"];
+  const selected = values
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return selected.length ? selected : ["all"];
+}
+
 function sameText(left: string, right: string) {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -100,7 +115,7 @@ export default async function PurchasingDecisionPage({
   searchParams,
 }: {
   searchParams: Promise<{
-    alert?: string;
+    alert?: string | string[];
     capSelling?: string;
     lifetimeWeight?: string;
     q?: string;
@@ -117,7 +132,7 @@ export default async function PurchasingDecisionPage({
   const supplier = params.supplier ?? "all";
   const tag = params.tag ?? "all";
   const status = params.status ?? "all";
-  const alert = params.alert ?? "all";
+  const alert = normalizeSelectedAlerts(params.alert);
   const visibility = params.visibility ?? "active";
   const data = await getPurchasingDecisionData({
     alert,
@@ -284,19 +299,7 @@ export default async function PurchasingDecisionPage({
                     <option value="all">All</option>
                   </select>
                 </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
-                    Alert
-                  </span>
-                  <select className={inputClass} defaultValue={alert} name="alert">
-                    <option value="all">All alerts</option>
-                    {["order_now", "watch", "healthy", "hidden"].map((option) => (
-                      <option key={option} value={option}>
-                        {alertLabel(option)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <AlertFilterSelect options={alertOptions} selectedAlerts={alert} />
                 <PendingSubmitButton
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-4 text-sm font-semibold text-[#364252]"
                   loadingText="Filtering..."

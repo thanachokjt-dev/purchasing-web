@@ -244,6 +244,83 @@ export function DemandFormulaHeaderButton({
   );
 }
 
+export function AlertFilterSelect({
+  options,
+  selectedAlerts,
+}: {
+  options: { label: string; value: string }[];
+  selectedAlerts: string[];
+}) {
+  const initialSelection =
+    selectedAlerts.length && !selectedAlerts.includes("all")
+      ? selectedAlerts
+      : options.map((option) => option.value);
+  const [selected, setSelected] = useState(initialSelection);
+  const allSelected = selected.length === options.length;
+  const valuesForSubmit = allSelected ? ["all"] : selected;
+  const label = allSelected
+    ? "All alerts"
+    : options
+        .filter((option) => selected.includes(option.value))
+        .map((option) => option.label)
+        .join(", ") || "No alerts";
+
+  function toggle(value: string) {
+    setSelected((current) => {
+      if (!current.includes(value)) {
+        return [...current, value];
+      }
+      if (current.length === 1) {
+        return current;
+      }
+
+      return current.filter((item) => item !== value);
+    });
+  }
+
+  return (
+    <div className="grid gap-1">
+      {valuesForSubmit.map((value) => (
+        <input key={value} name="alert" type="hidden" value={value} />
+      ))}
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Alert
+      </span>
+      <details className="group relative">
+        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+          <span className="truncate">{label}</span>
+          <span aria-hidden="true" className="text-xs text-[#65717f]">
+            v
+          </span>
+        </summary>
+        <div className="absolute right-0 z-30 mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-lg">
+          <button
+            className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
+            onClick={() => setSelected(options.map((option) => option.value))}
+            type="button"
+          >
+            Select all
+          </button>
+          {options.map((option) => (
+            <label
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#172026] hover:bg-[#f3f5f7]"
+              key={option.value}
+            >
+              <input
+                checked={selected.includes(option.value)}
+                className="size-4 accent-[#172026]"
+                onChange={() => toggle(option.value)}
+                type="checkbox"
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
