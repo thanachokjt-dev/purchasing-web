@@ -160,6 +160,131 @@ function quoteMatrixRows(items: DetailItem[]) {
   };
 }
 
+function receivingMatrixRows(
+  items: DetailItem[],
+  receipts: NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["receipts"],
+) {
+  const rows = new Map<
+    string,
+    {
+      imageUrl: string | null;
+      items: DetailItem[];
+      productName: string;
+    }
+  >();
+  const receiptByItemId = new Map<string, typeof receipts>();
+
+  for (const receipt of receipts) {
+    if (!receipt.po_item_id) {
+      continue;
+    }
+    receiptByItemId.set(receipt.po_item_id, [
+      ...(receiptByItemId.get(receipt.po_item_id) ?? []),
+      receipt,
+    ]);
+  }
+
+  for (const item of items) {
+    const productName = matrixProductName(item);
+    const key = productName.toLowerCase();
+    const row =
+      rows.get(key) ??
+      {
+        imageUrl: item.imageUrl ?? null,
+        items: [],
+        productName,
+      };
+
+    row.items.push(item);
+    if (!row.imageUrl && item.imageUrl) {
+      row.imageUrl = item.imageUrl;
+    }
+    rows.set(key, row);
+  }
+
+  const receiptRows = Array.from(rows.values()).map((row) => {
+    const orderedBySize = new Map<string, number>();
+    const outstandingBySize = new Map<string, number>();
+    const receivedRoundMap = new Map<string, { label: string; values: Map<string, number> }>();
+    let hasReceipts = false;
+
+    for (const item of row.items) {
+      const size = itemSize(item);
+      orderedBySize.set(size, (orderedBySize.get(size) ?? 0) + item.qty);
+      outstandingBySize.set(size, (outstandingBySize.get(size) ?? 0) + item.outstandingQty);
+
+      const lineReceipts = item.itemUuid
+        ? [...(receiptByItemId.get(item.itemUuid) ?? [])].sort((a, b) =>
+            String(a.received_at ?? "").localeCompare(String(b.received_at ?? "")),
+          )
+        : [];
+
+      lineReceipts.forEach((receipt, index) => {
+        hasReceipts = true;
+        const roundNo = index + 1;
+        const key = `round-${roundNo}`;
+        const current =
+          receivedRoundMap.get(key) ??
+          {
+            label: `Received round ${roundNo}`,
+            values: new Map<string, number>(),
+          };
+        current.values.set(
+          size,
+          (current.values.get(size) ?? 0) + Number(receipt.received_qty ?? 0),
+        );
+        receivedRoundMap.set(key, current);
+      });
+    }
+
+    const lines = [
+      { label: "Ordered", values: orderedBySize },
+      ...(hasReceipts
+        ? Array.from(receivedRoundMap.values())
+        : [{ label: "Receive round 1", values: orderedBySize }]),
+    ];
+
+    if (hasReceipts) {
+      const outstandingTotal = Array.from(outstandingBySize.values()).reduce(
+        (sum, qty) => sum + qty,
+        0,
+      );
+      if (outstandingTotal > 0) {
+        lines.push({ label: "Receive next round", values: outstandingBySize });
+      }
+    }
+
+    return {
+      imageUrl: row.imageUrl,
+      lines,
+      productName: row.productName,
+    };
+  });
+
+  const extraSizes = Array.from(
+    new Set(
+      receiptRows.flatMap((row) =>
+        row.lines.flatMap((line) =>
+          Array.from(line.values.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
+        ),
+      ),
+    ),
+  ).sort();
+  const sizes = [...CORE_SIZE_COLUMNS, ...extraSizes];
+  const maxQty = Math.max(
+    0,
+    ...receiptRows.flatMap((row) =>
+      row.lines.flatMap((line) => Array.from(line.values.values())),
+    ),
+  );
+
+  return {
+    maxQty,
+    rows: receiptRows.sort((a, b) => a.productName.localeCompare(b.productName)),
+    sizes,
+  };
+}
+
 function qtyHeatStyle(value: number, maxValue: number) {
   if (!value) {
     return {
@@ -234,6 +359,7 @@ export default async function PoDetailPage({
   const order = data.order;
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const matrix = quoteMatrixRows(data.items);
+  const receivingMatrix = receivingMatrixRows(data.items, data.receipts);
   const detailCatalogItems = data.catalogItems.filter(
     (item) =>
       item.supplierCode === order.supplierCode ||
@@ -305,7 +431,6 @@ export default async function PoDetailPage({
               Dashboard
             </Link>
             <PrintDocumentButton label="Print Quote" mode="quote" />
-            <PrintDocumentButton label="Goods Receipt" mode="receiving" />
           </div>
         </div>
       </header>
@@ -582,9 +707,14 @@ export default async function PoDetailPage({
         </section>
 
         <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
-          <div className="border-b border-[#e2e7ed] p-5">
-            <h2 className="text-lg font-semibold">Lines & Receiving</h2>
-            <p className="mt-1 text-sm text-[#667380]">Receive against active lines and keep status changes line-level.</p>
+          <div className="flex flex-col gap-3 border-b border-[#e2e7ed] p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Lines & Receiving</h2>
+              <p className="mt-1 text-sm text-[#667380]">
+                Receive against active lines and keep status changes line-level.
+              </p>
+            </div>
+            <PrintDocumentButton label="Goods Receipt" mode="receiving" />
           </div>
           {data.source === "supabase" ? (
             <BatchReceiveFormBar formId={batchReceiveFormId} poId={order.poId} />
@@ -789,6 +919,7 @@ export default async function PoDetailPage({
       <PrintMatrixDocument
         matrix={matrix}
         order={order}
+        receivingMatrix={receivingMatrix}
         title="Goods Receiving Note"
         type="receiving"
       />
@@ -799,14 +930,18 @@ export default async function PoDetailPage({
 function PrintMatrixDocument({
   matrix,
   order,
+  receivingMatrix,
   title,
   type,
 }: {
   matrix: ReturnType<typeof quoteMatrixRows>;
   order: NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["order"];
+  receivingMatrix?: ReturnType<typeof receivingMatrixRows>;
   title: string;
   type: "quote" | "receiving";
 }) {
+  const printMatrix = type === "receiving" ? receivingMatrix : null;
+
   return (
     <section className={`print-only print-${type}`}>
       <div className="print-header">
@@ -829,14 +964,60 @@ function PrintMatrixDocument({
           <tr>
             <th>Product</th>
             <th>Image</th>
-            {matrix.sizes.map((size) => (
+            {type === "receiving" ? <th>Round</th> : null}
+            {(printMatrix?.sizes ?? matrix.sizes).map((size) => (
               <th key={size}>{size}</th>
             ))}
             <th>Total</th>
           </tr>
         </thead>
         <tbody>
-          {matrix.rows.map((row) => (
+          {type === "receiving" && printMatrix
+            ? printMatrix.rows.flatMap((row) =>
+                row.lines.map((line, lineIndex) => {
+                  const rowSpan = row.lines.length;
+                  const lineTotal = Array.from(line.values.values()).reduce(
+                    (sum, qty) => sum + qty,
+                    0,
+                  );
+
+                  return (
+                    <tr key={`${row.productName}-${line.label}`}>
+                      {lineIndex === 0 ? (
+                        <>
+                          <td rowSpan={rowSpan}>{row.productName}</td>
+                          <td rowSpan={rowSpan}>
+                            {row.imageUrl ? (
+                              <Image
+                                alt={row.productName}
+                                className="print-product-image"
+                                height={96}
+                                loading="eager"
+                                src={row.imageUrl}
+                                unoptimized
+                                width={96}
+                              />
+                            ) : (
+                              ""
+                            )}
+                          </td>
+                        </>
+                      ) : null}
+                      <td className="print-round-label">{line.label}</td>
+                      {printMatrix.sizes.map((size) => {
+                        const qty = line.values.get(size) ?? 0;
+                        return (
+                          <td key={size} style={qtyHeatStyle(qty, printMatrix.maxQty)}>
+                            {qty || ""}
+                          </td>
+                        );
+                      })}
+                      <td>{lineTotal || ""}</td>
+                    </tr>
+                  );
+                }),
+              )
+            : matrix.rows.map((row) => (
             <tr key={row.productName}>
               <td>{row.productName}</td>
               <td>
