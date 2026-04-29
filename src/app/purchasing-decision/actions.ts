@@ -221,6 +221,30 @@ function textMap(skus: string[], values: FormDataEntryValue[]) {
   return map;
 }
 
+const SIZE_ORDER = new Map(
+  ["xxs", "2xs", "xs", "s", "m", "l", "xl", "2xl", "3xl"].map((size, index) => [
+    size,
+    index,
+  ]),
+);
+
+function normalizedSizeToken(value: string) {
+  const normalized = value.toLowerCase().replace(/\b2xs\b/g, "xxs");
+  const match = normalized.match(/(?:^|[\s/_-])(xxs|xs|s|m|l|xl|2xl|3xl)(?:$|[\s/_-])/);
+  return match?.[1] ?? "";
+}
+
+function sizeRank(...values: string[]) {
+  const size = values.map(normalizedSizeToken).find(Boolean);
+  return size ? SIZE_ORDER.get(size) ?? 99 : 99;
+}
+
+function productGroupName(value: string) {
+  return value
+    .replace(/\s*\/\s*(?:2XS|XXS|XS|S|M|L|XL|2XL|3XL)\s*$/i, "")
+    .trim();
+}
+
 export async function createPoFromDecisionAction(formData: FormData) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
@@ -236,6 +260,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
 
   const allSkus = formData.getAll("poSku").map((value) => String(value).trim());
   const productBySku = textMap(allSkus, formData.getAll("poProductName"));
+  const mainNameBySku = textMap(allSkus, formData.getAll("poMainName"));
   const supplierBySku = textMap(allSkus, formData.getAll("poSupplier"));
   const unitPriceBySku = textMap(allSkus, formData.getAll("poUnitPrice"));
   const rawQtyBySku = textMap(allSkus, formData.getAll("poRawQty"));
@@ -266,7 +291,21 @@ export async function createPoFromDecisionAction(formData: FormData) {
   const poId = generatedPoId();
   const today = new Date().toISOString().slice(0, 10);
   const currency = supplier.currency ?? "THB";
-  const items = selectedSkus.map((sku, index) => {
+  const sortedSelectedSkus = [...selectedSkus].sort((a, b) => {
+    const mainA = mainNameBySku.get(a) || productBySku.get(a) || a;
+    const mainB = mainNameBySku.get(b) || productBySku.get(b) || b;
+    const productA = productBySku.get(a) || a;
+    const productB = productBySku.get(b) || b;
+
+    return (
+      mainA.localeCompare(mainB) ||
+      productGroupName(productA).localeCompare(productGroupName(productB)) ||
+      sizeRank(a, productA) - sizeRank(b, productB) ||
+      productA.localeCompare(productB) ||
+      a.localeCompare(b)
+    );
+  });
+  const items = sortedSelectedSkus.map((sku, index) => {
     const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
     const orderedQty =
       qtyChoice === "raw"
@@ -279,6 +318,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
       po_item_id: `${poId}-${index + 1}`,
       po_id: poId,
       line_no: String(index + 1),
+      sort_position: index + 1,
       sku,
       product_title_snapshot: productTitle,
       variant_title_snapshot: null,

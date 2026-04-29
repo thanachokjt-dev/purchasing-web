@@ -375,6 +375,12 @@ export default async function PurchasingDecisionPage({
                         />
                         <input
                           form="decision-create-po-form"
+                          name="poMainName"
+                          type="hidden"
+                          value={line.mainName}
+                        />
+                        <input
+                          form="decision-create-po-form"
                           name="poSupplier"
                           type="hidden"
                           value={line.supplier}
