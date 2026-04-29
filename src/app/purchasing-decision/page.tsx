@@ -30,6 +30,13 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function formatDecimal(value: number, digits = 2) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(value);
+}
+
 function coverageText(value: number | null) {
   return value === null ? "-" : `${formatNumber(Math.floor(value))}d`;
 }
@@ -248,7 +255,7 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="max-w-full overflow-x-auto">
-              <table className="min-w-[2240px] text-left text-sm">
+              <table className="min-w-[2360px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className="px-3 py-3 font-semibold">Pick</th>
@@ -259,6 +266,7 @@ export default async function PurchasingDecisionPage({
                     <th className="px-3 py-3 font-semibold">Sup</th>
                     <th className="px-3 py-3 text-right font-semibold">On-hand</th>
                     <th className="px-3 py-3 text-right font-semibold">Total sale</th>
+                    <th className="px-3 py-3 text-right font-semibold">Demand 30D</th>
                     <th className="px-3 py-3 text-right font-semibold">Demand HM</th>
                     <th className="px-3 py-3 text-right font-semibold">Safety</th>
                     <th className="px-3 py-3 text-right font-semibold">Lead</th>
@@ -368,16 +376,25 @@ export default async function PurchasingDecisionPage({
                       </td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.onHandUnits)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
+                      <td className={readOnlyMetricClass}>
+                        <p>{formatDecimal(line.demand30Days, 2)}</p>
+                        <p className="mt-1 text-xs text-[#6b7785]">daily avg</p>
+                      </td>
                       <DecisionPlanningCells
                         calculatedDemandIndexHm={line.calculatedDemandIndexHm}
                         comingQty={line.coming}
                         demandIndexHm={line.demandIndexHm}
+                        firstSaleDate={line.firstSaleDate}
                         leadTimeDays={line.leadTimeDays}
                         leadTimeSource={line.leadTimeSource}
+                        lifetimeDailyAverage={line.lifetimeDailyAverage}
+                        lastSaleDate={line.lastSaleDate}
                         orderCycleDays={line.orderCycleDays}
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
                         safetySource={line.safetySource}
+                        sellingDayAverage={line.sellingDayAverage}
+                        sellingDays={line.sellingDays}
                         sku={line.sku}
                         supplierLeadTimeDays={line.supplierLeadTimeDays}
                         supplierSafetyDays={line.supplierSafetyDays}

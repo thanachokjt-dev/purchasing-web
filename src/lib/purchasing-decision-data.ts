@@ -52,6 +52,17 @@ type SalesSummaryRow = {
   sold_90: number | string | null;
 };
 
+type SalesStats = {
+  total: number;
+  sold30: number;
+  firstSaleDate: string | null;
+  lastSaleDate: string | null;
+  sellingDays: number;
+  lifetimeDailyAverage: number;
+  sellingDayAverage: number;
+  demandIndex: number;
+};
+
 type IncomingRow = {
   sku: string | null;
   active_incoming_qty: number | string | null;
@@ -91,6 +102,12 @@ export type PurchasingDecisionLine = {
   supplierSource: "decision" | "manual" | "excel" | "shopify_vendor" | "setup" | "pending";
   onHandUnits: number;
   totalSale: number;
+  demand30Days: number;
+  firstSaleDate: string | null;
+  lastSaleDate: string | null;
+  sellingDays: number;
+  lifetimeDailyAverage: number;
+  sellingDayAverage: number;
   demandIndexHm: number;
   calculatedDemandIndexHm: number;
   demandIndexOverride: number | null;
@@ -190,15 +207,6 @@ function daysAgo(days: number, now = new Date()) {
     .slice(0, 10);
 }
 
-function harmonicMean(values: number[]) {
-  const positive = values.filter((value) => value > 0);
-  if (!positive.length) {
-    return 0;
-  }
-
-  return positive.length / positive.reduce((sum, value) => sum + 1 / value, 0);
-}
-
 function optionalNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -214,6 +222,42 @@ function roundUpToTen(value: number) {
   }
 
   return Math.ceil(value / 10) * 10;
+}
+
+function saleSpanDays(firstDate: string | null, lastDate: string | null) {
+  if (!firstDate || !lastDate) {
+    return 0;
+  }
+
+  const first = new Date(`${firstDate}T00:00:00Z`).getTime();
+  const last = new Date(`${lastDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last < first) {
+    return 0;
+  }
+
+  return Math.max(1, Math.floor((last - first) / (24 * 60 * 60 * 1000)) + 1);
+}
+
+function averageDemandFromStats(stats: {
+  total: number;
+  firstSaleDate: string | null;
+  lastSaleDate: string | null;
+  sellingDays: number;
+}) {
+  const spanDays = saleSpanDays(stats.firstSaleDate, stats.lastSaleDate);
+  const lifetimeDailyAverage = spanDays > 0 ? stats.total / spanDays : 0;
+  const sellingDayAverage =
+    stats.sellingDays > 0 ? stats.total / stats.sellingDays : 0;
+  const demandIndex =
+    lifetimeDailyAverage > 0 && sellingDayAverage > 0
+      ? (lifetimeDailyAverage + sellingDayAverage) / 2
+      : lifetimeDailyAverage || sellingDayAverage;
+
+  return {
+    demandIndex,
+    lifetimeDailyAverage,
+    sellingDayAverage,
+  };
 }
 
 async function fetchAll<T>(
@@ -325,12 +369,10 @@ function buildManualSupplierBySku(rows: ManualSupplierRow[]) {
 }
 
 function buildSalesBySku(rows: SalesRow[]) {
-  const d7 = daysAgo(7);
   const d30 = daysAgo(30);
-  const d90 = daysAgo(90);
   const bySku = new Map<
     string,
-    { total: number; sold7: number; sold30: number; sold90: number }
+    { total: number; sold30: number; firstSaleDate: string | null; lastSaleDate: string | null; saleDates: Set<string> }
   >();
 
   for (const row of rows) {
@@ -344,29 +386,56 @@ function buildSalesBySku(rows: SalesRow[]) {
       continue;
     }
 
-    const existing = bySku.get(sku) ?? { total: 0, sold7: 0, sold30: 0, sold90: 0 };
+    const existing = bySku.get(sku) ?? {
+      total: 0,
+      sold30: 0,
+      firstSaleDate: null,
+      lastSaleDate: null,
+      saleDates: new Set<string>(),
+    };
     const qty = numeric(row.quantity);
     existing.total += qty;
-    if (orderDate >= d90) {
-      existing.sold90 += qty;
-    }
     if (orderDate >= d30) {
       existing.sold30 += qty;
     }
-    if (orderDate >= d7) {
-      existing.sold7 += qty;
-    }
+    existing.firstSaleDate =
+      existing.firstSaleDate && existing.firstSaleDate < orderDate
+        ? existing.firstSaleDate
+        : orderDate;
+    existing.lastSaleDate =
+      existing.lastSaleDate && existing.lastSaleDate > orderDate
+        ? existing.lastSaleDate
+        : orderDate;
+    existing.saleDates.add(orderDate);
     bySku.set(sku, existing);
   }
 
-  return bySku;
+  return new Map(
+    Array.from(bySku.entries()).map(([sku, stats]) => {
+      const averages = averageDemandFromStats({
+        total: stats.total,
+        firstSaleDate: stats.firstSaleDate,
+        lastSaleDate: stats.lastSaleDate,
+        sellingDays: stats.saleDates.size,
+      });
+
+      return [
+        sku,
+        {
+          total: stats.total,
+          sold30: stats.sold30,
+          firstSaleDate: stats.firstSaleDate,
+          lastSaleDate: stats.lastSaleDate,
+          sellingDays: stats.saleDates.size,
+          ...averages,
+        } satisfies SalesStats,
+      ];
+    }),
+  );
 }
 
 function buildSalesBySkuFromSummary(rows: SalesSummaryRow[]) {
-  const bySku = new Map<
-    string,
-    { total: number; sold7: number; sold30: number; sold90: number }
-  >();
+  const bySku = new Map<string, SalesStats>();
 
   for (const row of rows) {
     const sku = row.sku?.trim();
@@ -374,11 +443,18 @@ function buildSalesBySkuFromSummary(rows: SalesSummaryRow[]) {
       continue;
     }
 
+    const total = numeric(row.total_sale);
+    const sold30 = numeric(row.sold_30);
+    const demand30 = sold30 / 30;
     bySku.set(sku, {
-      total: numeric(row.total_sale),
-      sold7: numeric(row.sold_7),
-      sold30: numeric(row.sold_30),
-      sold90: numeric(row.sold_90),
+      total,
+      sold30,
+      firstSaleDate: null,
+      lastSaleDate: null,
+      sellingDays: 0,
+      lifetimeDailyAverage: demand30,
+      sellingDayAverage: demand30,
+      demandIndex: demand30,
     });
   }
 
@@ -386,22 +462,26 @@ function buildSalesBySkuFromSummary(rows: SalesSummaryRow[]) {
 }
 
 async function fetchSalesBySku(supabase: SupabaseClient) {
-  const { data, error } = await supabase
-    .from("purchasing_sales_by_sku")
-    .select("sku,total_sale,sold_7,sold_30,sold_90");
+  try {
+    const rawSalesRows = await fetchAll<SalesRow>("Sales lines", (from, to) =>
+      supabase
+        .from("sales_lines")
+        .select("sku,quantity,order_date,financial_status,cancelled_at_shopify")
+        .range(from, to),
+    );
 
-  if (!error) {
+    return buildSalesBySku(rawSalesRows);
+  } catch {
+    const { data, error } = await supabase
+      .from("purchasing_sales_by_sku")
+      .select("sku,total_sale,sold_7,sold_30,sold_90");
+
+    if (error) {
+      return new Map<string, SalesStats>();
+    }
+
     return buildSalesBySkuFromSummary((data ?? []) as SalesSummaryRow[]);
   }
-
-  const rawSalesRows = await fetchAll<SalesRow>("Sales lines", (from, to) =>
-    supabase
-      .from("sales_lines")
-      .select("sku,quantity,order_date,financial_status,cancelled_at_shopify")
-      .range(from, to),
-  );
-
-  return buildSalesBySku(rawSalesRows);
 }
 
 
@@ -621,15 +701,16 @@ export async function getPurchasingDecisionData({
     const tags = sourceTags.filter((tag) => activeTagSet.has(tag.toLowerCase()));
     const sales = salesBySku.get(sku) ?? {
       total: 0,
-      sold7: 0,
       sold30: 0,
-      sold90: 0,
+      firstSaleDate: null,
+      lastSaleDate: null,
+      sellingDays: 0,
+      lifetimeDailyAverage: 0,
+      sellingDayAverage: 0,
+      demandIndex: 0,
     };
-    const calculatedDemandIndexHm = harmonicMean([
-      sales.sold7 / 7,
-      sales.sold30 / 30,
-      sales.sold90 / 90,
-    ]);
+    const calculatedDemandIndexHm = sales.demandIndex;
+    const demand30Days = sales.sold30 / 30;
     const demandIndexOverride = optionalNumber(control?.demand_index_override);
     const demandIndexHm = demandIndexOverride ?? calculatedDemandIndexHm;
     const skuSafetyDays = optionalInteger(control?.safety_days);
@@ -694,6 +775,12 @@ export async function getPurchasingDecisionData({
         supplierSource: lineSupplier.source,
         onHandUnits,
         totalSale: sales.total,
+        demand30Days,
+        firstSaleDate: sales.firstSaleDate,
+        lastSaleDate: sales.lastSaleDate,
+        sellingDays: sales.sellingDays,
+        lifetimeDailyAverage: sales.lifetimeDailyAverage,
+        sellingDayAverage: sales.sellingDayAverage,
         demandIndexHm,
         calculatedDemandIndexHm,
         demandIndexOverride,

@@ -95,12 +95,17 @@ export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
   demandIndexHm,
+  firstSaleDate,
   leadTimeDays,
   leadTimeSource,
+  lifetimeDailyAverage,
+  lastSaleDate,
   orderCycleDays,
   reorderPointUnits,
   safetyDays,
   safetySource,
+  sellingDayAverage,
+  sellingDays,
   sku,
   supplierLeadTimeDays,
   supplierSafetyDays,
@@ -108,12 +113,17 @@ export function DecisionPlanningCells({
   calculatedDemandIndexHm: number;
   comingQty: number;
   demandIndexHm: number;
+  firstSaleDate: string | null;
   leadTimeDays: number;
   leadTimeSource: "sku" | "supplier" | "default";
+  lifetimeDailyAverage: number;
+  lastSaleDate: string | null;
   orderCycleDays: number;
   reorderPointUnits: number;
   safetyDays: number;
   safetySource: "sku" | "supplier" | "default";
+  sellingDayAverage: number;
+  sellingDays: number;
   sku: string;
   supplierLeadTimeDays: number | null;
   supplierSafetyDays: number | null;
@@ -156,12 +166,15 @@ export function DecisionPlanningCells({
           name="demandIndexHm"
           onChange={(event) => setDemand(event.target.value)}
           step="0.0001"
-          title={`Calculated ${formatDecimal(calculatedDemandIndexHm, 4)}`}
+          title={`Calculated ${formatDecimal(calculatedDemandIndexHm, 4)} from ${firstSaleDate ?? "-"} to ${lastSaleDate ?? "-"} plus ${sellingDays} selling days`}
           type="number"
           value={demand}
         />
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
           calc {formatDecimal(calculatedDemandIndexHm, 2)}
+        </p>
+        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+          {formatDecimal(lifetimeDailyAverage, 2)} / {formatDecimal(sellingDayAverage, 2)}
         </p>
       </td>
       <td className="px-3 py-3 align-top">
