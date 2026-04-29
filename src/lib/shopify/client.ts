@@ -51,6 +51,9 @@ export type ShopifyVariantNode = {
     vendor: string | null;
     tags: string[];
     status: string;
+    itemStatus: {
+      value: string;
+    } | null;
     featuredMedia: {
       preview: {
         image: {
@@ -203,6 +206,9 @@ export const PRODUCT_VARIANTS_QUERY = `
           vendor
           tags
           status
+          itemStatus: metafield(namespace: "items", key: "status") {
+            value
+          }
           featuredMedia {
             preview {
               image {

@@ -22,7 +22,6 @@ export const dynamic = "force-dynamic";
 const inputClass =
   "h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const readOnlyMetricClass = "px-3 py-3 text-right font-mono text-sm text-[#172026]";
-const itemStatusOptions = ["ACTIVE", "DRAFT", "ARCHIVED"];
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -75,14 +74,15 @@ function alertClass(status: string) {
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; visibility?: string }>;
+  searchParams: Promise<{ q?: string; supplier?: string; tag?: string; status?: string; visibility?: string }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
   const supplier = params.supplier ?? "all";
   const tag = params.tag ?? "all";
+  const status = params.status ?? "all";
   const visibility = params.visibility ?? "active";
-  const data = await getPurchasingDecisionData({ q, supplier, tag, visibility });
+  const data = await getPurchasingDecisionData({ q, supplier, tag, itemStatus: status, visibility });
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
@@ -161,7 +161,7 @@ export default async function PurchasingDecisionPage({
                   then save all visible rows in one submit.
                 </p>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_160px_auto]">
+              <form className="grid gap-3 md:grid-cols-[1fr_220px_180px_180px_160px_auto]">
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Search
@@ -195,6 +195,19 @@ export default async function PurchasingDecisionPage({
                   <select className={inputClass} defaultValue={tag} name="tag">
                     <option value="all">All tags</option>
                     {data.tagOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+                    Status
+                  </span>
+                  <select className={inputClass} defaultValue={status} name="status">
+                    <option value="all">All statuses</option>
+                    {data.itemStatusOptions.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -390,7 +403,7 @@ export default async function PurchasingDecisionPage({
                           name="itemStatus"
                         >
                           {Array.from(
-                            new Set([line.itemStatus, line.shopifyItemStatus, ...itemStatusOptions])
+                            new Set([line.itemStatus, line.shopifyItemStatus, ...data.itemStatusOptions])
                           )
                             .filter(Boolean)
                             .map((status) => (

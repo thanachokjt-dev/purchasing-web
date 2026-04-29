@@ -63,6 +63,7 @@ type VariantUpsert = {
   price: number | null;
   compare_at_price: number | null;
   variant_image_url: string | null;
+  item_status: string | null;
   tracked: boolean;
   effective_status: string;
   product_id?: string;
@@ -178,6 +179,7 @@ function mapVariant(
     price: numericOrNull(variant.price),
     compare_at_price: numericOrNull(variant.compareAtPrice),
     variant_image_url: variant.image?.url ?? null,
+    item_status: variant.product.itemStatus?.value ?? null,
     tracked: variant.inventoryItem?.tracked ?? false,
     effective_status: variant.product.status,
     updated_at: syncedAt,

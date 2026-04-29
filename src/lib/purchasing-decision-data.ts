@@ -30,6 +30,7 @@ type VariantRow = {
   option3_value: string | null;
   price: number | string | null;
   variant_image_url: string | null;
+  item_status: string | null;
   effective_status: string | null;
   products: ProductRelation;
 };
@@ -150,6 +151,7 @@ export type PurchasingDecisionLine = {
 export type PurchasingDecisionData = {
   mode: "supabase" | "baseline";
   controlsReady: boolean;
+  itemStatusOptions: string[];
   supplierOptions: string[];
   tagOptions: string[];
   lines: PurchasingDecisionLine[];
@@ -611,12 +613,14 @@ export async function getPurchasingDecisionData({
   q = "",
   supplier = "all",
   tag = "all",
+  itemStatus = "all",
   visibility = "active",
 }: {
   limit?: number | null;
   q?: string;
   supplier?: string;
   tag?: string;
+  itemStatus?: string;
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
@@ -625,6 +629,7 @@ export async function getPurchasingDecisionData({
     return {
       mode: "baseline",
       controlsReady: false,
+      itemStatusOptions: [],
       supplierOptions: [],
       tagOptions: [],
       lines: [],
@@ -652,7 +657,7 @@ export async function getPurchasingDecisionData({
       supabase
         .from("product_variants")
         .select(
-          "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,effective_status,products(product_title,vendor,tags,product_type,product_image_url,status)",
+          "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,item_status,effective_status,products(product_title,vendor,tags,product_type,product_image_url,status)",
         )
         .order("sku", { ascending: true })
         .range(from, to),
@@ -677,6 +682,7 @@ export async function getPurchasingDecisionData({
   const query = q.trim().toLowerCase();
   const selectedSupplier = supplier.trim().toLowerCase();
   const selectedTag = tag.trim().toLowerCase();
+  const selectedItemStatus = itemStatus.trim().toLowerCase();
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
   const activeSupplierNames = new Set(
@@ -712,7 +718,7 @@ export async function getPurchasingDecisionData({
     const resolvedMainName =
       compactText(control?.main_name_override) || mainNameFromRow(row);
     const shopifyItemStatus =
-      compactText(row.effective_status) || compactText(product?.status) || "ACTIVE";
+      compactText(row.item_status) || "Available";
     const itemStatus = compactText(control?.item_status_override) || shopifyItemStatus;
     const shopifyTags = product?.tags ?? [];
     const sourceTags =
@@ -858,6 +864,9 @@ export async function getPurchasingDecisionData({
       const matchesTag =
         selectedTag === "all" ||
         line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
+      const matchesItemStatus =
+        selectedItemStatus === "all" ||
+        line.itemStatus.toLowerCase() === selectedItemStatus;
       const matchesVisibility =
         selectedVisibility === "all" ||
         (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
@@ -876,7 +885,7 @@ export async function getPurchasingDecisionData({
           .toLowerCase()
           .includes(query);
 
-      return matchesSupplier && matchesTag && matchesVisibility && matchesQuery;
+      return matchesSupplier && matchesTag && matchesItemStatus && matchesVisibility && matchesQuery;
     })
     .sort((a, b) => {
       const statusRank = { order_now: 0, watch: 1, healthy: 2, hidden: 3 };
@@ -894,6 +903,13 @@ export async function getPurchasingDecisionData({
   return {
     mode: "supabase",
     controlsReady: controlResult.controlsReady,
+    itemStatusOptions: Array.from(
+      new Set([
+        "Available",
+        "Discontinued",
+        ...allLines.map((line) => line.itemStatus).filter(Boolean),
+      ]),
+    ).sort((a, b) => a.localeCompare(b)),
     supplierOptions,
     tagOptions: activeTagOptions.sort((a, b) => a.localeCompare(b)),
     lines: visibleLines,
