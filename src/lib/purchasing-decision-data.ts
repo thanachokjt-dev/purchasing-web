@@ -586,6 +586,18 @@ function ropStatus(hidden: boolean, onHand: number, coming: number, reorderPoint
   return "healthy" as const;
 }
 
+function matchesSelectedSupplier(
+  line: PurchasingDecisionLine,
+  selectedSupplier: string,
+) {
+  return (
+    selectedSupplier === "all" ||
+    (selectedSupplier === "__unset" && !line.supplierSetInSheet) ||
+    (selectedSupplier === "__unmapped" && line.supplierSource === "pending") ||
+    line.supplier.toLowerCase() === selectedSupplier
+  );
+}
+
 const sizeOrder = new Map(
   ["xxs", "2xs", "xs", "s", "m", "l", "xl", "2xl", "3xl"].map((size, index) => [
     size,
@@ -885,13 +897,20 @@ export async function getPurchasingDecisionData({
         a.supplier.localeCompare(b.supplier),
     );
 
+  const tagOptionsForSelection = (
+    selectedSupplier === "all"
+      ? allLines
+      : allLines.filter((line) => matchesSelectedSupplier(line, selectedSupplier))
+  )
+    .flatMap((line) => line.tags)
+    .filter((tag) => activeTagSet.has(tag.toLowerCase()));
+  const tagOptions = Array.from(new Set(tagOptionsForSelection)).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
   const filteredLines = allLines
     .filter((line) => {
-      const matchesSupplier =
-        selectedSupplier === "all" ||
-        (selectedSupplier === "__unset" && !line.supplierSetInSheet) ||
-        (selectedSupplier === "__unmapped" && line.supplierSource === "pending") ||
-        line.supplier.toLowerCase() === selectedSupplier;
+      const matchesSupplier = matchesSelectedSupplier(line, selectedSupplier);
       const matchesTag =
         selectedTag === "all" ||
         line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
@@ -952,7 +971,7 @@ export async function getPurchasingDecisionData({
     ).sort((a, b) => a.localeCompare(b)),
     supplierFilterOptions,
     supplierOptions,
-    tagOptions: activeTagOptions.sort((a, b) => a.localeCompare(b)),
+    tagOptions,
     lines: visibleLines,
     totals: {
       skuCount: allLines.length,
