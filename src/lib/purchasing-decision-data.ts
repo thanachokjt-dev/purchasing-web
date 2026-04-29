@@ -567,14 +567,14 @@ function supplierForLine(
   return { supplier: "Unmapped", source: "pending" as const };
 }
 
-function ropStatus(hidden: boolean, onHand: number, coming: number, ropUnits: number) {
+function ropStatus(hidden: boolean, onHand: number, coming: number, reorderPointUnits: number) {
   if (hidden) {
     return "hidden" as const;
   }
-  if (ropUnits > onHand + coming) {
+  if (reorderPointUnits > onHand + coming) {
     return "order_now" as const;
   }
-  if (ropUnits > onHand) {
+  if (reorderPointUnits > onHand) {
     return "watch" as const;
   }
   return "healthy" as const;
@@ -829,7 +829,7 @@ export async function getPurchasingDecisionData({
         coversSalesDuration,
         week: Math.ceil(ropUnits / 4),
         month: ropUnits,
-        ropAlert: ropStatus(hidden, onHandUnits, incoming.active, ropUnits),
+        ropAlert: ropStatus(hidden, onHandUnits, incoming.active, reorderPointUnits),
         totalCoverageAtOrder,
         targetCoverageDays,
         coming: incoming.active,
