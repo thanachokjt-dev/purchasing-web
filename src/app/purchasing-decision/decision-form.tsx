@@ -22,6 +22,21 @@ function formatDecimal(value: number, digits = 2) {
   }).format(value);
 }
 
+function formatOneDecimal(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+  }).format(value);
+}
+
+function coverageText(value: number | null) {
+  return value === null ? "-" : `${formatNumber(Math.floor(value))}d`;
+}
+
+function durationUnitText(value: number | null, unit: "m" | "w") {
+  return value === null ? "-" : `${formatOneDecimal(value)}${unit}`;
+}
+
 function numberOrZero(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -33,6 +48,32 @@ function roundUpToTen(value: number) {
   }
 
   return Math.ceil(value / 10) * 10;
+}
+
+function alertLabel(status: string) {
+  if (status === "order_now") {
+    return "Order now";
+  }
+  if (status === "watch") {
+    return "Watch";
+  }
+  if (status === "hidden") {
+    return "Hidden";
+  }
+  return "Healthy";
+}
+
+function alertClass(status: string) {
+  if (status === "order_now") {
+    return "bg-[#fff1e8] text-[#9a3412]";
+  }
+  if (status === "watch") {
+    return "bg-[#fff4e5] text-[#946200]";
+  }
+  if (status === "hidden") {
+    return "bg-[#eef0f3] text-[#5c6670]";
+  }
+  return "bg-[#eaf6ef] text-[#1f6b3d]";
 }
 
 export function DecisionSaveButton() {
@@ -60,20 +101,13 @@ export function DecisionCreatePoButton() {
     return () => window.removeEventListener("pageshow", reset);
   }, []);
 
-  function submitCreatePo() {
-    const form = document.getElementById("decision-create-po-form");
-    if (form instanceof HTMLFormElement) {
-      setSubmitting(true);
-      form.requestSubmit();
-    }
-  }
-
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
       disabled={submitting}
-      onClick={submitCreatePo}
-      type="button"
+      form="decision-create-po-form"
+      onClick={() => setSubmitting(true)}
+      type="submit"
     >
       <LoadingLabel loading={submitting} loadingText="Creating...">
         Create PO
@@ -102,6 +136,8 @@ export function DecisionSearchBox({
         Search
       </span>
       <input
+        autoComplete="new-password"
+        autoCorrect="off"
         className="h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]"
         name="q"
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
@@ -111,6 +147,7 @@ export function DecisionSearchBox({
         }}
         onFocus={() => setOpen(true)}
         placeholder="Main name"
+        spellCheck={false}
         value={value}
       />
       {open && filteredOptions.length ? (
@@ -443,7 +480,9 @@ export function DecisionPlanningCells({
   lastSaleDate,
   orderCycleDays,
   orderQtyMode,
+  onHandUnits,
   reorderPointUnits,
+  ropAlert,
   safetyDays,
   safetySource,
   sellingDayAverage,
@@ -462,7 +501,9 @@ export function DecisionPlanningCells({
   lastSaleDate: string | null;
   orderCycleDays: number;
   orderQtyMode: "raw" | "rounded";
+  onHandUnits: number;
   reorderPointUnits: number;
+  ropAlert: "order_now" | "watch" | "healthy" | "hidden";
   safetyDays: number;
   safetySource: "sku" | "supplier" | "default";
   sellingDayAverage: number;
@@ -500,6 +541,12 @@ export function DecisionPlanningCells({
     selectedMode === "raw" ? netRawQty : netRoundedQty,
   );
   const orderQty = manualOrderQty ?? computedOrderQty;
+  const orderQtyNumber = numberOrZero(orderQty);
+  const coverDays = liveDemand > 0 ? onHandUnits / liveDemand : null;
+  const coverWeeks = coverDays === null ? null : coverDays / 7;
+  const coverMonths = coverDays === null ? null : coverDays / 30;
+  const atOrderCoverageDays =
+    liveDemand > 0 ? (comingQty + orderQtyNumber) / liveDemand : null;
 
   function chooseMode(mode: "raw" | "rounded") {
     setSelectedMode(mode);
@@ -670,6 +717,30 @@ export function DecisionPlanningCells({
             Round 10
           </label>
         </div>
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        {coverageText(coverDays)}
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        {durationUnitText(coverWeeks, "w")}
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        {durationUnitText(coverMonths, "m")}
+      </td>
+      <td className="px-3 py-3 align-top">
+        <span
+          className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${alertClass(
+            ropAlert,
+          )}`}
+        >
+          {alertLabel(ropAlert)}
+        </span>
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        <p>{coverageText(atOrderCoverageDays)}</p>
+        <p className="mt-1 text-[10px] text-[#7a8794]">
+          coming {formatNumber(comingQty)} + order {formatNumber(orderQtyNumber)}
+        </p>
       </td>
     </>
   );

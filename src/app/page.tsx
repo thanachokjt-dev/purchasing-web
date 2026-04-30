@@ -83,6 +83,8 @@ export default async function Home() {
             <Link
               className="inline-flex h-10 items-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 font-medium text-[#364252]"
               href="/po"
+              rel="noreferrer"
+              target="_blank"
             >
               <ClipboardList size={16} />
               PO Portal

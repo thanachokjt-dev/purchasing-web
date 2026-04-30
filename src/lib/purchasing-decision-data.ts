@@ -936,7 +936,7 @@ export async function getPurchasingDecisionData({
     const coversSalesDuration =
       demandIndexHm > 0 ? onHandUnits / demandIndexHm : null;
     const totalCoverageAtOrder =
-      demandIndexHm > 0 ? (onHandUnits + incoming.active) / demandIndexHm : null;
+      demandIndexHm > 0 ? (incoming.active + ropUnits) / demandIndexHm : null;
     const unitPrice = numeric(row.price);
     const hidden = Boolean(control?.hide_from_purchasing);
 
@@ -978,8 +978,8 @@ export async function getPurchasingDecisionData({
         orderQtyMode,
         manualRopUnits,
         coversSalesDuration,
-        week: Math.ceil(ropUnits / 4),
-        month: ropUnits,
+        week: coversSalesDuration === null ? 0 : coversSalesDuration / 7,
+        month: coversSalesDuration === null ? 0 : coversSalesDuration / 30,
         ropAlert: ropStatus(hidden, onHandUnits, incoming.active, reorderPointUnits),
         totalCoverageAtOrder,
         targetCoverageDays,

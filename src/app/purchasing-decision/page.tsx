@@ -27,6 +27,8 @@ export const dynamic = "force-dynamic";
 const inputClass =
   "h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const readOnlyMetricClass = "px-3 py-3 text-right font-mono text-sm text-[#172026]";
+const stickyHeaderBase = "sticky top-0 bg-[#f3f5f7] px-3 py-3 font-semibold";
+const stickyCellBase = "sticky px-3 py-3 align-top shadow-[1px_0_0_#edf1f5]";
 const alertOptions = ["order_now", "watch", "healthy", "hidden"].map((value) => ({
   label: alertLabel(value),
   value,
@@ -46,10 +48,6 @@ function formatDecimal(value: number, digits = 2) {
   }).format(value);
 }
 
-function coverageText(value: number | null) {
-  return value === null ? "-" : `${formatNumber(Math.floor(value))}d`;
-}
-
 function qtyValue(value: number) {
   return Number.isFinite(value) ? String(value) : "0";
 }
@@ -65,19 +63,6 @@ function alertLabel(status: string) {
     return "Hidden";
   }
   return "Healthy";
-}
-
-function alertClass(status: string) {
-  if (status === "order_now") {
-    return "bg-[#fff1e8] text-[#9a3412]";
-  }
-  if (status === "watch") {
-    return "bg-[#fff4e5] text-[#946200]";
-  }
-  if (status === "hidden") {
-    return "bg-[#eef0f3] text-[#5c6670]";
-  }
-  return "bg-[#eaf6ef] text-[#1f6b3d]";
 }
 
 function normalizeSelectedAlerts(alert: string | string[] | undefined) {
@@ -221,6 +206,8 @@ export default async function PurchasingDecisionPage({
             <Link
               className="inline-flex h-10 items-center rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 font-medium text-[#364252]"
               href="/po"
+              rel="noreferrer"
+              target="_blank"
             >
               PO Portal
             </Link>
@@ -383,24 +370,24 @@ export default async function PurchasingDecisionPage({
               </div>
             </div>
 
-            <div className="max-w-full overflow-x-auto">
+            <div className="max-h-[calc(100vh-260px)] max-w-full overflow-auto">
               <table className="min-w-[2500px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
-                    <th className="px-3 py-3 font-semibold">Pick</th>
-                    <th className="px-3 py-3 font-semibold">SKU</th>
-                    <th className="px-3 py-3 font-semibold">
+                    <th className={`${stickyHeaderBase} left-0 z-50 w-[52px] min-w-[52px]`}>Pick</th>
+                    <th className={`${stickyHeaderBase} left-[52px] z-50 w-[96px] min-w-[96px]`}>SKU</th>
+                    <th className={`${stickyHeaderBase} left-[148px] z-50 w-[180px] min-w-[180px]`}>
                       <HideSelectionButtons />
                     </th>
-                    <th className="px-3 py-3 font-semibold">Product</th>
-                    <th className="px-3 py-3 font-semibold">Main name</th>
-                    <th className="px-3 py-3 font-semibold">Item status</th>
-                    <th className="px-3 py-3 font-semibold">Tags</th>
-                    <th className="px-3 py-3 font-semibold">Sup</th>
-                    <th className="px-3 py-3 text-right font-semibold">On-hand</th>
-                    <th className="px-3 py-3 text-right font-semibold">Total sale</th>
-                    <th className="px-3 py-3 text-right font-semibold">Demand 30D</th>
-                    <th className="px-3 py-3 text-right font-semibold">
+                    <th className={`${stickyHeaderBase} left-[328px] z-50 w-[280px] min-w-[280px]`}>Product</th>
+                    <th className={`${stickyHeaderBase} left-[608px] z-50 w-[200px] min-w-[200px]`}>Main name</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Item status</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Tags</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Sup</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>On-hand</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Total sale</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Demand 30D</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>
                       <DemandFormulaHeaderButton
                         capAtSellingDayAverage={data.demandFormula.capAtSellingDayAverage}
                         lifetimeWeight={data.demandFormula.lifetimeWeight}
@@ -408,27 +395,30 @@ export default async function PurchasingDecisionPage({
                         sellingDayWeight={data.demandFormula.sellingDayWeight}
                       />
                     </th>
-                    <th className="px-3 py-3 text-right font-semibold">Safety</th>
-                    <th className="px-3 py-3 text-right font-semibold">Lead</th>
-                    <th className="px-3 py-3 text-right font-semibold">Cycle</th>
-                    <th className="px-3 py-3 text-right font-semibold">Re-order Point</th>
-                    <th className="px-3 py-3 text-right font-semibold">Raw qty</th>
-                    <th className="px-3 py-3 text-right font-semibold">Round 10</th>
-                    <th className="px-3 py-3 font-semibold">Use</th>
-                    <th className="px-3 py-3 text-right font-semibold">Cover</th>
-                    <th className="px-3 py-3 text-right font-semibold">Week</th>
-                    <th className="px-3 py-3 text-right font-semibold">Month</th>
-                    <th className="px-3 py-3 font-semibold">Alert</th>
-                    <th className="px-3 py-3 text-right font-semibold">At order</th>
-                    <th className="px-3 py-3 text-right font-semibold">Coming</th>
-                    <th className="px-3 py-3 text-right font-semibold">Value</th>
-                    <th className="px-3 py-3 font-semibold">Note</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Safety</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Lead</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Cycle</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Re-order Point</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Raw qty</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Round 10</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Use</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Cover</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Week</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Month</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Alert</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>At order</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Coming</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Value</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Note</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f5]">
-                  {data.lines.map((line) => (
-                    <tr className={line.hidden ? "bg-[#fbfcfd]" : "bg-white"} key={line.sku}>
-                      <td className="px-3 py-3 align-top">
+                  {data.lines.map((line) => {
+                    const rowBackground = line.hidden ? "bg-[#fbfcfd]" : "bg-white";
+
+                    return (
+                      <tr className={rowBackground} key={line.sku}>
+                      <td className={`${stickyCellBase} left-0 z-30 w-[52px] min-w-[52px] ${rowBackground}`}>
                         <input
                           className="size-4 accent-[#172026]"
                           data-decision-select="sku"
@@ -464,7 +454,7 @@ export default async function PurchasingDecisionPage({
                           value={qtyValue(line.unitPrice)}
                         />
                       </td>
-                      <td className="px-3 py-3 align-top">
+                      <td className={`${stickyCellBase} left-[52px] z-30 w-[96px] min-w-[96px] ${rowBackground}`}>
                         <input name="sku" type="hidden" value={line.sku} />
                         <p className="font-mono text-xs font-semibold text-[#42505c]">
                           {line.sku}
@@ -473,7 +463,7 @@ export default async function PurchasingDecisionPage({
                           {line.supplierSource}
                         </p>
                       </td>
-                      <td className="min-w-[180px] px-3 py-3 align-top">
+                      <td className={`${stickyCellBase} left-[148px] z-30 w-[180px] min-w-[180px] ${rowBackground}`}>
                         <label className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#52606d]">
                           <input
                             className="size-4 accent-[#172026]"
@@ -493,7 +483,7 @@ export default async function PurchasingDecisionPage({
                           placeholder="Event / markdown"
                         />
                       </td>
-                      <td className="min-w-[280px] px-3 py-3 align-top">
+                      <td className={`${stickyCellBase} left-[328px] z-30 w-[280px] min-w-[280px] ${rowBackground}`}>
                         <div className="flex items-start gap-3">
                           {line.imageUrl ? (
                             <Image
@@ -515,7 +505,7 @@ export default async function PurchasingDecisionPage({
                           />
                         </div>
                       </td>
-                      <td className="min-w-[200px] px-3 py-3 align-top">
+                      <td className={`${stickyCellBase} left-[608px] z-30 w-[200px] min-w-[200px] ${rowBackground}`}>
                         <input
                           className={inputClass}
                           defaultValue={line.mainName}
@@ -592,22 +582,11 @@ export default async function PurchasingDecisionPage({
                         sellingDayAverage={line.sellingDayAverage}
                         sellingDays={line.sellingDays}
                         sku={line.sku}
+                        ropAlert={line.ropAlert}
+                        onHandUnits={line.onHandUnits}
                         supplierLeadTimeDays={line.supplierLeadTimeDays}
                         supplierSafetyDays={line.supplierSafetyDays}
                       />
-                      <td className={readOnlyMetricClass}>{coverageText(line.coversSalesDuration)}</td>
-                      <td className={readOnlyMetricClass}>{formatNumber(line.week)}</td>
-                      <td className={readOnlyMetricClass}>{formatNumber(line.month)}</td>
-                      <td className="px-3 py-3 align-top">
-                        <span
-                          className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${alertClass(
-                            line.ropAlert,
-                          )}`}
-                        >
-                          {alertLabel(line.ropAlert)}
-                        </span>
-                      </td>
-                      <td className={readOnlyMetricClass}>{coverageText(line.totalCoverageAtOrder)}</td>
                       <td className={readOnlyMetricClass}>
                         <p>{formatNumber(line.coming)}</p>
                         {line.pendingComing > 0 ? (
@@ -635,8 +614,9 @@ export default async function PurchasingDecisionPage({
                           value={line.targetCoverageDays ?? ""}
                         />
                       </td>
-                    </tr>
-                  ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
