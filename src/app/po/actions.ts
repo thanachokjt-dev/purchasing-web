@@ -59,6 +59,19 @@ function nonNegativeNumber(formData: FormData, name: string) {
   return value;
 }
 
+function positiveRate(formData: FormData, name: string, fallback = 1) {
+  const raw = String(formData.get(name) ?? "").trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be greater than 0`);
+  }
+  return value;
+}
+
 function nonNegativeTextNumber(value: string, label: string) {
   if (!value.trim()) {
     return 0;
@@ -96,8 +109,59 @@ function refreshPoViews(poId?: string | null) {
   }
 }
 
+const NON_PRODUCT_PAYMENT_TYPES = new Set([
+  "freight",
+  "shipping",
+  "fine",
+  "penalty",
+  "other",
+  "other_cost",
+]);
+
+function isProductPaymentType(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return !NON_PRODUCT_PAYMENT_TYPES.has(normalized);
+}
+
+async function exchangeRateByCurrency(poId: string) {
+  const supabase = actionClient();
+  const rates = new Map<string, number>([["THB", 1]]);
+
+  const { data, error } = await supabase
+    .from("po_payments")
+    .select("currency,payment_type,exchange_rate,payment_date,created_at")
+    .eq("po_id", poId)
+    .order("payment_date", { ascending: false })
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    if (error.message.toLowerCase().includes("exchange_rate")) {
+      return rates;
+    }
+    throw new Error(error.message);
+  }
+
+  for (const payment of (data ?? []) as Array<{
+    currency: string | null;
+    payment_type: string | null;
+    exchange_rate: number | string | null;
+  }>) {
+    const currency = String(payment.currency ?? "THB").trim().toUpperCase();
+    const rate = Number(payment.exchange_rate ?? 0);
+    if (!currency || rates.has(currency) || !isProductPaymentType(payment.payment_type)) {
+      continue;
+    }
+    if (Number.isFinite(rate) && rate > 0) {
+      rates.set(currency, rate);
+    }
+  }
+
+  return rates;
+}
+
 async function recalculatePoAmount(poId: string) {
   const supabase = actionClient();
+  const rates = await exchangeRateByCurrency(poId);
   const { data: items, error: itemError } = await supabase
     .from("po_items")
     .select("ordered_qty,unit_price,freight_unit_cost,currency")
@@ -117,13 +181,12 @@ async function recalculatePoAmount(poId: string) {
       const qty = Number(item.ordered_qty ?? 0);
       const unitPrice = Number(item.unit_price ?? 0);
       const freightUnitCost = Number(item.freight_unit_cost ?? 0);
+      const currency = String(item.currency ?? "THB").trim().toUpperCase();
       const landedAmount = qty * (unitPrice + freightUnitCost);
+      const exchangeRate = rates.get(currency) ?? 0;
       return {
         amountForeign: sum.amountForeign + landedAmount,
-        amountThb:
-          (item.currency ?? "THB") === "THB"
-            ? sum.amountThb + landedAmount
-            : sum.amountThb,
+        amountThb: sum.amountThb + landedAmount * exchangeRate,
       };
     },
     { amountForeign: 0, amountThb: 0 },
@@ -256,6 +319,8 @@ export async function addPoItemAction(
   _previousState: PoActionState,
   formData: FormData,
 ): Promise<PoActionState> {
+  let redirectPoId: string | null = null;
+
   try {
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
@@ -291,7 +356,6 @@ export async function addPoItemAction(
     const currency = optionalText(formData, "currency") ?? order.currency ?? "THB";
     const landedUnitCost = unitPrice + freightUnitCost;
     const lineAmount = orderedQty * unitPrice;
-    const landedAmount = orderedQty * landedUnitCost;
 
     const { error: itemError } = await supabase.from("po_items").insert({
       po_item_id: `${poId}-${lineNo}`,
@@ -317,28 +381,26 @@ export async function addPoItemAction(
       throw new Error(itemError.message);
     }
 
-    const currentForeignAmount = Number(order.po_amount_foreign ?? 0);
-    const currentThbAmount = Number(order.po_amount_thb ?? 0);
-    await supabase
-      .from("po_orders")
-      .update({
-        po_amount_foreign: currentForeignAmount + landedAmount,
-        po_amount_thb: currency === "THB" ? currentThbAmount + landedAmount : currentThbAmount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("po_id", poId);
-
+    await recalculatePoAmount(poId);
     refreshPoViews(poId);
-    return success(`Added ${sku} to ${poId}`);
+    redirectPoId = poId;
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Add PO item failed");
   }
+
+  if (redirectPoId) {
+    redirect(`/po/${encodeURIComponent(redirectPoId)}#draft-lines`);
+  }
+
+  return success("Added PO item");
 }
 
 export async function addPoItemsBatchAction(
   _previousState: PoActionState,
   formData: FormData,
 ): Promise<PoActionState> {
+  let redirectPoId: string | null = null;
+
   try {
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
@@ -428,10 +490,16 @@ export async function addPoItemsBatchAction(
 
     await recalculatePoAmount(poId);
     refreshPoViews(poId);
-    return success(`Added ${rows.length} lines to ${poId}`);
+    redirectPoId = poId;
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Add selected lines failed");
   }
+
+  if (redirectPoId) {
+    redirect(`/po/${encodeURIComponent(redirectPoId)}#draft-lines`);
+  }
+
+  return success("Added selected lines");
 }
 
 export async function updatePoHeaderRefsAction(
@@ -872,6 +940,57 @@ export async function batchReceivePoItemsAction(
   }
 }
 
+export async function removePoReceiptAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const receiptId = requiredText(formData, "receiptId");
+
+    const { data: receipt, error: receiptError } = await supabase
+      .from("po_receipts")
+      .select("id,po_item_id")
+      .eq("id", receiptId)
+      .maybeSingle();
+
+    if (receiptError) {
+      throw new Error(receiptError.message);
+    }
+    if (!receipt) {
+      throw new Error("Receipt does not exist");
+    }
+
+    const { data: item, error: itemError } = await supabase
+      .from("po_items")
+      .select("po_id")
+      .eq("id", (receipt as { po_item_id: string | null }).po_item_id)
+      .maybeSingle();
+
+    if (itemError) {
+      throw new Error(itemError.message);
+    }
+    if (!item || item.po_id !== poId) {
+      throw new Error("Receipt does not belong to this PO");
+    }
+
+    const { error: deleteError } = await supabase
+      .from("po_receipts")
+      .delete()
+      .eq("id", receiptId);
+
+    if (deleteError) {
+      throw new Error(deleteError.message);
+    }
+
+    refreshPoViews(poId);
+    return success("Removed receipt round");
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Remove receipt failed");
+  }
+}
+
 export async function updatePoDraftLinesAction(
   _previousState: PoActionState,
   formData: FormData,
@@ -1040,6 +1159,8 @@ export async function addPoPaymentAction(
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const amount = nonNegativeNumber(formData, "amount");
+    const exchangeRate = positiveRate(formData, "exchangeRate");
+    const currencyInput = optionalText(formData, "currency");
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
@@ -1059,7 +1180,9 @@ export async function addPoPaymentAction(
       payment_date: optionalText(formData, "paymentDate") ?? new Date().toISOString().slice(0, 10),
       payment_type: optionalText(formData, "paymentType") ?? "deposit",
       amount,
-      currency: optionalText(formData, "currency") ?? order.currency ?? "THB",
+      currency: currencyInput || order.currency || "THB",
+      exchange_rate: exchangeRate,
+      amount_thb: amount * exchangeRate,
       paid_by: optionalText(formData, "paidBy"),
       reference: optionalText(formData, "reference"),
       note: optionalText(formData, "note"),
@@ -1069,6 +1192,7 @@ export async function addPoPaymentAction(
       throw new Error(error.message);
     }
 
+    await recalculatePoAmount(poId);
     refreshPoViews(poId);
     return success(`Recorded payment ${amount}`);
   } catch (error) {
@@ -1087,6 +1211,9 @@ export async function updatePoPaymentsAction(
     const statuses = formData.getAll("paymentStatus").map((value) => String(value).trim());
     const types = formData.getAll("paymentType").map((value) => String(value).trim());
     const amountValues = formData.getAll("amount").map((value) => String(value).trim());
+    const exchangeRateValues = formData
+      .getAll("exchangeRate")
+      .map((value) => String(value).trim());
     const currencies = formData.getAll("currency").map((value) => String(value).trim());
     const paymentDates = formData.getAll("paymentDate").map((value) => String(value).trim());
     const dueDates = formData.getAll("dueDate").map((value) => String(value).trim());
@@ -1117,6 +1244,10 @@ export async function updatePoPaymentsAction(
 
       const status = statuses[index] === "planned" ? "planned" : "paid";
       const amount = nonNegativeTextNumber(amountValues[index] ?? "", `Payment ${index + 1} amount`);
+      const exchangeRate = nonNegativeTextNumber(
+        exchangeRateValues[index] ?? "1",
+        `Payment ${index + 1} exchange rate`,
+      ) || 1;
       const paymentDate = paymentDates[index] || (status === "paid" ? today : null);
       const dueDate = dueDates[index] || null;
       const hasContent =
@@ -1138,6 +1269,8 @@ export async function updatePoPaymentsAction(
         due_date: dueDate,
         amount,
         currency: currencies[index] || "THB",
+        exchange_rate: exchangeRate,
+        amount_thb: amount * exchangeRate,
         paid_by: paidByValues[index] || null,
         reference: references[index] || null,
         note: notes[index] || null,
@@ -1152,6 +1285,7 @@ export async function updatePoPaymentsAction(
       savedCount += 1;
     }
 
+    await recalculatePoAmount(poId);
     refreshPoViews(poId);
     return success(`Saved ${savedCount} payment rows`);
   } catch (error) {

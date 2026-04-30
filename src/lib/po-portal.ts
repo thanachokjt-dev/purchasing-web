@@ -142,6 +142,8 @@ type PoPaymentRow = {
   payment_status?: string | null;
   due_date?: string | null;
   amount: number | string | null;
+  exchange_rate?: number | string | null;
+  amount_thb?: number | string | null;
   currency: string | null;
   paid_by: string | null;
   reference: string | null;
@@ -1079,7 +1081,7 @@ export async function getPoPortalDetailData(poId: string) {
 
   const paymentQuery = await supabase
     .from("po_payments")
-    .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,currency,paid_by,reference,note,created_at")
+    .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
     .eq("po_id", poId)
     .order("payment_date", { ascending: false });
 
@@ -1087,7 +1089,7 @@ export async function getPoPortalDetailData(poId: string) {
   if (paymentQuery.error) {
     const fallbackPaymentQuery = await supabase
       .from("po_payments")
-      .select("id,po_id,payment_date,payment_type,amount,currency,paid_by,reference,note,created_at")
+      .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,currency,paid_by,reference,note,created_at")
       .eq("po_id", poId)
       .order("payment_date", { ascending: false });
     paymentRows = fallbackPaymentQuery.data ?? [];

@@ -13,6 +13,7 @@ import {
   createPoAction,
   deleteDraftPoAction,
   receivePoItemAction,
+  removePoReceiptAction,
   updatePoHeaderRefsAction,
   updatePoDraftLinesAction,
   updatePoPaymentsAction,
@@ -70,6 +71,8 @@ type PaymentRowItem = {
   payment_status?: string | null;
   due_date?: string | null;
   amount: number | string | null;
+  exchange_rate?: number | string | null;
+  amount_thb?: number | string | null;
   currency: string | null;
   paid_by: string | null;
   reference: string | null;
@@ -86,6 +89,42 @@ const statusOptions = [
   "closed",
   "cancelled",
 ];
+
+const standardPaymentTypes = [
+  ["deposit50", "Deposit 50%"],
+  ["deposit30", "Deposit 30%"],
+  ["before_shipment50", "Before shipment 50%"],
+  ["for_shipment25", "For shipment 25%"],
+  ["after_received25", "After received 25%"],
+  ["balance", "Balance"],
+  ["freight", "Freight"],
+  ["shipping", "Shipping"],
+  ["fine", "Fine / penalty"],
+  ["other", "Other cost"],
+] as const;
+
+function paymentTypeOptions(paymentTerms?: string | null) {
+  const fromTerms = String(paymentTerms ?? "")
+    .split(/[,+/|]/)
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .map((term) => ({
+      label: term,
+      value: term.toLowerCase().replace(/[^a-z0-9%]+/g, "_").replace(/^_+|_+$/g, ""),
+    }));
+
+  const seen = new Set<string>();
+  return [
+    ...fromTerms,
+    ...standardPaymentTypes.map(([value, label]) => ({ label, value })),
+  ].filter((option) => {
+    if (!option.value || seen.has(option.value)) {
+      return false;
+    }
+    seen.add(option.value);
+    return true;
+  });
+}
 
 function draftLineKey(item: DraftLineItem) {
   return item.itemUuid || `${item.sku}:${item.lineNo}`;
@@ -1003,33 +1042,83 @@ export function LandedCostAllocationForm({
   );
 }
 
+function PaymentAmountFields({
+  amount,
+  exchangeRate,
+}: {
+  amount: number | string | null | undefined;
+  exchangeRate: number | string | null | undefined;
+}) {
+  const [amountValue, setAmountValue] = useState(amount === null || amount === undefined ? "" : String(amount));
+  const [rateValue, setRateValue] = useState(
+    exchangeRate === null || exchangeRate === undefined ? "1" : String(exchangeRate),
+  );
+  const amountNumber = Number(amountValue || 0);
+  const rateNumber = Number(rateValue || 0);
+  const thbAmount =
+    Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
+
+  return (
+    <>
+      <td className="px-3 py-3">
+        <input
+          className={`${inputClass} text-right font-mono`}
+          min="0"
+          name="amount"
+          onChange={(event) => setAmountValue(event.target.value)}
+          step="0.0001"
+          type="number"
+          value={amountValue}
+        />
+      </td>
+      <td className="px-3 py-3">
+        <input
+          className={`${inputClass} text-right font-mono`}
+          min="0.000001"
+          name="exchangeRate"
+          onChange={(event) => setRateValue(event.target.value)}
+          step="0.000001"
+          type="number"
+          value={rateValue}
+        />
+      </td>
+      <td className="px-3 py-3 text-right font-mono font-semibold">
+        {formatMoney(thbAmount)} THB
+      </td>
+    </>
+  );
+}
+
 export function AddPaymentForm({
   currency,
   poId,
+  paymentTerms,
   today,
 }: {
   currency: string;
   poId: string;
+  paymentTerms?: string;
   today: string;
 }) {
   const [state, formAction, pending] = useActionState(addPoPaymentAction, initialState);
+  const options = paymentTypeOptions(paymentTerms);
 
   return (
     <form action={formAction} className="grid gap-3">
       <input name="poId" type="hidden" value={poId} />
-      <div className="grid gap-3 lg:grid-cols-[0.8fr_0.8fr_0.8fr_0.7fr_1fr_1fr_auto]">
+      <div className="grid gap-3 lg:grid-cols-[0.8fr_0.9fr_0.8fr_0.65fr_0.75fr_1fr_1fr_auto]">
         <label className={labelClass}>
           Date
           <input className={inputClass} defaultValue={today} name="paymentDate" type="date" />
         </label>
         <label className={labelClass}>
           Type
-          <select className={inputClass} defaultValue="deposit" name="paymentType">
-            <option value="deposit">deposit</option>
-            <option value="before_ship">before_ship</option>
-            <option value="after_received">after_received</option>
-            <option value="balance">balance</option>
-            <option value="other">other</option>
+          <select className={inputClass} defaultValue={options[0]?.value ?? "deposit50"} name="paymentType">
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className={labelClass}>
@@ -1039,6 +1128,10 @@ export function AddPaymentForm({
         <label className={labelClass}>
           Currency
           <input className={inputClass} defaultValue={currency} name="currency" />
+        </label>
+        <label className={labelClass}>
+          Exchange rate
+          <input className={inputClass} defaultValue="1" min="0.000001" name="exchangeRate" step="0.000001" type="number" />
         </label>
         <label className={labelClass}>
           Paid by
@@ -1066,11 +1159,13 @@ export function AddPaymentForm({
 export function PaymentScheduleForm({
   currency,
   payments,
+  paymentTerms,
   poAmount,
   poId,
 }: {
   currency: string;
   payments: PaymentRowItem[];
+  paymentTerms?: string;
   poAmount: number;
   poId: string;
 }) {
@@ -1083,10 +1178,22 @@ export function PaymentScheduleForm({
       String(b.payment_date ?? b.due_date ?? ""),
     ),
   );
-  const rows = Array.from({ length: 4 }, (_, index) => sortedPayments[index] ?? null);
+  const [extraRows, setExtraRows] = useState(1);
+  const rows = [
+    ...sortedPayments,
+    ...Array.from({ length: Math.max(1, extraRows) }, () => null),
+  ];
+  const options = paymentTypeOptions(paymentTerms);
   const paidTotal = payments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const paidTotalThb = payments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .reduce(
+      (sum, payment) =>
+        sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
+      0,
+    );
   const plannedTotal = payments
     .filter((payment) => (payment.payment_status ?? "paid") === "planned")
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
@@ -1098,9 +1205,10 @@ export function PaymentScheduleForm({
   return (
     <form action={formAction} className="grid gap-4">
       <input name="poId" type="hidden" value={poId} />
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Paid", paidTotal],
+          ["Paid THB", paidTotalThb],
           ["Planned", plannedTotal],
           ["Balance", balance],
           ["Next due", nextDue?.due_date ?? "-"],
@@ -1108,13 +1216,22 @@ export function PaymentScheduleForm({
           <div className="rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3" key={label}>
             <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">{label}</p>
             <p className="mt-1 font-mono text-lg font-semibold">
-              {typeof value === "number" ? `${formatMoney(value)} ${currency}` : value}
+              {typeof value === "number"
+                ? `${formatMoney(value)} ${label === "Paid THB" ? "THB" : currency}`
+                : value}
             </p>
           </div>
         ))}
       </div>
+      <button
+        className="h-10 justify-self-start rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold text-[#364252]"
+        onClick={() => setExtraRows((current) => current + 1)}
+        type="button"
+      >
+        Add payment line
+      </button>
       <div className="overflow-x-auto">
-        <table className="min-w-[1200px] text-left text-sm">
+        <table className="min-w-[1480px] text-left text-sm">
           <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
             <tr>
               <th className="px-3 py-3 font-semibold">Payment</th>
@@ -1123,6 +1240,8 @@ export function PaymentScheduleForm({
               <th className="px-3 py-3 font-semibold">Due reminder</th>
               <th className="px-3 py-3 font-semibold">Type</th>
               <th className="px-3 py-3 text-right font-semibold">Amount</th>
+              <th className="px-3 py-3 text-right font-semibold">Exchange rate</th>
+              <th className="px-3 py-3 text-right font-semibold">THB paid</th>
               <th className="px-3 py-3 font-semibold">Currency</th>
               <th className="px-3 py-3 font-semibold">Reference</th>
               <th className="px-3 py-3 font-semibold">Note</th>
@@ -1147,11 +1266,18 @@ export function PaymentScheduleForm({
                   <input className={inputClass} defaultValue={payment?.due_date ?? ""} name="dueDate" type="date" />
                 </td>
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.payment_type ?? `payment_${index + 1}`} name="paymentType" />
+                  <select className={inputClass} defaultValue={payment?.payment_type ?? options[0]?.value ?? `payment_${index + 1}`} name="paymentType">
+                    {options.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </td>
-                <td className="px-3 py-3">
-                  <input className={`${inputClass} text-right font-mono`} defaultValue={payment?.amount ?? ""} min="0" name="amount" step="0.0001" type="number" />
-                </td>
+                <PaymentAmountFields
+                  amount={payment?.amount ?? ""}
+                  exchangeRate={payment?.exchange_rate ?? 1}
+                />
                 <td className="px-3 py-3">
                   <input className={inputClass} defaultValue={payment?.currency ?? currency} name="currency" />
                 </td>
@@ -1298,6 +1424,41 @@ export function ReceiveItemForm({
           </LoadingLabel>
         </button>
       </div>
+      <ActionMessage state={state} />
+    </form>
+  );
+}
+
+export function RemovePoReceiptForm({
+  poId,
+  receiptId,
+}: {
+  poId: string;
+  receiptId: string;
+}) {
+  const [state, formAction, pending] = useActionState(removePoReceiptAction, initialState);
+
+  return (
+    <form
+      action={formAction}
+      className="mt-2"
+      onSubmit={(event) => {
+        if (!window.confirm("Remove this receipt round?")) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <input name="poId" type="hidden" value={poId} />
+      <input name="receiptId" type="hidden" value={receiptId} />
+      <button
+        className="h-8 rounded-md border border-[#efcaca] bg-[#fff7f7] px-2 text-xs font-semibold text-[#9f2a2a] disabled:opacity-50"
+        disabled={pending}
+        type="submit"
+      >
+        <LoadingLabel loading={pending} loadingText="Removing...">
+          Remove
+        </LoadingLabel>
+      </button>
       <ActionMessage state={state} />
     </form>
   );

@@ -12,6 +12,7 @@ import {
   PoDraftLinesForm,
   PaymentScheduleForm,
   PrintDocumentButton,
+  RemovePoReceiptForm,
   SmartAddPoItemForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
@@ -62,6 +63,10 @@ const companyLines = [
   "Head Office | Tax ID: 0835564003295 | Tel: 076-604-229",
   "www.bangtaofightstore.com",
 ];
+
+const nonProductPaymentTypes = new Set(["freight", "shipping", "fine", "penalty", "other", "other_cost"]);
+const isProductPayment = (type: string | null | undefined) =>
+  !nonProductPaymentTypes.has(String(type ?? "").trim().toLowerCase());
 
 const statusClass = (status: string) => {
   const normalized = status.toLowerCase();
@@ -369,9 +374,28 @@ export default async function PoDetailPage({
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce(
     (sum, payment) => sum + Number(payment.amount ?? 0),
-    0,
-  );
+      0,
+    );
+  const paidTotalThb = data.payments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .reduce(
+      (sum, payment) =>
+        sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
+      0,
+    );
+  const productPaidTotalThb = data.payments
+    .filter(
+      (payment) =>
+        (payment.payment_status ?? "paid") !== "planned" &&
+        isProductPayment(payment.payment_type),
+    )
+    .reduce(
+      (sum, payment) =>
+        sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
+      0,
+    );
   const paymentBalance = Math.max(0, order.poAmountForeign - paidTotal);
+  const paymentBalanceThb = Math.max(0, order.poAmountThb - productPaidTotalThb);
   const demandTotal = data.items.reduce(
     (sum, item) => sum + Number(item.demandIndexHm ?? 0),
     0,
@@ -457,10 +481,10 @@ export default async function PoDetailPage({
               value: formatNumber(order.outstandingQty),
             },
             {
-              detail: `paid ${formatCurrency(paidTotal, order.currency)} / balance ${formatCurrency(paymentBalance, order.currency)}`,
+              detail: `product paid ${formatCurrency(productPaidTotalThb, "THB")} / balance ${formatCurrency(paymentBalanceThb, "THB")}`,
               icon: ClipboardList,
               label: "Amount",
-              value: formatCurrency(order.poAmountForeign, order.currency),
+              value: formatCurrency(order.poAmountThb, "THB"),
             },
           ].map((metric) => {
             const Icon = metric.icon;
@@ -561,6 +585,7 @@ export default async function PoDetailPage({
               <PaymentScheduleForm
                 currency={order.currency}
                 payments={data.payments}
+                paymentTerms={order.paymentTerms}
                 poAmount={order.poAmountForeign}
                 poId={order.poId}
               />
@@ -579,7 +604,7 @@ export default async function PoDetailPage({
         ) : null}
 
         {data.source === "supabase" ? (
-          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm" id="draft-lines">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Draft Line Details</h2>
               <p className="mt-1 text-sm text-[#667380]">
@@ -819,6 +844,12 @@ export default async function PoDetailPage({
                               {receipt.note ? (
                                 <p className="mt-1 text-[#52606d]">{receipt.note}</p>
                               ) : null}
+                              {data.source === "supabase" ? (
+                                <RemovePoReceiptForm
+                                  poId={order.poId}
+                                  receiptId={receipt.id}
+                                />
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -839,7 +870,7 @@ export default async function PoDetailPage({
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Payment History</h2>
               <p className="mt-1 text-sm text-[#667380]">
-                Total recorded: {formatCurrency(paidTotal, order.currency)}
+                Total recorded: {formatCurrency(paidTotalThb, "THB")}
               </p>
             </div>
             <div className="divide-y divide-[#edf1f5]">
@@ -848,9 +879,15 @@ export default async function PoDetailPage({
                   <div className="grid gap-1 p-5 text-sm" key={payment.id}>
                     <p className="font-mono font-semibold">
                       {formatCurrency(Number(payment.amount ?? 0), payment.currency ?? order.currency)}
+                      {" / "}
+                      {formatCurrency(
+                        Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
+                        "THB",
+                      )}
                     </p>
                     <p className="text-[#667380]">
                       {formatDate(payment.payment_date)} / {payment.payment_type || "payment"}
+                      {` / FX ${formatDecimal(Number(payment.exchange_rate ?? 1), 4)}`}
                       {payment.paid_by ? ` / ${payment.paid_by}` : ""}
                     </p>
                     {payment.reference ? <p>Ref: {payment.reference}</p> : null}
