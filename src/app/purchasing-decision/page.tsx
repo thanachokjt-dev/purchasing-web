@@ -8,6 +8,7 @@ import {
 import {
   AlertFilterSelect,
   DecisionCreatePoButton,
+  DecisionSearchBox,
   DemandFormulaHeaderButton,
   DecisionPlanningCells,
   DecisionSaveButton,
@@ -278,23 +279,7 @@ export default async function PurchasingDecisionPage({
                   type="hidden"
                   value={data.demandFormula.capAtSellingDayAverage ? "true" : "false"}
                 />
-                <label className="grid gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
-                    Search
-                  </span>
-                  <input
-                    className={inputClass}
-                    defaultValue={q}
-                    list="purchasing-search-options"
-                    name="q"
-                    placeholder="SKU, product, main name"
-                  />
-                  <datalist id="purchasing-search-options">
-                    {data.searchOptions.map((option) => (
-                      <option key={option} value={option} />
-                    ))}
-                  </datalist>
-                </label>
+                <DecisionSearchBox initialValue={q} options={data.searchOptions} />
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Supplier

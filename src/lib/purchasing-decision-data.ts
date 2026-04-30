@@ -162,7 +162,11 @@ export type PurchasingDecisionData = {
   controlsReady: boolean;
   demandFormula: DemandFormulaSettings;
   itemStatusOptions: string[];
-  searchOptions: string[];
+  searchOptions: Array<{
+    imageUrl: string | null;
+    label: string;
+    skuCount: number;
+  }>;
   supplierFilterOptions: Array<{
     supplier: string;
     orderQty: number;
@@ -1056,16 +1060,26 @@ export async function getPurchasingDecisionData({
     );
   }
 
-  const searchOptions = Array.from(
-    new Set(
-      allLines
-        .filter(matchesFiltersExceptQuery)
-        .flatMap((line) => [line.sku, line.productName, line.mainName])
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  )
-    .sort((a, b) => a.localeCompare(b))
+  const searchOptionByMainName = new Map<
+    string,
+    { imageUrl: string | null; label: string; skuCount: number }
+  >();
+  for (const line of allLines.filter(matchesFiltersExceptQuery)) {
+    const label = line.mainName.trim();
+    if (!label) {
+      continue;
+    }
+
+    const key = label.toLowerCase();
+    const existing = searchOptionByMainName.get(key);
+    searchOptionByMainName.set(key, {
+      imageUrl: existing?.imageUrl ?? line.imageUrl,
+      label: existing?.label ?? label,
+      skuCount: (existing?.skuCount ?? 0) + 1,
+    });
+  }
+  const searchOptions = Array.from(searchOptionByMainName.values())
+    .sort((a, b) => a.label.localeCompare(b.label))
     .slice(0, 300);
 
   const filteredLines = allLines

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { LoadingLabel } from "@/app/loading-controls";
 
@@ -51,27 +52,105 @@ export function DecisionSaveButton() {
 }
 
 export function DecisionCreatePoButton() {
-  const { pending } = useFormStatus();
-  const [clicked, setClicked] = useState(false);
-  const loading = pending || clicked;
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const reset = () => setSubmitting(false);
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
+
+  function submitCreatePo() {
+    const form = document.getElementById("decision-create-po-form");
+    if (form instanceof HTMLFormElement) {
+      setSubmitting(true);
+      form.requestSubmit();
+    }
+  }
 
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={loading}
-      form="decision-create-po-form"
-      onClick={() => {
-        const hasSelectedSku = document.querySelector("[data-decision-select='sku']:checked");
-        if (hasSelectedSku) {
-          setClicked(true);
-        }
-      }}
-      type="submit"
+      disabled={submitting}
+      onClick={submitCreatePo}
+      type="button"
     >
-      <LoadingLabel loading={loading} loadingText="Creating...">
+      <LoadingLabel loading={submitting} loadingText="Creating...">
         Create PO
       </LoadingLabel>
     </button>
+  );
+}
+
+export function DecisionSearchBox({
+  initialValue,
+  options,
+}: {
+  initialValue: string;
+  options: { imageUrl: string | null; label: string; skuCount: number }[];
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [open, setOpen] = useState(false);
+  const normalizedValue = value.trim().toLowerCase();
+  const filteredOptions = options
+    .filter((option) => option.label.toLowerCase().includes(normalizedValue))
+    .slice(0, 20);
+
+  return (
+    <label className="relative grid gap-1">
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Search
+      </span>
+      <input
+        className="h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]"
+        name="q"
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onChange={(event) => {
+          setValue(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder="Main name"
+        value={value}
+      />
+      {open && filteredOptions.length ? (
+        <div className="absolute top-full z-40 mt-1 max-h-80 w-[360px] overflow-y-auto rounded-md border border-[#cfd6df] bg-white p-1 shadow-lg">
+          {filteredOptions.map((option) => (
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-[#f3f5f7]"
+              key={option.label}
+              onClick={() => {
+                setValue(option.label);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              {option.imageUrl ? (
+                <Image
+                  alt=""
+                  className="size-9 rounded border border-[#dfe4ea] object-cover"
+                  height={36}
+                  src={option.imageUrl}
+                  width={36}
+                />
+              ) : (
+                <span className="grid size-9 place-items-center rounded border border-[#dfe4ea] bg-[#f3f5f7] text-[10px] text-[#7a8794]">
+                  SKU
+                </span>
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-[#172026]">
+                  {option.label}
+                </span>
+                <span className="text-xs text-[#7a8794]">
+                  {option.skuCount} SKUs
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </label>
   );
 }
 
