@@ -472,14 +472,14 @@ export function AlertFilterSelect({
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
         Alert
       </span>
-      <details className="group relative">
+      <details className="group relative z-[90]">
         <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
           <span className="truncate">{label}</span>
           <span aria-hidden="true" className="text-xs text-[#65717f]">
             v
           </span>
         </summary>
-        <div className="absolute right-0 z-30 mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-lg">
+        <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
           <button
             className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
             onClick={() => setSelected(options.map((option) => option.value))}
