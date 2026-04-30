@@ -828,6 +828,10 @@ export async function getPurchasingDecisionData({
     ? new Map<string, string>()
     : buildManualSupplierBySku((manualSupplierResult.data ?? []) as ManualSupplierRow[]);
   const query = q.trim().toLowerCase();
+  const queryTerms = query
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
   const selectedSupplier = supplier.trim().toLowerCase();
   const selectedTag = tag.trim().toLowerCase();
   const selectedItemStatus = itemStatus.trim().toLowerCase();
@@ -925,14 +929,15 @@ export async function getPurchasingDecisionData({
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
     const reorderPointUnits = Math.max(0, Math.ceil(demandIndexHm * (safetyDays + leadTimeDays)));
-    const ropUnitsRaw = Math.max(0, Math.ceil(demandIndexHm * planningDays));
-    const ropUnitsRounded = roundUpToTen(ropUnitsRaw);
+    const targetQty = Math.max(0, Math.ceil(demandIndexHm * planningDays));
     const manualRopUnits = optionalInteger(control?.manual_rop_units);
     const orderQtyMode = control?.order_qty_mode === "raw" ? "raw" : "rounded";
     const targetCoverageDays = optionalInteger(control?.target_coverage_days);
-    const ropUnits = manualRopUnits ?? ropUnitsRounded;
     const onHandUnits = stockBySku.get(sku) ?? 0;
     const incoming = incomingBySku.get(sku) ?? { active: 0, pending: 0 };
+    const orderQtyRaw = Math.max(0, targetQty - onHandUnits - incoming.active);
+    const orderQtyRounded = roundUpToTen(orderQtyRaw);
+    const ropUnits = orderQtyRounded;
     const coversSalesDuration =
       demandIndexHm > 0 ? onHandUnits / demandIndexHm : null;
     const totalCoverageAtOrder =
@@ -973,8 +978,8 @@ export async function getPurchasingDecisionData({
         planningDays,
         reorderPointUnits,
         ropUnits,
-        ropUnitsRaw,
-        ropUnitsRounded,
+        ropUnitsRaw: targetQty,
+        ropUnitsRounded: orderQtyRounded,
         orderQtyMode,
         manualRopUnits,
         coversSalesDuration,
@@ -1085,19 +1090,21 @@ export async function getPurchasingDecisionData({
   const filteredLines = allLines
     .filter((line) => {
       const matchesQuery =
-        !query ||
-        [
-          line.sku,
-          line.productName,
-          line.mainName,
-          line.itemStatus,
-          line.supplier,
-          line.tags.join(" "),
-          line.hideReason,
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(query);
+        !queryTerms.length ||
+        queryTerms.some((term) =>
+          [
+            line.sku,
+            line.productName,
+            line.mainName,
+            line.itemStatus,
+            line.supplier,
+            line.tags.join(" "),
+            line.hideReason,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(term),
+        );
 
       return (
         matchesFiltersExceptQuery(line) &&

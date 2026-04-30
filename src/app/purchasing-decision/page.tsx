@@ -369,7 +369,7 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="max-h-[calc(100vh-260px)] max-w-full overflow-auto">
-              <table className="min-w-[2500px] text-left text-sm">
+              <table className="min-w-[2630px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className={`${stickyHeaderBase} left-0 z-50 w-[52px] min-w-[52px]`}>Pick</th>
@@ -397,7 +397,8 @@ export default async function PurchasingDecisionPage({
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Lead</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Cycle</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Re-order Point</th>
-                    <th className={`${stickyHeaderBase} z-40 text-right`}>Raw qty</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Target Qty</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Order Qty</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Round 10</th>
                     <th className={`${stickyHeaderBase} z-40`}>Use</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Cover</th>

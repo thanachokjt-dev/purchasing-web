@@ -343,7 +343,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
         const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
         const orderedQty =
           qtyChoice === "raw"
-            ? numberFromMap(rawQtyBySku, sku, "Raw qty")
+            ? numberFromMap(rawQtyBySku, sku, "Order qty")
             : numberFromMap(roundedQtyBySku, sku, "Rounded qty");
         const unitPrice = numberFromMap(unitPriceBySku, sku, "Unit price");
         const productTitle = productBySku.get(sku) || sku;
@@ -362,7 +362,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
           landed_unit_cost: unitPrice,
           line_amount: orderedQty * unitPrice,
           currency,
-          remark: qtyChoice === "raw" ? "Created from Purchasing Decision raw qty" : "Created from Purchasing Decision rounded qty",
+          remark: qtyChoice === "raw" ? "Created from Purchasing Decision order qty" : "Created from Purchasing Decision rounded qty",
           full_name: productTitle,
           line_status: "draft",
           source: "purchasing_decision",

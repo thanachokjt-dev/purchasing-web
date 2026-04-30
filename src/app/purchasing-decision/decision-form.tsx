@@ -120,23 +120,67 @@ export function DecisionSearchBox({
   initialValue: string;
   options: { imageUrl: string | null; label: string; skuCount: number }[];
 }) {
-  const [value, setValue] = useState(initialValue);
+  const initialSelections = initialValue
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) =>
+      options.some((option) => option.label.toLowerCase() === item.toLowerCase()),
+    );
+  const [selected, setSelected] = useState<string[]>(initialSelections);
+  const [value, setValue] = useState(initialSelections.length ? "" : initialValue);
   const [open, setOpen] = useState(false);
   const normalizedValue = value.trim().toLowerCase();
   const filteredOptions = options
-    .filter((option) => option.label.toLowerCase().includes(normalizedValue))
+    .filter(
+      (option) =>
+        option.label.toLowerCase().includes(normalizedValue) &&
+        !selected.some((item) => item.toLowerCase() === option.label.toLowerCase()),
+    )
     .slice(0, 20);
+  const submitValue = selected.length ? selected.join(",") : value;
+
+  function addSelection(label: string) {
+    setSelected((current) =>
+      current.some((item) => item.toLowerCase() === label.toLowerCase())
+        ? current
+        : [...current, label],
+    );
+    setValue("");
+    setOpen(false);
+  }
 
   return (
-    <label className="relative grid gap-1">
+    <label className="relative z-[90] grid gap-1">
+      <input name="q" type="hidden" value={submitValue} />
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
         Search
       </span>
+      {selected.length ? (
+        <div className="flex max-w-[360px] flex-wrap gap-1">
+          {selected.map((label) => (
+            <span
+              className="inline-flex max-w-full items-center gap-1 rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]"
+              key={label}
+            >
+              <span className="truncate">{label}</span>
+              <button
+                aria-label={`Remove ${label}`}
+                className="text-[#52606d]"
+                onClick={() =>
+                  setSelected((current) => current.filter((item) => item !== label))
+                }
+                type="button"
+              >
+                x
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <input
         autoComplete="new-password"
         autoCorrect="off"
         className="h-9 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]"
-        name="q"
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
         onChange={(event) => {
           setValue(event.target.value);
@@ -148,15 +192,12 @@ export function DecisionSearchBox({
         value={value}
       />
       {open && filteredOptions.length ? (
-        <div className="absolute top-full z-40 mt-1 max-h-80 w-[360px] overflow-y-auto rounded-md border border-[#cfd6df] bg-white p-1 shadow-lg">
+        <div className="absolute top-full z-[100] mt-1 max-h-80 w-[360px] overflow-y-auto rounded-md border border-[#cfd6df] bg-white p-1 shadow-xl">
           {filteredOptions.map((option) => (
             <button
               className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-[#f3f5f7]"
               key={option.label}
-              onClick={() => {
-                setValue(option.label);
-                setOpen(false);
-              }}
+              onClick={() => addSelection(option.label)}
               type="button"
             >
               {option.imageUrl ? (
@@ -523,19 +564,19 @@ export function DecisionPlanningCells({
     const nextValue = Math.ceil(liveDemand * (numberOrZero(safety) + numberOrZero(lead)));
     return Number.isFinite(nextValue) ? Math.max(0, nextValue) : reorderPointUnits;
   }, [lead, liveDemand, reorderPointUnits, safety]);
-  const liveRawQty = useMemo(() => {
+  const liveTargetQty = useMemo(() => {
     const nextValue = Math.ceil(
       liveDemand *
         (numberOrZero(safety) + numberOrZero(lead) + numberOrZero(cycle)),
     );
     return Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0;
   }, [cycle, lead, liveDemand, safety]);
-  const netRawQty = Math.max(0, liveRawQty - comingQty);
-  const netRoundedQty = roundUpToTen(netRawQty);
+  const orderQtyRaw = Math.max(0, liveTargetQty - onHandUnits - comingQty);
+  const orderQtyRounded = roundUpToTen(orderQtyRaw);
   const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">(orderQtyMode);
   const [manualOrderQty, setManualOrderQty] = useState<string | null>(null);
   const computedOrderQty = String(
-    selectedMode === "raw" ? netRawQty : netRoundedQty,
+    selectedMode === "raw" ? orderQtyRaw : orderQtyRounded,
   );
   const orderQty = manualOrderQty ?? computedOrderQty;
   const orderQtyNumber = numberOrZero(orderQty);
@@ -656,12 +697,16 @@ export function DecisionPlanningCells({
         </p>
       </td>
       <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
-        <p>{formatNumber(netRawQty)}</p>
-        {comingQty > 0 ? (
-          <p className="mt-1 text-[10px] text-[#946200]">
-            {formatNumber(liveRawQty)} - coming {formatNumber(comingQty)}
-          </p>
-        ) : null}
+        <p>{formatNumber(liveTargetQty)}</p>
+        <p className="mt-1 text-[10px] text-[#7a8794]">
+          target coverage qty
+        </p>
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        <p>{formatNumber(orderQtyRaw)}</p>
+        <p className="mt-1 text-[10px] text-[#946200]">
+          {formatNumber(liveTargetQty)} - stock {formatNumber(onHandUnits)} - incoming {formatNumber(comingQty)}
+        </p>
       </td>
       <td className="px-3 py-3 align-top text-right">
         <input
@@ -669,7 +714,7 @@ export function DecisionPlanningCells({
           min="0"
           name="manualRopUnits"
           onChange={(event) => setManualOrderQty(event.target.value)}
-          placeholder={String(netRoundedQty)}
+          placeholder={String(orderQtyRounded)}
           type="number"
           value={orderQty}
         />
@@ -679,7 +724,7 @@ export function DecisionPlanningCells({
         <input
           name="poRawQty"
           type="hidden"
-          value={netRawQty}
+          value={orderQtyRaw}
         />
         <input
           name="poRoundedQty"
@@ -696,7 +741,7 @@ export function DecisionPlanningCells({
               type="radio"
               value="raw"
             />
-            Raw
+            Order Qty
           </label>
           <label className="flex items-center gap-2">
             <input
