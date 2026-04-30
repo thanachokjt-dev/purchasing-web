@@ -30,17 +30,51 @@ function refreshSetup() {
   revalidatePath("/po");
 }
 
+function supplierCodePrefix(supplierName: string) {
+  const ignored = new Set(["AND", "CO", "COMPANY", "LTD", "LIMITED", "THE"]);
+  const tokens =
+    supplierName
+      .toUpperCase()
+      .match(/[A-Z0-9]+/g)
+      ?.filter((token) => !ignored.has(token)) ?? [];
+  const initials = tokens.map((token) => token[0]).join("");
+  const compact = supplierName.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return (initials || compact || "SUP").slice(0, 4).padEnd(3, "X");
+}
+
+async function generatedSupplierCode(supplierName: string) {
+  const supabase = getSupabaseServiceClient();
+  if (!supabase) {
+    return supplierCodePrefix(supplierName);
+  }
+
+  const prefix = supplierCodePrefix(supplierName);
+  const { data } = await supabase
+    .from("po_suppliers")
+    .select("supplier_code")
+    .ilike("supplier_code", `${prefix}%`);
+  const maxSuffix = ((data ?? []) as Array<{ supplier_code: string | null }>).reduce(
+    (max, row) => {
+      const match = row.supplier_code?.match(new RegExp(`^${prefix}(\\d+)$`, "i"));
+      return match ? Math.max(max, Number(match[1])) : max;
+    },
+    0,
+  );
+
+  return `${prefix}${String(maxSuffix + 1).padStart(3, "0")}`;
+}
+
 export async function saveSupplierSetupAction(formData: FormData) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;
   }
 
-  const supplierCode = text(formData, "supplierCode");
   const supplierName = text(formData, "supplierName");
-  if (!supplierCode || !supplierName) {
-    throw new Error("Supplier code and name are required");
+  if (!supplierName) {
+    throw new Error("Supplier name is required");
   }
+  const supplierCode = text(formData, "supplierCode") || (await generatedSupplierCode(supplierName));
 
   const { error } = await supabase
     .from("po_suppliers")
