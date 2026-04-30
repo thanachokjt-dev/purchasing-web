@@ -62,9 +62,9 @@ Phase 2 also creates:
 - `po_incoming_by_sku`
 
 The `po_incoming_by_sku` view is the future source for dashboard incoming
-quantity. It counts outstanding quantities from active PO item statuses
-(`inpro`, `delivery`, `final_payment`) and keeps pending approval quantities
-separate (`waiting_for_approve`).
+quantity. It counts outstanding quantities from all open PO item statuses except
+`final_payment`, `draft`, `closed`, and `cancelled`, and keeps pending approval
+quantities separate (`waiting_for_approve`).
 
 ## PO Portal import
 
