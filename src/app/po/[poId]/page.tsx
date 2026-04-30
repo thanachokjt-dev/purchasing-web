@@ -57,6 +57,12 @@ const formatDate = (value: string | null) => {
   }).format(new Date(`${value}T00:00:00`));
 };
 
+function addDays(dateValue: string, days: number) {
+  const date = new Date(`${dateValue.slice(0, 10)}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 const companyLines = [
   "Siam Martial Arts Training Center Co., LTD.",
   "72/46 Moo 3, Choeng Thale, Thalang, Phuket 83110, Thailand",
@@ -98,10 +104,17 @@ function matrixProductName(item: DetailItem) {
     .trim();
 }
 
+function itemTagGroup(item: DetailItem) {
+  const taggedItem = item as DetailItem & { tags?: string[] };
+  const tags = Array.isArray(taggedItem.tags) ? taggedItem.tags : [];
+  return tags.find((tag) => tag.trim())?.trim() ?? "Untagged";
+}
+
 function quoteMatrixRows(items: DetailItem[]) {
   const rows = new Map<
     string,
     {
+      groupTag: string;
       imageUrl: string | null;
       items: Map<
         string,
@@ -118,10 +131,12 @@ function quoteMatrixRows(items: DetailItem[]) {
 
   for (const item of items) {
     const productName = matrixProductName(item);
-    const key = productName.toLowerCase();
+    const groupTag = itemTagGroup(item);
+    const key = `${groupTag.toLowerCase()}::${productName.toLowerCase()}`;
     const row =
       rows.get(key) ??
       {
+        groupTag,
         imageUrl: item.imageUrl ?? null,
         items: new Map(),
         productName,
@@ -151,6 +166,40 @@ function quoteMatrixRows(items: DetailItem[]) {
   ).sort();
 
   const rowValues = Array.from(rows.values());
+  const groups = Array.from(
+    rowValues
+      .reduce((groupMap, row) => {
+        groupMap.set(row.groupTag, [...(groupMap.get(row.groupTag) ?? []), row]);
+        return groupMap;
+      }, new Map<string, typeof rowValues>())
+      .entries(),
+  )
+    .map(([groupTag, groupRows]) => {
+      const groupSizes = [
+        ...CORE_SIZE_COLUMNS,
+        ...Array.from(
+          new Set(
+            groupRows.flatMap((row) =>
+              Array.from(row.items.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
+            ),
+          ),
+        ).sort(),
+      ];
+      const groupMaxQty = Math.max(
+        0,
+        ...groupRows.flatMap((row) =>
+          Array.from(row.items.values()).map((item) => item.orderedQty),
+        ),
+      );
+
+      return {
+        groupTag,
+        maxQty: groupMaxQty,
+        rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
+        sizes: groupSizes,
+      };
+    })
+    .sort((a, b) => a.groupTag.localeCompare(b.groupTag));
   const maxQty = Math.max(
     0,
     ...rowValues.flatMap((row) =>
@@ -159,6 +208,7 @@ function quoteMatrixRows(items: DetailItem[]) {
   );
 
   return {
+    groups,
     maxQty,
     rows: rowValues.sort((a, b) => a.productName.localeCompare(b.productName)),
     sizes: [...CORE_SIZE_COLUMNS, ...extraSizes],
@@ -172,6 +222,7 @@ function receivingMatrixRows(
   const rows = new Map<
     string,
     {
+      groupTag: string;
       imageUrl: string | null;
       items: DetailItem[];
       productName: string;
@@ -191,10 +242,12 @@ function receivingMatrixRows(
 
   for (const item of items) {
     const productName = matrixProductName(item);
-    const key = productName.toLowerCase();
+    const groupTag = itemTagGroup(item);
+    const key = `${groupTag.toLowerCase()}::${productName.toLowerCase()}`;
     const row =
       rows.get(key) ??
       {
+        groupTag,
         imageUrl: item.imageUrl ?? null,
         items: [],
         productName,
@@ -260,6 +313,7 @@ function receivingMatrixRows(
     }
 
     return {
+      groupTag: row.groupTag,
       imageUrl: row.imageUrl,
       lines,
       productName: row.productName,
@@ -282,8 +336,45 @@ function receivingMatrixRows(
       row.lines.flatMap((line) => Array.from(line.values.values())),
     ),
   );
+  const groups = Array.from(
+    receiptRows
+      .reduce((groupMap, row) => {
+        groupMap.set(row.groupTag, [...(groupMap.get(row.groupTag) ?? []), row]);
+        return groupMap;
+      }, new Map<string, typeof receiptRows>())
+      .entries(),
+  )
+    .map(([groupTag, groupRows]) => {
+      const groupSizes = [
+        ...CORE_SIZE_COLUMNS,
+        ...Array.from(
+          new Set(
+            groupRows.flatMap((row) =>
+              row.lines.flatMap((line) =>
+                Array.from(line.values.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
+              ),
+            ),
+          ),
+        ).sort(),
+      ];
+      const groupMaxQty = Math.max(
+        0,
+        ...groupRows.flatMap((row) =>
+          row.lines.flatMap((line) => Array.from(line.values.values())),
+        ),
+      );
+
+      return {
+        groupTag,
+        maxQty: groupMaxQty,
+        rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
+        sizes: groupSizes,
+      };
+    })
+    .sort((a, b) => a.groupTag.localeCompare(b.groupTag));
 
   return {
+    groups,
     maxQty,
     rows: receiptRows.sort((a, b) => a.productName.localeCompare(b.productName)),
     sizes,
@@ -365,6 +456,16 @@ export default async function PoDetailPage({
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const matrix = quoteMatrixRows(data.items);
   const receivingMatrix = receivingMatrixRows(data.items, data.receipts);
+  const maxLeadTimeDays = Math.max(
+    0,
+    ...data.items.map((item) =>
+      Math.round(Number((item as DetailItem & { leadTimeDays?: number }).leadTimeDays ?? 0)),
+    ),
+  );
+  const expectedReceivingNote =
+    order.poDate && maxLeadTimeDays > 0
+      ? `Expected receiving target: approximately ${addDays(order.poDate, maxLeadTimeDays)} (PO date + ${maxLeadTimeDays} days, using the longest SKU lead time set in the system). Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.`
+      : "Expected receiving target: SKU lead time is not set in the system. Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.";
   const detailCatalogItems = data.catalogItems.filter(
     (item) =>
       item.supplierCode === order.supplierCode ||
@@ -663,71 +764,80 @@ export default async function PoDetailPage({
               Horizontal working view grouped by product. Raw PO lines remain below.
             </p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-left text-sm">
-              <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
-                <tr>
-                  <th className="border-b border-[#dfe4ea] px-4 py-3 font-semibold">Product</th>
-                  {matrix.sizes.map((size) => (
-                    <th
-                      className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold"
-                      key={size}
-                    >
-                      {size}
-                    </th>
-                  ))}
-                  <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
-                    Total
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {matrix.rows.map((row) => (
-                  <tr className="border-b border-[#edf1f5]" key={row.productName}>
-                    <td className="min-w-[360px] px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
-                          {row.imageUrl ? (
-                            <Image
-                              alt={row.productName}
-                              className="h-full w-full object-cover"
-                              height={64}
-                              loading="lazy"
-                              src={row.imageUrl}
-                              width={64}
-                            />
-                          ) : (
-                            <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
-                          )}
-                        </div>
-                        <div>
-                          <p className="font-semibold">{row.productName}</p>
-                          <p className="mt-1 text-xs font-semibold italic text-[#172026]">on-hand</p>
-                        </div>
-                      </div>
-                    </td>
-                    {matrix.sizes.map((size) => {
-                      const cell = row.items.get(size);
-                      return (
-                        <td
-                          className="min-w-20 border-l border-[#dfe4ea] px-3 py-3 text-right"
+          <div className="grid gap-5 p-5">
+            {matrix.groups.map((group) => (
+              <div className="overflow-x-auto rounded-lg border border-[#e2e7ed]" key={group.groupTag}>
+                <div className="border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3">
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[#364252]">
+                    {group.groupTag}
+                  </h3>
+                </div>
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+                    <tr>
+                      <th className="border-b border-[#dfe4ea] px-4 py-3 font-semibold">Product</th>
+                      {group.sizes.map((size) => (
+                        <th
+                          className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold"
                           key={size}
-                          style={qtyHeatStyle(cell?.orderedQty ?? 0, matrix.maxQty)}
                         >
-                          <p className="font-mono font-semibold">{cell ? formatNumber(cell.orderedQty) : ""}</p>
-                          <p className="mt-1 font-mono text-sm font-semibold italic text-[#172026]">
-                            {cell ? formatNumber(cell.onHand) : ""}
-                          </p>
+                          {size}
+                        </th>
+                      ))}
+                      <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
+                        Total
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.rows.map((row) => (
+                      <tr className="border-b border-[#edf1f5]" key={row.productName}>
+                        <td className="min-w-[360px] px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                              {row.imageUrl ? (
+                                <Image
+                                  alt={row.productName}
+                                  className="h-full w-full object-cover"
+                                  height={64}
+                                  loading="lazy"
+                                  src={row.imageUrl}
+                                  width={64}
+                                />
+                              ) : (
+                                <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-semibold">{row.productName}</p>
+                              <p className="mt-1 text-xs font-semibold italic text-[#172026]">on-hand</p>
+                            </div>
+                          </div>
                         </td>
-                      );
-                    })}
-                    <td className="border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
-                      {formatNumber(row.totalQty)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        {group.sizes.map((size) => {
+                          const cell = row.items.get(size);
+                          return (
+                            <td
+                              className="min-w-20 border-l border-[#dfe4ea] px-3 py-3 text-right"
+                              key={size}
+                              style={qtyHeatStyle(cell?.orderedQty ?? 0, group.maxQty)}
+                            >
+                              <p className="font-mono font-semibold">{cell ? formatNumber(cell.orderedQty) : ""}</p>
+                              <p className="mt-1 font-mono text-sm font-semibold italic text-[#172026]">
+                                {cell ? formatNumber(cell.onHand) : ""}
+                              </p>
+                            </td>
+                          );
+                        })}
+                        <td className="border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
+                          {formatNumber(row.totalQty)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         </section>
 
@@ -948,12 +1058,14 @@ export default async function PoDetailPage({
       </div>
       </div>
       <PrintMatrixDocument
+        expectedReceivingNote={expectedReceivingNote}
         matrix={matrix}
         order={order}
         title="Supplier Quote"
         type="quote"
       />
       <PrintMatrixDocument
+        expectedReceivingNote={expectedReceivingNote}
         matrix={matrix}
         order={order}
         receivingMatrix={receivingMatrix}
@@ -965,12 +1077,14 @@ export default async function PoDetailPage({
 }
 
 function PrintMatrixDocument({
+  expectedReceivingNote,
   matrix,
   order,
   receivingMatrix,
   title,
   type,
 }: {
+  expectedReceivingNote: string;
   matrix: ReturnType<typeof quoteMatrixRows>;
   order: NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["order"];
   receivingMatrix?: ReturnType<typeof receivingMatrixRows>;
@@ -996,95 +1110,118 @@ function PrintMatrixDocument({
           {order.supplierInvoiceNo ? <p>Supplier INV: {order.supplierInvoiceNo}</p> : null}
         </div>
       </div>
-      <table className="print-matrix">
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>Image</th>
-            {type === "receiving" ? <th>Round</th> : null}
-            {(printMatrix?.sizes ?? matrix.sizes).map((size) => (
-              <th key={size}>{size}</th>
-            ))}
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {type === "receiving" && printMatrix
-            ? printMatrix.rows.flatMap((row) =>
-                row.lines.map((line, lineIndex) => {
-                  const rowSpan = row.lines.length;
-                  const lineTotal = Array.from(line.values.values()).reduce(
-                    (sum, qty) => sum + qty,
-                    0,
-                  );
+      {type === "quote" ? <p className="print-leadtime-note">{expectedReceivingNote}</p> : null}
+      <div className="print-matrix-stack">
+        {type === "receiving" && printMatrix
+          ? printMatrix.groups.map((group) => (
+              <table className="print-matrix" key={group.groupTag}>
+                <caption>{group.groupTag}</caption>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Image</th>
+                    <th>Round</th>
+                    {group.sizes.map((size) => (
+                      <th key={size}>{size}</th>
+                    ))}
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.flatMap((row) =>
+                    row.lines.map((line, lineIndex) => {
+                      const rowSpan = row.lines.length;
+                      const lineTotal = Array.from(line.values.values()).reduce(
+                        (sum, qty) => sum + qty,
+                        0,
+                      );
 
-                  return (
-                    <tr key={`${row.productName}-${line.label}`}>
-                      {lineIndex === 0 ? (
-                        <>
-                          <td rowSpan={rowSpan}>{row.productName}</td>
-                          <td rowSpan={rowSpan}>
-                            {row.imageUrl ? (
-                              <Image
-                                alt={row.productName}
-                                className="print-product-image"
-                                height={96}
-                                loading="eager"
-                                src={row.imageUrl}
-                                unoptimized
-                                width={96}
-                              />
-                            ) : (
-                              ""
-                            )}
-                          </td>
-                        </>
-                      ) : null}
-                      <td className="print-round-label">{line.label}</td>
-                      {printMatrix.sizes.map((size) => {
-                        const qty = line.values.get(size) ?? 0;
+                      return (
+                        <tr key={`${group.groupTag}-${row.productName}-${line.label}`}>
+                          {lineIndex === 0 ? (
+                            <>
+                              <td rowSpan={rowSpan}>{row.productName}</td>
+                              <td rowSpan={rowSpan}>
+                                {row.imageUrl ? (
+                                  <Image
+                                    alt={row.productName}
+                                    className="print-product-image"
+                                    height={96}
+                                    loading="eager"
+                                    src={row.imageUrl}
+                                    unoptimized
+                                    width={96}
+                                  />
+                                ) : (
+                                  ""
+                                )}
+                              </td>
+                            </>
+                          ) : null}
+                          <td className="print-round-label">{line.label}</td>
+                          {group.sizes.map((size) => {
+                            const qty = line.values.get(size) ?? 0;
+                            return (
+                              <td key={size} style={qtyHeatStyle(qty, group.maxQty)}>
+                                {qty || ""}
+                              </td>
+                            );
+                          })}
+                          <td>{lineTotal || ""}</td>
+                        </tr>
+                      );
+                    }),
+                  )}
+                </tbody>
+              </table>
+            ))
+          : matrix.groups.map((group) => (
+              <table className="print-matrix" key={group.groupTag}>
+                <caption>{group.groupTag}</caption>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Image</th>
+                    {group.sizes.map((size) => (
+                      <th key={size}>{size}</th>
+                    ))}
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row) => (
+                    <tr key={`${group.groupTag}-${row.productName}`}>
+                      <td>{row.productName}</td>
+                      <td>
+                        {row.imageUrl ? (
+                          <Image
+                            alt={row.productName}
+                            className="print-product-image"
+                            height={96}
+                            loading="eager"
+                            src={row.imageUrl}
+                            unoptimized
+                            width={96}
+                          />
+                        ) : (
+                          ""
+                        )}
+                      </td>
+                      {group.sizes.map((size) => {
+                        const orderedQty = row.items.get(size)?.orderedQty ?? 0;
                         return (
-                          <td key={size} style={qtyHeatStyle(qty, printMatrix.maxQty)}>
-                            {qty || ""}
+                          <td key={size} style={qtyHeatStyle(orderedQty, group.maxQty)}>
+                            {orderedQty || ""}
                           </td>
                         );
                       })}
-                      <td>{lineTotal || ""}</td>
+                      <td>{row.totalQty}</td>
                     </tr>
-                  );
-                }),
-              )
-            : matrix.rows.map((row) => (
-            <tr key={row.productName}>
-              <td>{row.productName}</td>
-              <td>
-                {row.imageUrl ? (
-                  <Image
-                    alt={row.productName}
-                    className="print-product-image"
-                    height={96}
-                    loading="eager"
-                    src={row.imageUrl}
-                    unoptimized
-                    width={96}
-                  />
-                ) : (
-                  ""
-                )}
-              </td>
-              {matrix.sizes.map((size) => {
-                const orderedQty = row.items.get(size)?.orderedQty ?? 0;
-                return (
-                  <td key={size} style={qtyHeatStyle(orderedQty, matrix.maxQty)}>
-                    {orderedQty || ""}
-                  </td>
-                );
-              })}
-              <td>{row.totalQty}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                  ))}
+                </tbody>
+              </table>
+            ))}
+      </div>
       {type === "receiving" ? (
         <div className="print-signatures">
           <span>Prepared by</span>

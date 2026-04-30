@@ -194,6 +194,7 @@ export type PoCatalogItemOption = {
   mainName: string;
   variantTitle: string;
   imageUrl: string | null;
+  tags: string[];
   supplierCode: string;
   supplierName: string;
   currency: string;
@@ -203,6 +204,7 @@ export type PoCatalogItemOption = {
   lastLandedUnitCost: number;
   lastPoId: string;
   demandIndexHm: number;
+  leadTimeDays: number;
   recommendedRawQty: number;
   recommendedRoundQty: number;
   recommendedQty: number;
@@ -215,8 +217,10 @@ type PortalItem = PoPortalItem & {
   imageUrl?: string | null;
   itemUuid?: string;
   landedUnitCost?: number;
+  leadTimeDays?: number;
   onHand?: number;
   sortPosition?: number;
+  tags?: string[];
 };
 
 type PortalOrder = {
@@ -800,7 +804,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
     const lastPrice = lastPriceBySku.get(sku);
     const decisionLine = decisionBySku.get(sku);
     const variantTitle = compactText(row.variant_title);
-    const tags = firstProduct(row)?.tags ?? [];
+    const tags = decisionLine?.tags?.length ? decisionLine.tags : firstProduct(row)?.tags ?? [];
     const imageUrl =
       compactText(row.variant_image_url) ||
       compactText(firstProduct(row)?.product_image_url) ||
@@ -813,6 +817,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         mainName,
         variantTitle,
         imageUrl,
+        tags,
         supplierCode: supplierCodeByName.get(supplierKey) ?? "",
         supplierName,
         currency: lastPrice?.currency ?? supplierCurrencyByName.get(supplierKey) ?? "THB",
@@ -822,6 +827,7 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
         lastLandedUnitCost: numeric(lastPrice?.landed_unit_cost),
         lastPoId: lastPrice?.po_id ?? "",
         demandIndexHm: decisionLine?.demandIndexHm ?? 0,
+        leadTimeDays: decisionLine?.leadTimeDays ?? 0,
         recommendedRawQty: decisionLine?.ropUnitsRaw ?? 0,
         recommendedRoundQty: decisionLine?.ropUnitsRounded ?? 0,
         recommendedQty: decisionLine?.ropUnits ?? 0,
@@ -1056,13 +1062,17 @@ export async function getPoPortalDetailData(poId: string) {
       .filter((row) => row.po_item_uuid)
       .map((row) => [row.po_item_uuid, row]),
   );
-  const items = supabaseItems.map((item) =>
-    ({
+  const items = supabaseItems.map((item) => {
+    const catalogItem = catalogItemBySku.get(item.sku ?? "");
+
+    return {
       ...mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(item.sku ?? "")),
-      demandIndexHm: catalogItemBySku.get(item.sku ?? "")?.demandIndexHm ?? 0,
+      demandIndexHm: catalogItem?.demandIndexHm ?? 0,
+      leadTimeDays: catalogItem?.leadTimeDays ?? 0,
       onHand: onHandBySku.get(item.sku ?? "") ?? 0,
-    }),
-  );
+      tags: catalogItem?.tags ?? [],
+    };
+  });
 
   const receipts =
     itemIds.length > 0
