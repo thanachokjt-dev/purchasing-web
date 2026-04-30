@@ -59,6 +59,8 @@ export function PendingSubmitButton({
   );
 }
 
+export type FormServerAction = (formData: FormData) => void | Promise<void>;
+
 export function LoadingWordmark() {
   return (
     <span aria-label="Loading" className="loading-wordmark" role="status">
@@ -116,6 +118,7 @@ export function GlobalLoadingOverlay() {
 
     const handleAppLoadingStart = () => showSoon();
     const handleAppLoadingStop = () => hide();
+    const handleSubmit = () => showSoon();
     const handleClick = (event: MouseEvent) => {
       if (isModifiedClick(event) || event.defaultPrevented) {
         return;
@@ -129,6 +132,7 @@ export function GlobalLoadingOverlay() {
     };
 
     document.addEventListener("click", handleClick, true);
+    document.addEventListener("submit", handleSubmit, true);
     window.addEventListener("app-loading-start", handleAppLoadingStart);
     window.addEventListener("app-loading-stop", handleAppLoadingStop);
     window.addEventListener("pageshow", hide);
@@ -136,6 +140,7 @@ export function GlobalLoadingOverlay() {
 
     return () => {
       document.removeEventListener("click", handleClick, true);
+      document.removeEventListener("submit", handleSubmit, true);
       window.removeEventListener("app-loading-start", handleAppLoadingStart);
       window.removeEventListener("app-loading-stop", handleAppLoadingStop);
       window.removeEventListener("pageshow", hide);

@@ -43,7 +43,8 @@ body {
 
 .global-loading-overlay {
   align-items: center;
-  background: transparent;
+  backdrop-filter: blur(1.5px) saturate(1.04);
+  background: rgba(246, 247, 249, 0.3);
   display: flex;
   inset: 0;
   justify-content: center;
@@ -56,6 +57,7 @@ body {
 
 .global-loading-overlay-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .loading-wordmark {

@@ -1,9 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { LoadingLabel } from "@/app/loading-controls";
+import { LoadingLabel, type FormServerAction } from "@/app/loading-controls";
 
 const compactInputClass =
   "h-9 w-20 rounded-md border border-[#cfd6df] bg-white px-2 text-right font-mono text-sm text-[#172026] outline-none focus:border-[#255f85]";
@@ -92,24 +92,21 @@ export function DecisionSaveButton() {
   );
 }
 
-export function DecisionCreatePoButton() {
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    const reset = () => setSubmitting(false);
-    window.addEventListener("pageshow", reset);
-    return () => window.removeEventListener("pageshow", reset);
-  }, []);
+export function DecisionCreatePoButton({
+  formAction,
+}: {
+  formAction: FormServerAction;
+}) {
+  const { pending } = useFormStatus();
 
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={submitting}
-      form="decision-create-po-form"
-      onClick={() => setSubmitting(true)}
+      disabled={pending}
+      formAction={formAction}
       type="submit"
     >
-      <LoadingLabel loading={submitting} loadingText="Creating...">
+      <LoadingLabel loading={pending} loadingText="Creating...">
         Create PO
       </LoadingLabel>
     </button>
@@ -680,13 +677,11 @@ export function DecisionPlanningCells({
       <td className="px-3 py-3 align-top">
         <input name="orderQtyMode" type="hidden" value={selectedMode} />
         <input
-          form="decision-create-po-form"
           name="poRawQty"
           type="hidden"
           value={netRawQty}
         />
         <input
-          form="decision-create-po-form"
           name="poRoundedQty"
           type="hidden"
           value={orderQty}
@@ -695,7 +690,6 @@ export function DecisionPlanningCells({
           <label className="flex items-center gap-2">
             <input
               checked={selectedMode === "raw"}
-              form="decision-create-po-form"
               name={`qtyChoice:${sku}`}
               onClick={() => chooseMode("raw")}
               onChange={() => chooseMode("raw")}
@@ -707,7 +701,6 @@ export function DecisionPlanningCells({
           <label className="flex items-center gap-2">
             <input
               checked={selectedMode === "rounded"}
-              form="decision-create-po-form"
               name={`qtyChoice:${sku}`}
               onClick={() => chooseMode("rounded")}
               onChange={() => chooseMode("rounded")}

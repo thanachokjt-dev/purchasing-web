@@ -350,10 +350,8 @@ export default async function PurchasingDecisionPage({
               {poError}
             </div>
           ) : null}
-          <form action={createPoFromDecisionAction} id="decision-create-po-form">
-            <input name="returnTo" type="hidden" value={returnTo} />
-          </form>
           <form action={savePurchasingDecisionAction}>
+            <input name="returnTo" type="hidden" value={returnTo} />
             <div className="flex flex-col gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="inline-flex items-center gap-2 text-sm font-medium text-[#52606d]">
                 <SlidersHorizontal size={16} />
@@ -366,7 +364,7 @@ export default async function PurchasingDecisionPage({
                   One save for visible rows
                 </span>
                 <DecisionSaveButton />
-                <DecisionCreatePoButton />
+                <DecisionCreatePoButton formAction={createPoFromDecisionAction} />
               </div>
             </div>
 
@@ -423,32 +421,27 @@ export default async function PurchasingDecisionPage({
                           className="size-4 accent-[#172026]"
                           data-decision-select="sku"
                           defaultChecked={false}
-                          form="decision-create-po-form"
                           name="selectedSku"
                           type="checkbox"
                           value={line.sku}
                         />
-                        <input form="decision-create-po-form" name="poSku" type="hidden" value={line.sku} />
+                        <input name="poSku" type="hidden" value={line.sku} />
                         <input
-                          form="decision-create-po-form"
                           name="poProductName"
                           type="hidden"
                           value={line.productName}
                         />
                         <input
-                          form="decision-create-po-form"
                           name="poMainName"
                           type="hidden"
                           value={line.mainName}
                         />
                         <input
-                          form="decision-create-po-form"
                           name="poSupplier"
                           type="hidden"
                           value={line.supplier}
                         />
                         <input
-                          form="decision-create-po-form"
                           name="poUnitPrice"
                           type="hidden"
                           value={qtyValue(line.unitPrice)}
