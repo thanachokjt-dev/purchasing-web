@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { envStatus } from "@/lib/env";
+import { todayAndYesterdayWindow } from "@/lib/sync/window";
 import { syncShopifyOrdersSalesLines } from "@/lib/sync/shopify-orders";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -7,11 +8,17 @@ function unauthorized() {
   return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 }
 
-function parseDateParam(value: string | null, boundary: "since" | "until") {
-  if (!value || value === "now") {
-    return boundary === "since"
-      ? new Date("2025-01-01T00:00:00+07:00").toISOString()
-      : new Date().toISOString();
+function parseDateParam(
+  value: string | null,
+  boundary: "since" | "until",
+  defaultWindow: { sinceAt: string; untilAt: string },
+) {
+  if (!value) {
+    return boundary === "since" ? defaultWindow.sinceAt : defaultWindow.untilAt;
+  }
+
+  if (value === "now") {
+    return new Date().toISOString();
   }
 
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -63,6 +70,8 @@ export async function POST(request: NextRequest) {
   const maxPagesParam = url.searchParams.get("maxPages");
   const maxPages = maxPagesParam ? Number(maxPagesParam) : undefined;
   const cursor = url.searchParams.get("cursor");
+  const explicitBackfill =
+    url.searchParams.has("since") || url.searchParams.has("until");
 
   if (maxPages !== undefined && (!Number.isInteger(maxPages) || maxPages < 1)) {
     return NextResponse.json(
@@ -73,9 +82,10 @@ export async function POST(request: NextRequest) {
 
   let sinceAt: string;
   let untilAt: string;
+  const defaultWindow = todayAndYesterdayWindow();
   try {
-    sinceAt = parseDateParam(url.searchParams.get("since"), "since");
-    untilAt = parseDateParam(url.searchParams.get("until"), "until");
+    sinceAt = parseDateParam(url.searchParams.get("since"), "since", defaultWindow);
+    untilAt = parseDateParam(url.searchParams.get("until"), "until", defaultWindow);
   } catch (error) {
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Bad date" },
@@ -92,7 +102,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const salesLines = await syncShopifyOrdersSalesLines(supabase, {
-      mode: "backfill",
+      mode: explicitBackfill ? "backfill" : "manual",
       maxPages,
       sinceAt,
       untilAt,
@@ -101,12 +111,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      mode: "backfill",
+      mode: explicitBackfill ? "backfill" : "manual",
       window: { sinceAt, untilAt },
       salesLines,
-      note: salesLines.capped
-        ? "Backfill stopped at maxPages and has more Shopify pages to fetch."
-        : "Shopify sales lines persisted for the requested window.",
+      note: explicitBackfill
+        ? salesLines.capped
+          ? "Backfill stopped at maxPages and has more Shopify pages to fetch."
+          : "Shopify sales lines persisted for the requested backfill window."
+        : salesLines.capped
+          ? "Rolling sales-line refresh stopped at maxPages and has more Shopify pages to fetch."
+          : "Rolling sales-line refresh completed for today and yesterday ICT.",
     });
   } catch (error) {
     return NextResponse.json(

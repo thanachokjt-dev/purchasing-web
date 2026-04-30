@@ -98,10 +98,12 @@ Remove `?maxPages=1` after the test page succeeds.
 
 ## Daily Incremental Sync
 
-After the first full product/inventory sync, use the daily endpoint for routine jobs. It always pulls the previous 24 hours only:
+After the first sales-line backfill, use the daily endpoint for routine jobs.
+It keeps historical sales lines in Supabase and only refreshes a short rolling
+window:
 
-- Shopify products/items updated in the last 1 day
-- Shopify orders/sales lines created in the last 1 day
+- Shopify product, variant, and inventory data as a full current snapshot
+- Shopify orders/sales lines from 00:00 yesterday ICT through the current time
 
 Manual test:
 
@@ -123,7 +125,10 @@ On Vercel, set `CRON_SECRET`; Vercel Cron calls the endpoint with `Authorization
 
 ## Sales Line Backfill
 
-Use this once to seed sales history from the start of 2025. Routine jobs should continue using `/api/sync/daily` only.
+Use this once to seed sales history from the start of 2025. Routine jobs should
+continue using `/api/sync/daily` only. If `/api/sync/sales-lines` is called
+without `since` and `until`, it also defaults to the rolling today-and-yesterday
+ICT window; pass explicit dates only for a deliberate backfill.
 
 ```bash
 curl -X POST "http://localhost:3000/api/sync/sales-lines?since=2025-01-01&until=now&maxPages=10" ^

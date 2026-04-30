@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { envStatus } from "@/lib/env";
-import { previousOneDayWindow } from "@/lib/sync/window";
+import { todayAndYesterdayWindow } from "@/lib/sync/window";
 import { syncShopifyOrdersSalesLines } from "@/lib/sync/shopify-orders";
 import { syncShopifyProductsAndInventory } from "@/lib/sync/shopify-products";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
@@ -48,7 +48,7 @@ async function runDailySync(request: NextRequest, modeOverride?: "manual" | "cro
     );
   }
 
-  const window = previousOneDayWindow();
+  const window = todayAndYesterdayWindow();
 
   try {
     const [productsInventory, ordersSales] = await Promise.all([
@@ -70,7 +70,7 @@ async function runDailySync(request: NextRequest, modeOverride?: "manual" | "cro
       window,
       productsInventory,
       ordersSales,
-      note: "Daily sync completed. Inventory is a full current snapshot; sales lines use the requested one-day window.",
+      note: "Daily sync completed. Inventory is a full current snapshot; sales lines use a rolling today-and-yesterday ICT window.",
     });
   } catch (error) {
     return NextResponse.json(
