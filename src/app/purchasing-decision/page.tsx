@@ -112,6 +112,47 @@ function statusHelpClass(itemStatus: string, shopifyItemStatus: string) {
   return "text-[#255f85]";
 }
 
+function appendParam(params: URLSearchParams, key: string, value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (item) {
+        params.append(key, item);
+      }
+    });
+    return;
+  }
+  if (value) {
+    params.set(key, value);
+  }
+}
+
+function decisionReturnTo(params: {
+  alert?: string | string[];
+  capSelling?: string;
+  lifetimeWeight?: string;
+  q?: string;
+  recentFloor?: string;
+  sellingWeight?: string;
+  status?: string;
+  supplier?: string;
+  tag?: string;
+  visibility?: string;
+}) {
+  const nextParams = new URLSearchParams();
+  appendParam(nextParams, "alert", params.alert);
+  appendParam(nextParams, "capSelling", params.capSelling);
+  appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
+  appendParam(nextParams, "q", params.q);
+  appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "sellingWeight", params.sellingWeight);
+  appendParam(nextParams, "status", params.status);
+  appendParam(nextParams, "supplier", params.supplier);
+  appendParam(nextParams, "tag", params.tag);
+  appendParam(nextParams, "visibility", params.visibility);
+  const query = nextParams.toString();
+  return query ? `/purchasing-decision?${query}` : "/purchasing-decision";
+}
+
 export default async function PurchasingDecisionPage({
   searchParams,
 }: {
@@ -120,6 +161,7 @@ export default async function PurchasingDecisionPage({
     capSelling?: string;
     lifetimeWeight?: string;
     q?: string;
+    poError?: string;
     recentFloor?: string;
     sellingWeight?: string;
     status?: string;
@@ -135,6 +177,8 @@ export default async function PurchasingDecisionPage({
   const status = params.status ?? "all";
   const alert = normalizeSelectedAlerts(params.alert);
   const visibility = params.visibility ?? "active";
+  const poError = params.poError ?? "";
+  const returnTo = decisionReturnTo(params);
   const data = await getPurchasingDecisionData({
     alert,
     capSelling: params.capSelling,
@@ -241,9 +285,15 @@ export default async function PurchasingDecisionPage({
                   <input
                     className={inputClass}
                     defaultValue={q}
+                    list="purchasing-search-options"
                     name="q"
-                    placeholder="SKU, product, tag"
+                    placeholder="SKU, product, main name"
                   />
+                  <datalist id="purchasing-search-options">
+                    {data.searchOptions.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
                 </label>
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
@@ -323,7 +373,14 @@ export default async function PurchasingDecisionPage({
             </div>
           </div>
 
-          <form action={createPoFromDecisionAction} id="decision-create-po-form" />
+          {poError ? (
+            <div className="border-b border-[#f5c2bd] bg-[#fff1f0] px-4 py-3 text-sm font-semibold text-[#a33a32]">
+              {poError}
+            </div>
+          ) : null}
+          <form action={createPoFromDecisionAction} id="decision-create-po-form">
+            <input name="returnTo" type="hidden" value={returnTo} />
+          </form>
           <form action={savePurchasingDecisionAction}>
             <div className="flex flex-col gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="inline-flex items-center gap-2 text-sm font-medium text-[#52606d]">

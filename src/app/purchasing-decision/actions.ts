@@ -218,6 +218,17 @@ function generatedPoId() {
   return `PO-${stamp}`;
 }
 
+function decisionReturnTo(formData: FormData) {
+  const returnTo = String(formData.get("returnTo") ?? "").trim();
+  return returnTo.startsWith("/purchasing-decision") ? returnTo : "/purchasing-decision";
+}
+
+function redirectWithPoError(formData: FormData, message: string): never {
+  const returnTo = decisionReturnTo(formData);
+  const separator = returnTo.includes("?") ? "&" : "?";
+  redirect(`${returnTo}${separator}poError=${encodeURIComponent(message)}`);
+}
+
 function numberFromMap(
   map: Map<string, string>,
   sku: string,
@@ -269,14 +280,14 @@ function productGroupName(value: string) {
 export async function createPoFromDecisionAction(formData: FormData) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
-    return;
+    redirectWithPoError(formData, "Supabase is not configured yet.");
   }
 
   const selectedSkus = Array.from(
     new Set(formData.getAll("selectedSku").map((value) => String(value).trim()).filter(Boolean)),
   );
   if (!selectedSkus.length) {
-    return;
+    redirectWithPoError(formData, "Select at least one SKU before creating a PO.");
   }
 
   const allSkus = formData.getAll("poSku").map((value) => String(value).trim());
@@ -291,7 +302,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
     selectedSkus.map((sku) => supplierBySku.get(sku)).filter(Boolean),
   );
   if (selectedSuppliers.size !== 1) {
-    throw new Error("Select SKUs from one supplier before creating a PO");
+    redirectWithPoError(formData, "Select SKUs from one supplier before creating a PO.");
   }
 
   const supplierName = Array.from(selectedSuppliers)[0] ?? "";
@@ -303,10 +314,10 @@ export async function createPoFromDecisionAction(formData: FormData) {
     .maybeSingle();
 
   if (supplierError) {
-    throw new Error(supplierError.message);
+    redirectWithPoError(formData, supplierError.message);
   }
   if (!supplier) {
-    throw new Error(`Supplier ${supplierName} is not mapped in PO suppliers`);
+    redirectWithPoError(formData, `Supplier ${supplierName} is not mapped in PO suppliers.`);
   }
 
   const poId = generatedPoId();
@@ -326,36 +337,45 @@ export async function createPoFromDecisionAction(formData: FormData) {
       a.localeCompare(b)
     );
   });
-  const items = sortedSelectedSkus.map((sku, index) => {
-    const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
-    const orderedQty =
-      qtyChoice === "raw"
-        ? numberFromMap(rawQtyBySku, sku, "Raw qty")
-        : numberFromMap(roundedQtyBySku, sku, "Rounded qty");
-    const unitPrice = numberFromMap(unitPriceBySku, sku, "Unit price");
-    const productTitle = productBySku.get(sku) || sku;
+  const items = (() => {
+    try {
+      return sortedSelectedSkus.map((sku, index) => {
+        const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
+        const orderedQty =
+          qtyChoice === "raw"
+            ? numberFromMap(rawQtyBySku, sku, "Raw qty")
+            : numberFromMap(roundedQtyBySku, sku, "Rounded qty");
+        const unitPrice = numberFromMap(unitPriceBySku, sku, "Unit price");
+        const productTitle = productBySku.get(sku) || sku;
 
-    return {
-      po_item_id: `${poId}-${index + 1}`,
-      po_id: poId,
-      line_no: String(index + 1),
-      sort_position: index + 1,
-      sku,
-      product_title_snapshot: productTitle,
-      variant_title_snapshot: null,
-      ordered_qty: orderedQty,
-      unit_price: unitPrice,
-      freight_unit_cost: 0,
-      landed_unit_cost: unitPrice,
-      line_amount: orderedQty * unitPrice,
-      currency,
-      remark: qtyChoice === "raw" ? "Created from Purchasing Decision raw qty" : "Created from Purchasing Decision rounded qty",
-      full_name: productTitle,
-      line_status: "draft",
-      source: "purchasing_decision",
-      updated_at: new Date().toISOString(),
-    };
-  });
+        return {
+          po_item_id: `${poId}-${index + 1}`,
+          po_id: poId,
+          line_no: String(index + 1),
+          sort_position: index + 1,
+          sku,
+          product_title_snapshot: productTitle,
+          variant_title_snapshot: null,
+          ordered_qty: orderedQty,
+          unit_price: unitPrice,
+          freight_unit_cost: 0,
+          landed_unit_cost: unitPrice,
+          line_amount: orderedQty * unitPrice,
+          currency,
+          remark: qtyChoice === "raw" ? "Created from Purchasing Decision raw qty" : "Created from Purchasing Decision rounded qty",
+          full_name: productTitle,
+          line_status: "draft",
+          source: "purchasing_decision",
+          updated_at: new Date().toISOString(),
+        };
+      });
+    } catch (error) {
+      redirectWithPoError(
+        formData,
+        error instanceof Error ? error.message : "Could not prepare PO lines.",
+      );
+    }
+  })();
 
   const poAmount = items.reduce((sum, item) => sum + item.line_amount, 0);
   const { error: orderError } = await supabase.from("po_orders").insert({
@@ -373,13 +393,13 @@ export async function createPoFromDecisionAction(formData: FormData) {
     updated_at: new Date().toISOString(),
   });
   if (orderError) {
-    throw new Error(orderError.message);
+    redirectWithPoError(formData, orderError.message);
   }
 
   const { error: itemError } = await supabase.from("po_items").insert(items);
   if (itemError) {
     await supabase.from("po_orders").delete().eq("po_id", poId);
-    throw new Error(itemError.message);
+    redirectWithPoError(formData, itemError.message);
   }
 
   await supabase.from("po_status_events").insert({

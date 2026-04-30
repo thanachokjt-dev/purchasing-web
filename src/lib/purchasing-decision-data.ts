@@ -162,6 +162,7 @@ export type PurchasingDecisionData = {
   controlsReady: boolean;
   demandFormula: DemandFormulaSettings;
   itemStatusOptions: string[];
+  searchOptions: string[];
   supplierFilterOptions: Array<{
     supplier: string;
     orderQty: number;
@@ -771,6 +772,7 @@ export async function getPurchasingDecisionData({
       controlsReady: false,
       demandFormula,
       itemStatusOptions: [],
+      searchOptions: [],
       supplierFilterOptions: [],
       supplierOptions: [],
       tagOptions: [],
@@ -1031,20 +1033,43 @@ export async function getPurchasingDecisionData({
     a.localeCompare(b),
   );
 
+  function matchesFiltersExceptQuery(line: PurchasingDecisionLine) {
+    const matchesSupplier = matchesSelectedSupplier(line, selectedSupplier);
+    const matchesTag =
+      selectedTag === "all" ||
+      line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
+    const matchesItemStatus =
+      selectedItemStatus === "all" ||
+      line.itemStatus.toLowerCase() === selectedItemStatus;
+    const matchesAlert =
+      !selectedAlerts || selectedAlerts.has(line.ropAlert);
+    const matchesVisibility =
+      selectedVisibility === "all" ||
+      (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
+
+    return (
+      matchesSupplier &&
+      matchesTag &&
+      matchesItemStatus &&
+      matchesAlert &&
+      matchesVisibility
+    );
+  }
+
+  const searchOptions = Array.from(
+    new Set(
+      allLines
+        .filter(matchesFiltersExceptQuery)
+        .flatMap((line) => [line.sku, line.productName, line.mainName])
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, 300);
+
   const filteredLines = allLines
     .filter((line) => {
-      const matchesSupplier = matchesSelectedSupplier(line, selectedSupplier);
-      const matchesTag =
-        selectedTag === "all" ||
-        line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
-      const matchesItemStatus =
-        selectedItemStatus === "all" ||
-        line.itemStatus.toLowerCase() === selectedItemStatus;
-      const matchesAlert =
-        !selectedAlerts || selectedAlerts.has(line.ropAlert);
-      const matchesVisibility =
-        selectedVisibility === "all" ||
-        (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
       const matchesQuery =
         !query ||
         [
@@ -1061,11 +1086,7 @@ export async function getPurchasingDecisionData({
           .includes(query);
 
       return (
-        matchesSupplier &&
-        matchesTag &&
-        matchesItemStatus &&
-        matchesAlert &&
-        matchesVisibility &&
+        matchesFiltersExceptQuery(line) &&
         matchesQuery
       );
     })
@@ -1093,6 +1114,7 @@ export async function getPurchasingDecisionData({
         ...allLines.map((line) => line.itemStatus).filter(Boolean),
       ]),
     ).sort((a, b) => a.localeCompare(b)),
+    searchOptions,
     supplierFilterOptions,
     supplierOptions,
     tagOptions,
