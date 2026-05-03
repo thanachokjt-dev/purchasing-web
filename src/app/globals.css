@@ -103,6 +103,47 @@ body {
     display: none !important;
   }
 
+  .report-screen-actions {
+    display: none !important;
+  }
+
+  .overstock-report {
+    background: #ffffff !important;
+  }
+
+  .overstock-report > section {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .overstock-report header,
+  .overstock-supplier-section {
+    border: 1px solid #d1d5db !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .overstock-supplier-section {
+    margin-top: 8mm;
+  }
+
+  .overstock-tag-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .overstock-report table {
+    font-size: 8px;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .overstock-report th,
+  .overstock-report td {
+    padding: 3px 4px !important;
+  }
+
   .print-only {
     display: none;
     height: auto;

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import {
   addPoItemAction,
@@ -83,12 +83,29 @@ const initialState: PoActionState = { ok: false, message: "" };
 const statusOptions = [
   "draft",
   "waiting_for_approve",
+  "follow_up",
   "inpro",
   "delivery",
   "final_payment",
   "closed",
   "cancelled",
 ];
+
+const statusOptionLabels: Record<string, string> = {
+  cancelled: "Cancelled",
+  closed: "Closed",
+  delivery: "Delivery",
+  draft: "Draft",
+  final_payment: "Final payment",
+  follow_up: "Follow-up",
+  inpro: "In progress",
+  unknown: "Unknown",
+  waiting_for_approve: "Waiting approve",
+};
+
+function statusOptionLabel(status: string) {
+  return statusOptionLabels[status] ?? status;
+}
 
 const standardPaymentTypes = [
   ["deposit50", "Deposit 50%"],
@@ -138,6 +155,43 @@ function roundQtyUpToTen(value: number) {
   return Math.ceil(value / 10) * 10;
 }
 
+function freightUnitFromTotal(value: string, lines: DraftLineItem[]) {
+  if (!value) {
+    return null;
+  }
+  const totalCost = Number(value);
+  const totalQty = lines.reduce((sum, line) => sum + line.qty, 0);
+  if (!Number.isFinite(totalCost) || totalCost < 0 || totalQty <= 0) {
+    return null;
+  }
+
+  return totalCost / totalQty;
+}
+
+function applyLogisticCostToLines(lines: DraftLineItem[], value: string) {
+  const freightUnitCost = freightUnitFromTotal(value, lines);
+  if (freightUnitCost === null) {
+    return lines;
+  }
+
+  return lines.map((line) => ({
+    ...line,
+    freightUnitCost: Number(freightUnitCost.toFixed(4)),
+  }));
+}
+
+function averageExchangeRate(values: string[]) {
+  const usableRates = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (usableRates.length === 0) {
+    return null;
+  }
+
+  return usableRates.reduce((sum, value) => sum + value, 0) / usableRates.length;
+}
+
 function ActionMessage({ state }: { state: PoActionState }) {
   if (!state.message) {
     return null;
@@ -166,6 +220,61 @@ const inputClass =
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
 const buttonClass =
   "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
+
+export function PoStatusFilterSelect({
+  options,
+  selected,
+}: {
+  options: string[];
+  selected: string[];
+}) {
+  const [selectedValues, setSelectedValues] = useState(
+    selected.length > 0 ? selected : ["all"],
+  );
+
+  function toggleStatus(value: string, checked: boolean) {
+    setSelectedValues((current) => {
+      if (value === "all") {
+        return checked ? ["all"] : [];
+      }
+
+      const withoutAll = current.filter((item) => item !== "all");
+      const next = checked
+        ? Array.from(new Set([...withoutAll, value]))
+        : withoutAll.filter((item) => item !== value);
+
+      return next.length > 0 ? next : ["all"];
+    });
+  }
+
+  return (
+    <div className="rounded-md border border-[#cfd6df] bg-white px-3 py-2">
+      <input name="status" type="hidden" value={selectedValues.join(",")} />
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Status
+      </p>
+      <div className="flex max-h-24 flex-wrap gap-2 overflow-auto">
+        {["all", ...options].map((option) => {
+          const checked = selectedValues.includes(option);
+          return (
+            <label
+              className="inline-flex items-center gap-2 rounded-md border border-[#dfe4ea] px-2 py-1 text-xs font-semibold text-[#364252]"
+              key={option}
+            >
+              <input
+                checked={checked}
+                className="size-3 accent-[#255f85]"
+                onChange={(event) => toggleStatus(option, event.target.checked)}
+                type="checkbox"
+              />
+              {option === "all" ? "All" : statusOptionLabel(option)}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function CreatePoForm({
   catalogItems,
@@ -462,12 +571,20 @@ export function AddPoItemForm({ poId }: { poId: string }) {
 }
 
 export function PoHeaderRefsForm({
+  actualReceivedDate,
+  estimatedArrivedDate,
+  estimatedDeliveryDate,
   poId,
   quotationReference,
+  supplierDiscussionNote,
   supplierInvoiceNo,
 }: {
+  actualReceivedDate: string;
+  estimatedArrivedDate: string;
+  estimatedDeliveryDate: string;
   poId: string;
   quotationReference: string;
+  supplierDiscussionNote: string;
   supplierInvoiceNo: string;
 }) {
   const [state, formAction, pending] = useActionState(
@@ -478,31 +595,151 @@ export function PoHeaderRefsForm({
   return (
     <form action={formAction} className="grid gap-3">
       <input name="poId" type="hidden" value={poId} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={labelClass}>
+          Quotation
+          <input
+            className={inputClass}
+            defaultValue={quotationReference}
+            name="quotationReference"
+            placeholder="Supplier quotation no."
+          />
+        </label>
+        <label className={labelClass}>
+          Supplier INV
+          <input
+            className={inputClass}
+            defaultValue={supplierInvoiceNo}
+            name="supplierInvoiceNo"
+            placeholder="Invoice no. if available"
+          />
+        </label>
+        <label className={labelClass}>
+          Estimated delivery
+          <input
+            className={inputClass}
+            defaultValue={estimatedDeliveryDate}
+            name="estimatedDeliveryDate"
+            type="date"
+          />
+        </label>
+        <label className={labelClass}>
+          Estimated arrived
+          <input
+            className={inputClass}
+            defaultValue={estimatedArrivedDate}
+            name="estimatedArrivedDate"
+            type="date"
+          />
+        </label>
+        <label className={labelClass}>
+          Date received
+          <input
+            className={inputClass}
+            defaultValue={actualReceivedDate}
+            name="actualReceivedDate"
+            type="date"
+          />
+        </label>
+      </div>
+      {supplierDiscussionNote ? (
+        <div className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-3 py-2 text-xs text-[#52606d]">
+          <p className="font-semibold uppercase tracking-[0.08em] text-[#65717f]">
+            Latest supplier update
+          </p>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-[#172026]">
+            {supplierDiscussionNote}
+          </p>
+        </div>
+      ) : null}
       <label className={labelClass}>
-        Quotation
-        <input
-          className={inputClass}
-          defaultValue={quotationReference}
-          name="quotationReference"
-          placeholder="Supplier quotation no."
-        />
-      </label>
-      <label className={labelClass}>
-        Supplier INV
-        <input
-          className={inputClass}
-          defaultValue={supplierInvoiceNo}
-          name="supplierInvoiceNo"
-          placeholder="Invoice no. if available"
+        Supplier update / comment
+        <textarea
+          className={`${inputClass} min-h-24 py-2`}
+          name="supplierDiscussionNote"
+          placeholder="Type latest supplier conversation, promise date, delay reason, or follow-up note"
         />
       </label>
       <button className={buttonClass} disabled={pending} type="submit">
         <LoadingLabel loading={pending} loadingText="Saving...">
-          Save refs
+          Save header
         </LoadingLabel>
       </button>
       <ActionMessage state={state} />
     </form>
+  );
+}
+
+export function QuickPoCommentForm({
+  actualReceivedDate,
+  estimatedArrivedDate,
+  estimatedDeliveryDate,
+  poId,
+  quotationReference,
+  supplierDiscussionNote,
+  supplierInvoiceNo,
+}: {
+  actualReceivedDate: string;
+  estimatedArrivedDate: string;
+  estimatedDeliveryDate: string;
+  poId: string;
+  quotationReference: string;
+  supplierDiscussionNote: string;
+  supplierInvoiceNo: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    updatePoHeaderRefsAction,
+    initialState,
+  );
+  const [draftComment, setDraftComment] = useState("");
+  const noteBoxRef = useRef<HTMLParagraphElement>(null);
+  const displayNote = state.supplierDiscussionNote ?? supplierDiscussionNote;
+
+  useEffect(() => {
+    const noteBox = noteBoxRef.current;
+    if (noteBox) {
+      noteBox.scrollTop = noteBox.scrollHeight;
+    }
+  }, [displayNote]);
+
+  return (
+    <div className="grid min-w-[280px] gap-2">
+      <p
+        className="max-h-24 max-w-[360px] overflow-y-auto whitespace-pre-wrap rounded-md border border-[#e2e7ed] bg-[#fbfcfd] px-3 py-2 text-xs leading-5 text-[#52606d]"
+        ref={noteBoxRef}
+        title={displayNote}
+      >
+        {displayNote || "-"}
+      </p>
+      <form action={formAction} className="grid gap-2">
+      <input name="poId" type="hidden" value={poId} />
+      <input name="updateScope" type="hidden" value="quickComment" />
+      <input name="quotationReference" type="hidden" value={quotationReference} />
+      <input name="supplierInvoiceNo" type="hidden" value={supplierInvoiceNo} />
+      <input name="estimatedDeliveryDate" type="hidden" value={estimatedDeliveryDate} />
+      <input name="estimatedArrivedDate" type="hidden" value={estimatedArrivedDate} />
+      <input name="actualReceivedDate" type="hidden" value={actualReceivedDate} />
+      <div className="flex gap-2">
+        <input
+          className="h-9 min-w-0 flex-1 rounded-md border border-[#cfd6df] bg-white px-3 text-xs text-[#172026] outline-none focus:border-[#255f85]"
+          name="supplierDiscussionNote"
+          onChange={(event) => setDraftComment(event.target.value)}
+          placeholder="Quick comment"
+          value={draftComment}
+        />
+        <button
+          className="inline-flex h-9 items-center justify-center rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold text-[#364252] disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={pending}
+          type="submit"
+        >
+          <LoadingLabel loading={pending} loadingText="Saving...">
+            Save
+          </LoadingLabel>
+        </button>
+      </div>
+      <ActionMessage state={state} />
+      </form>
+    </div>
   );
 }
 
@@ -710,18 +947,57 @@ export function PoDraftLinesForm({
   const [lines, setLines] = useState(items);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [adjustPercent, setAdjustPercent] = useState("");
+  const [logisticCost, setLogisticCost] = useState("");
+  const [vatMode, setVatMode] = useState<"none" | "include" | "exclude">("none");
+  const [exchangeRates, setExchangeRates] = useState(["", "", ""]);
+  const [exchangeMode, setExchangeMode] = useState<"none" | "thai" | "foreign">("none");
   const initialQtyByLine = useMemo(
     () =>
       new Map(
         items.map((item) => [draftLineKey(item), item.qty]),
-      ),
+    ),
     [items],
   );
+  const [baseUnitPriceByLine, setBaseUnitPriceByLine] = useState<Record<string, number>>(
+    () =>
+      Object.fromEntries(
+        items.map((item) => [draftLineKey(item), item.unitPrice]),
+      ),
+  );
+  const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
+  const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
+  const exchangeRateAverage = averageExchangeRate(exchangeRates);
 
   function updateLine(index: number, patch: Partial<DraftLineItem>) {
     setLines((current) =>
+      applyLogisticCostToLines(
+        current.map((line, lineIndex) =>
+          lineIndex === index ? { ...line, ...patch } : line,
+        ),
+        logisticCost,
+      ),
+    );
+  }
+
+  function updateUnitPrice(index: number, value: number) {
+    const line = lines[index];
+    if (!line) {
+      return;
+    }
+    setVatMode("none");
+    setExchangeMode("none");
+    setBaseUnitPriceByLine((current) => ({
+      ...current,
+      [draftLineKey(line)]: value,
+    }));
+    updateLine(index, { unitPrice: value });
+  }
+
+  function updateFreightUnitCost(index: number, value: number) {
+    setLogisticCost("");
+    setLines((current) =>
       current.map((line, lineIndex) =>
-        lineIndex === index ? { ...line, ...patch } : line,
+        lineIndex === index ? { ...line, freightUnitCost: value } : line,
       ),
     );
   }
@@ -743,11 +1019,20 @@ export function PoDraftLinesForm({
     if (line?.itemUuid) {
       setDeletedIds((current) => Array.from(new Set([...current, line.itemUuid!])));
     }
-    setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
+    setLines((current) =>
+      applyLogisticCostToLines(
+        current.filter((_, lineIndex) => lineIndex !== index),
+        logisticCost,
+      ),
+    );
   }
 
   function initialQtyForLine(line: DraftLineItem) {
     return initialQtyByLine.get(draftLineKey(line)) ?? line.qty;
+  }
+
+  function baseUnitPriceForLine(line: DraftLineItem) {
+    return baseUnitPriceByLine[draftLineKey(line)] ?? line.unitPrice;
   }
 
   function adjustAllQty() {
@@ -757,32 +1042,88 @@ export function PoDraftLinesForm({
     }
     const factor = 1 + percent / 100;
     setLines((current) =>
-      current.map((line) => {
-        const baseQty = initialQtyForLine(line);
-        return {
-          ...line,
-          qty: roundQtyUpToTen(baseQty * factor),
-        };
-      }),
+      applyLogisticCostToLines(
+        current.map((line) => {
+          const baseQty = initialQtyForLine(line);
+          return {
+            ...line,
+            qty: roundQtyUpToTen(baseQty * factor),
+          };
+        }),
+        logisticCost,
+      ),
     );
   }
 
   function resetAdjustedQty() {
     setLines((current) =>
-      current.map((line) => ({
-        ...line,
-        qty: initialQtyForLine(line),
-      })),
+      applyLogisticCostToLines(
+        current.map((line) => ({
+          ...line,
+          qty: initialQtyForLine(line),
+        })),
+        logisticCost,
+      ),
     );
     setAdjustPercent("");
   }
 
   function applyVat(mode: "include" | "exclude") {
-    const factor = mode === "include" ? 1.07 : 1 / 1.07;
+    const factor = mode === "exclude" ? 1.07 : 1 / 1.07;
+    setVatMode(mode);
     setLines((current) =>
       current.map((line) => ({
         ...line,
-        unitPrice: Number((line.unitPrice * factor).toFixed(4)),
+        unitPrice: Number((baseUnitPriceForLine(line) * factor).toFixed(4)),
+      })),
+    );
+  }
+
+  function resetVat() {
+    setVatMode("none");
+    setLines((current) =>
+      current.map((line) => ({
+        ...line,
+        unitPrice: baseUnitPriceForLine(line),
+      })),
+    );
+  }
+
+  function updateLogisticCost(value: string) {
+    setLogisticCost(value);
+    setLines((current) => applyLogisticCostToLines(current, value));
+  }
+
+  function updateExchangeRate(index: number, value: string) {
+    setExchangeRates((current) =>
+      current.map((currentValue, currentIndex) =>
+        currentIndex === index ? value : currentValue,
+      ),
+    );
+  }
+
+  function applyExchangeAverage() {
+    const averageRate = averageExchangeRate(exchangeRates);
+    if (averageRate === null) {
+      return;
+    }
+
+    setExchangeMode(averageRate === 1 ? "thai" : "foreign");
+    setLines((current) =>
+      current.map((line) => ({
+        ...line,
+        unitPrice: Number((baseUnitPriceForLine(line) * averageRate).toFixed(4)),
+      })),
+    );
+  }
+
+  function applyThaiSupplierRate() {
+    setExchangeRates(["1", "0", "0"]);
+    setExchangeMode("thai");
+    setLines((current) =>
+      current.map((line) => ({
+        ...line,
+        unitPrice: baseUnitPriceForLine(line),
       })),
     );
   }
@@ -830,11 +1171,81 @@ export function PoDraftLinesForm({
           Reset Qty
         </button>
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={() => applyVat("include")} type="button">
-          Include VAT 7%
+          Include VAT / net
         </button>
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={() => applyVat("exclude")} type="button">
-          Exclude VAT 7%
+          Exclude VAT +7%
         </button>
+        <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={resetVat} type="button">
+          Reset VAT
+        </button>
+        <label className={labelClass}>
+          Logistic cost total
+          <input
+            className="h-10 w-40 rounded-md border border-[#cfd6df] bg-white px-3 text-right font-mono text-sm"
+            min="0"
+            onChange={(event) => updateLogisticCost(event.target.value)}
+            placeholder="manual total"
+            step="0.0001"
+            type="number"
+            value={logisticCost}
+          />
+        </label>
+        <div className="pb-1 text-xs font-medium text-[#667380]">
+          <p>Total qty {formatMoney(totalOrderedQty)}</p>
+          <p>
+            Freight/unit{" "}
+            {logisticUnitCost === null ? "-" : logisticUnitCost.toFixed(4)}
+          </p>
+        </div>
+        <div className="grid gap-2 rounded-md border border-[#dfe4ea] bg-[#fbfcfd] p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#65717f]">
+            Exchange rate average
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            {exchangeRates.map((value, index) => (
+              <label className={labelClass} key={`exchange-${index + 1}`}>
+                Rate {index + 1}
+                <input
+                  className="h-10 w-28 rounded-md border border-[#cfd6df] bg-white px-3 text-right font-mono text-sm"
+                  min="0"
+                  onChange={(event) => updateExchangeRate(index, event.target.value)}
+                  placeholder={index === 0 ? "35.5" : "0"}
+                  step="0.000001"
+                  type="number"
+                  value={value}
+                />
+              </label>
+            ))}
+            <button
+              className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold"
+              onClick={applyExchangeAverage}
+              type="button"
+            >
+              Apply avg FX
+            </button>
+            <button
+              className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold"
+              onClick={applyThaiSupplierRate}
+              type="button"
+            >
+              Sup Thai
+            </button>
+          </div>
+          <p className="text-xs text-[#667380]">
+            Avg {exchangeRateAverage === null ? "-" : exchangeRateAverage.toFixed(6)}; 0 or blank is ignored.
+          </p>
+        </div>
+        {vatMode !== "none" ? (
+          <span className="mb-1 rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
+            VAT mode: {vatMode === "exclude" ? "+7%" : "net /1.07"}
+          </span>
+        ) : null}
+        {exchangeMode !== "none" ? (
+          <span className="mb-1 rounded-md bg-[#eaf6ef] px-2 py-1 text-xs font-semibold text-[#1f6b3d]">
+            FX mode: {exchangeMode === "thai" ? "Thai supplier" : "average applied"}
+          </span>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[1480px] text-left text-sm">
@@ -855,7 +1266,9 @@ export function PoDraftLinesForm({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#edf1f5]">
-            {lines.map((item, index) => (
+            {lines.map((item, index) => {
+              const lineAmountCurrency = exchangeMode !== "none" ? "THB" : item.currency;
+              return (
               <tr
                 draggable
                 key={item.itemUuid ?? `${poId}-${item.lineNo}`}
@@ -887,6 +1300,7 @@ export function PoDraftLinesForm({
                 </td>
                 <td className="min-w-[170px] px-4 py-3">
                   <input name="itemUuid" type="hidden" value={item.itemUuid ?? ""} />
+                  <input name="currency" type="hidden" value={lineAmountCurrency} />
                   <input
                     className={inputClass}
                     name="sku"
@@ -919,7 +1333,7 @@ export function PoDraftLinesForm({
                     className={`${inputClass} text-right font-mono`}
                     min="0"
                     name="unitPrice"
-                    onChange={(event) => updateLine(index, { unitPrice: Number(event.target.value) || 0 })}
+                    onChange={(event) => updateUnitPrice(index, Number(event.target.value) || 0)}
                     step="0.0001"
                     type="number"
                     value={item.unitPrice}
@@ -930,7 +1344,7 @@ export function PoDraftLinesForm({
                     className={`${inputClass} text-right font-mono`}
                     min="0"
                     name="freightUnitCost"
-                    onChange={(event) => updateLine(index, { freightUnitCost: Number(event.target.value) || 0 })}
+                    onChange={(event) => updateFreightUnitCost(index, Number(event.target.value) || 0)}
                     step="0.0001"
                     type="number"
                     value={item.freightUnitCost ?? 0}
@@ -940,7 +1354,7 @@ export function PoDraftLinesForm({
                   {(item.unitPrice + (item.freightUnitCost ?? 0)).toFixed(2)}
                 </td>
                 <td className="px-4 py-3 text-right font-mono">
-                  {formatMoney(item.qty * item.unitPrice)} {item.currency}
+                  {formatMoney(item.qty * item.unitPrice)} {lineAmountCurrency}
                 </td>
                 <td className="min-w-[220px] px-4 py-3">
                   <input
@@ -960,7 +1374,8 @@ export function PoDraftLinesForm({
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1194,9 +1609,13 @@ export function PaymentScheduleForm({
         sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
       0,
     );
-  const plannedTotal = payments
+  const plannedTotalThb = payments
     .filter((payment) => (payment.payment_status ?? "paid") === "planned")
-    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+    .reduce(
+      (sum, payment) =>
+        sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
+      0,
+    );
   const balance = Math.max(0, poAmount - paidTotal);
   const nextDue = sortedPayments.find(
     (payment) => (payment.payment_status ?? "paid") === "planned" && payment.due_date,
@@ -1209,7 +1628,7 @@ export function PaymentScheduleForm({
         {[
           ["Paid", paidTotal],
           ["Paid THB", paidTotalThb],
-          ["Planned", plannedTotal],
+          ["Planned THB", plannedTotalThb],
           ["Balance", balance],
           ["Next due", nextDue?.due_date ?? "-"],
         ].map(([label, value]) => (
@@ -1217,7 +1636,7 @@ export function PaymentScheduleForm({
             <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">{label}</p>
             <p className="mt-1 font-mono text-lg font-semibold">
               {typeof value === "number"
-                ? `${formatMoney(value)} ${label === "Paid THB" ? "THB" : currency}`
+                ? `${formatMoney(value)} ${label === "Paid THB" || label === "Planned THB" ? "THB" : currency}`
                 : value}
             </p>
           </div>
@@ -1319,12 +1738,20 @@ export function StatusActionForm({
   poId,
   itemUuid,
   currentStatus,
+  allowClosed = true,
 }: {
   poId: string;
   itemUuid?: string;
   currentStatus: string;
+  allowClosed?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(changePoStatusAction, initialState);
+  const availableStatuses = statusOptions.filter(
+    (status) =>
+      status !== "closed" ||
+      allowClosed ||
+      currentStatus.toLowerCase() === "closed",
+  );
 
   return (
     <form action={formAction} className="grid gap-2">
@@ -1332,9 +1759,9 @@ export function StatusActionForm({
       {itemUuid ? <input name="itemUuid" type="hidden" value={itemUuid} /> : null}
       <div className="flex min-w-[220px] gap-2">
         <select className={inputClass} defaultValue={currentStatus.toLowerCase()} name="toStatus">
-          {statusOptions.map((status) => (
+          {availableStatuses.map((status) => (
             <option key={status} value={status}>
-              {status}
+              {statusOptionLabel(status)}
             </option>
           ))}
         </select>

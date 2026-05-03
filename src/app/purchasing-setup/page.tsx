@@ -18,7 +18,11 @@ import {
   saveSupplierSetupAction,
 } from "@/app/purchasing-setup/actions";
 import { PendingSubmitButton } from "@/app/loading-controls";
-import { getPurchasingSetupData, type SupplierSetup } from "@/lib/purchasing-setup";
+import {
+  getPurchasingSetupData,
+  type PurchasingTag,
+  type SupplierSetup,
+} from "@/lib/purchasing-setup";
 
 export const dynamic = "force-dynamic";
 
@@ -48,13 +52,26 @@ function supplierStatusClass(isActive: boolean) {
     : "bg-[#eef0f3] text-[#5c6670]";
 }
 
+function productScopeSet(supplier?: SupplierSetup) {
+  return new Set(
+    (supplier?.productScope ?? "")
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
 function SupplierFields({
   mode,
   supplier,
+  tagOptions,
 }: {
   mode: "create" | "edit";
   supplier?: SupplierSetup;
+  tagOptions: PurchasingTag[];
 }) {
+  const selectedScope = productScopeSet(supplier);
+
   return (
     <>
       <div className="grid gap-3 lg:grid-cols-[0.8fr_1.6fr_0.6fr_0.7fr_0.7fr]">
@@ -142,6 +159,39 @@ function SupplierFields({
             type="email"
           />
         </label>
+      </div>
+
+      <div className="grid gap-2 rounded-lg border border-[#e2e7ed] bg-[#fbfcfd] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+            Add Scope Tags
+          </p>
+          <span className="text-xs font-medium text-[#667380]">
+            From Tag Catalog, merged with Product Scope
+          </span>
+        </div>
+        <div className="grid max-h-48 gap-2 overflow-auto sm:grid-cols-2 lg:grid-cols-4">
+          {tagOptions.map((tag) => {
+            const checked =
+              selectedScope.has(tag.tag.toLowerCase()) ||
+              selectedScope.has(tag.label.toLowerCase());
+            return (
+              <label
+                className="flex min-h-9 items-center gap-2 rounded-md border border-[#dfe4ea] bg-white px-2 py-1 text-sm font-medium text-[#364252]"
+                key={tag.tag}
+                title={tag.description || tag.label}
+              >
+                <input
+                  defaultChecked={checked}
+                  name="supplierTag"
+                  type="checkbox"
+                  value={tag.tag}
+                />
+                <span className="truncate">{tag.label || tag.tag}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_0.5fr]">
@@ -284,7 +334,7 @@ export default async function PurchasingSetupPage() {
             </p>
           </div>
           <form action={saveSupplierSetupAction} className="grid gap-4 p-5">
-            <SupplierFields mode="create" />
+            <SupplierFields mode="create" tagOptions={activeTags} />
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf1f5] pt-4">
               <label className="flex items-center gap-2 text-sm font-semibold text-[#52606d]">
                 <input defaultChecked name="isActive" type="checkbox" />
@@ -358,7 +408,7 @@ export default async function PurchasingSetupPage() {
 
                   <div className="grid gap-4 border-t border-[#edf1f5] bg-[#fbfcfd] p-5">
                     <form action={saveSupplierSetupAction} className="grid gap-4 rounded-lg border border-[#e2e7ed] bg-white p-4">
-                      <SupplierFields mode="edit" supplier={supplier} />
+                      <SupplierFields mode="edit" supplier={supplier} tagOptions={activeTags} />
                       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#edf1f5] pt-4">
                         <label className="flex items-center gap-2 text-sm font-semibold text-[#52606d]">
                           <input defaultChecked={supplier.isActive} name="isActive" type="checkbox" />

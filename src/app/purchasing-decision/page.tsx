@@ -1,4 +1,4 @@
-import { ArrowLeft, EyeOff, Filter, Save, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Download, EyeOff, Filter, Printer, Save, SlidersHorizontal } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -9,11 +9,13 @@ import {
   AlertFilterSelect,
   DecisionCreatePoButton,
   DecisionSearchBox,
-  DemandFormulaHeaderButton,
+  DemandHmHeaderControls,
   DecisionPlanningCells,
   DecisionSaveButton,
   HideSelectionButtons,
+  OrderQtyModeHeaderButtons,
   SelectionButtons,
+  StockFilterSelect,
   TagDropdownSelect,
 } from "@/app/purchasing-decision/decision-form";
 import {
@@ -33,6 +35,14 @@ const alertOptions = ["order_now", "watch", "healthy", "hidden"].map((value) => 
   label: alertLabel(value),
   value,
 }));
+const stockOptions = [
+  { label: "Any overstock", value: "any_overstock" },
+  { label: "Heavy overstock", value: "heavy_overstock" },
+  { label: "Overstock", value: "overstock" },
+  { label: "Dead stock", value: "dead_stock" },
+  { label: "Healthy", value: "healthy" },
+  { label: "Under target", value: "under_target" },
+];
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -67,6 +77,16 @@ function alertLabel(status: string) {
 
 function normalizeSelectedAlerts(alert: string | string[] | undefined) {
   const values = Array.isArray(alert) ? alert : [alert ?? "all"];
+  const selected = values
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return selected.length ? selected : ["all"];
+}
+
+function normalizeSelectedStock(stock: string | string[] | undefined) {
+  const values = Array.isArray(stock) ? stock : [stock ?? "all"];
   const selected = values
     .flatMap((value) => String(value).split(","))
     .map((value) => value.trim())
@@ -120,6 +140,7 @@ function decisionReturnTo(params: {
   recentFloor?: string;
   sellingWeight?: string;
   status?: string;
+  stock?: string | string[];
   supplier?: string;
   tag?: string;
   visibility?: string;
@@ -132,11 +153,66 @@ function decisionReturnTo(params: {
   appendParam(nextParams, "recentFloor", params.recentFloor);
   appendParam(nextParams, "sellingWeight", params.sellingWeight);
   appendParam(nextParams, "status", params.status);
+  appendParam(nextParams, "stock", params.stock);
   appendParam(nextParams, "supplier", params.supplier);
   appendParam(nextParams, "tag", params.tag);
   appendParam(nextParams, "visibility", params.visibility);
   const query = nextParams.toString();
   return query ? `/purchasing-decision?${query}` : "/purchasing-decision";
+}
+
+function decisionExportHref(params: {
+  alert?: string | string[];
+  capSelling?: string;
+  lifetimeWeight?: string;
+  q?: string;
+  recentFloor?: string;
+  sellingWeight?: string;
+  status?: string;
+  stock?: string | string[];
+  supplier?: string;
+  tag?: string;
+  visibility?: string;
+}) {
+  const nextParams = new URLSearchParams();
+  appendParam(nextParams, "alert", params.alert);
+  appendParam(nextParams, "capSelling", params.capSelling);
+  appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
+  appendParam(nextParams, "q", params.q);
+  appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "sellingWeight", params.sellingWeight);
+  appendParam(nextParams, "status", params.status);
+  appendParam(nextParams, "stock", params.stock);
+  appendParam(nextParams, "supplier", params.supplier);
+  appendParam(nextParams, "tag", params.tag);
+  appendParam(nextParams, "visibility", params.visibility);
+  const query = nextParams.toString();
+  return query
+    ? `/api/purchasing-decision/export?${query}`
+    : "/api/purchasing-decision/export";
+}
+
+function decisionExportAllHref() {
+  return "/api/purchasing-decision/export?visibility=all";
+}
+
+function decisionOverstockReportHref(params: {
+  capSelling?: string;
+  lifetimeWeight?: string;
+  recentFloor?: string;
+  sellingWeight?: string;
+}) {
+  const nextParams = new URLSearchParams();
+  appendParam(nextParams, "capSelling", params.capSelling);
+  appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
+  appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "sellingWeight", params.sellingWeight);
+  nextParams.set("visibility", "all");
+  const query = nextParams.toString();
+
+  return query
+    ? `/purchasing-decision/overstock-report?${query}`
+    : "/purchasing-decision/overstock-report";
 }
 
 export default async function PurchasingDecisionPage({
@@ -149,8 +225,11 @@ export default async function PurchasingDecisionPage({
     q?: string;
     poError?: string;
     recentFloor?: string;
+    saved?: string;
+    savedRows?: string;
     sellingWeight?: string;
     status?: string;
+    stock?: string | string[];
     supplier?: string;
     tag?: string;
     visibility?: string;
@@ -161,10 +240,19 @@ export default async function PurchasingDecisionPage({
   const supplier = params.supplier ?? "all";
   const tag = params.tag ?? "all";
   const status = params.status ?? "all";
+  const stock = normalizeSelectedStock(params.stock);
   const alert = normalizeSelectedAlerts(params.alert);
   const visibility = params.visibility ?? "active";
   const poError = params.poError ?? "";
+  const savedRows = Number(params.savedRows ?? 0);
+  const savedMessage =
+    params.saved === "1"
+      ? `Saved ${formatNumber(Number.isFinite(savedRows) ? savedRows : 0)} visible rows.`
+      : "";
   const returnTo = decisionReturnTo(params);
+  const exportHref = decisionExportHref(params);
+  const exportAllHref = decisionExportAllHref();
+  const overstockReportHref = decisionOverstockReportHref(params);
   const data = await getPurchasingDecisionData({
     alert,
     capSelling: params.capSelling,
@@ -173,6 +261,7 @@ export default async function PurchasingDecisionPage({
     q,
     recentFloor: params.recentFloor,
     sellingWeight: params.sellingWeight,
+    stock,
     supplier,
     tag,
     visibility,
@@ -228,9 +317,19 @@ export default async function PurchasingDecisionPage({
             { label: "SKUs", value: formatNumber(data.totals.skuCount), detail: "in Shopify read model" },
             { label: "Active", value: formatNumber(data.totals.activeSkuCount), detail: "visible to dashboard / PO" },
             { label: "Hidden", value: formatNumber(data.totals.hiddenSkuCount), detail: "event or markdown list" },
-            { label: "On-hand", value: formatNumber(data.totals.onHandUnits), detail: "Shopify read-only" },
+            {
+              label: "On-hand",
+              value: formatNumber(data.totals.onHandUnits),
+              detail: "active visible, Shopify read-only",
+              subDetail: `Overall incl. hidden: ${formatNumber(data.totals.overallOnHandUnits)}`,
+            },
             { label: "Coming", value: formatNumber(data.totals.comingUnits), detail: "open PO workflow" },
-            { label: "Stock value", value: `THB ${formatMoney(data.totals.inventoryValue)}`, detail: "Shopify price estimate" },
+            {
+              label: "Stock value",
+              value: `THB ${formatMoney(data.totals.inventoryValue)}`,
+              detail: "active visible price estimate",
+              subDetail: `Overall incl. hidden: THB ${formatMoney(data.totals.overallInventoryValue)}`,
+            },
           ].map((metric) => (
             <article
               className="rounded-lg border border-[#dfe4ea] bg-white p-4 shadow-sm"
@@ -241,6 +340,11 @@ export default async function PurchasingDecisionPage({
                 {metric.value}
               </p>
               <p className="mt-2 text-sm text-[#667380]">{metric.detail}</p>
+              {"subDetail" in metric ? (
+                <p className="mt-1 text-xs font-semibold text-[#42505c]">
+                  {metric.subDetail}
+                </p>
+              ) : null}
             </article>
           ))}
         </section>
@@ -257,7 +361,7 @@ export default async function PurchasingDecisionPage({
                   then save all visible rows in one submit.
                 </p>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_260px_180px_180px_160px_160px_auto]">
+              <form className="grid gap-3 md:grid-cols-[1fr_240px_170px_170px_150px_150px_170px_auto]">
                 <input name="lifetimeWeight" type="hidden" value={data.demandFormula.lifetimeWeight} />
                 <input name="sellingWeight" type="hidden" value={data.demandFormula.sellingDayWeight} />
                 <input name="recentFloor" type="hidden" value={data.demandFormula.recentFloorPercent} />
@@ -288,9 +392,9 @@ export default async function PurchasingDecisionPage({
                   </span>
                   <select className={inputClass} defaultValue={tag} name="tag">
                     <option value="all">All tags</option>
-                    {data.tagOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                    {data.tagFilterOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>
@@ -323,6 +427,7 @@ export default async function PurchasingDecisionPage({
                   </select>
                 </label>
                 <AlertFilterSelect options={alertOptions} selectedAlerts={alert} />
+                <StockFilterSelect options={stockOptions} selectedStock={stock} />
                 <PendingSubmitButton
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-4 text-sm font-semibold text-[#364252]"
                   loadingText="Filtering..."
@@ -350,6 +455,11 @@ export default async function PurchasingDecisionPage({
               {poError}
             </div>
           ) : null}
+          {savedMessage ? (
+            <div className="border-b border-[#b8e0c5] bg-[#eefaf1] px-4 py-3 text-sm font-semibold text-[#1f6b3d]">
+              {savedMessage}
+            </div>
+          ) : null}
           <form action={savePurchasingDecisionAction}>
             <input name="returnTo" type="hidden" value={returnTo} />
             <div className="flex flex-col gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
@@ -359,6 +469,30 @@ export default async function PurchasingDecisionPage({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <SelectionButtons />
+                <a
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-white px-3 text-sm font-semibold text-[#364252]"
+                  download
+                  href={exportHref}
+                >
+                  <Download size={16} />
+                  Export
+                </a>
+                <a
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-white px-3 text-sm font-semibold text-[#364252]"
+                  download
+                  href={exportAllHref}
+                >
+                  <Download size={16} />
+                  Export all SKU
+                </a>
+                <Link
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-white px-3 text-sm font-semibold text-[#364252]"
+                  href={overstockReportHref}
+                  target="_blank"
+                >
+                  <Printer size={16} />
+                  Print report
+                </Link>
                 <span className="inline-flex items-center gap-2 rounded-md bg-[#eef4f8] px-3 py-2 text-xs font-semibold text-[#255f85]">
                   <Save size={14} />
                   One save for visible rows
@@ -369,7 +503,7 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="max-h-[calc(100vh-260px)] max-w-full overflow-auto">
-              <table className="min-w-[2630px] text-left text-sm">
+              <table className="min-w-[2920px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className={`${stickyHeaderBase} left-0 z-50 w-[52px] min-w-[52px]`}>Pick</th>
@@ -386,7 +520,7 @@ export default async function PurchasingDecisionPage({
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Total sale</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Demand 30D</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>
-                      <DemandFormulaHeaderButton
+                      <DemandHmHeaderControls
                         capAtSellingDayAverage={data.demandFormula.capAtSellingDayAverage}
                         lifetimeWeight={data.demandFormula.lifetimeWeight}
                         recentFloorPercent={data.demandFormula.recentFloorPercent}
@@ -400,11 +534,16 @@ export default async function PurchasingDecisionPage({
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Target Qty</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Order Qty</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Round 10</th>
-                    <th className={`${stickyHeaderBase} z-40`}>Use</th>
+                    <th className={`${stickyHeaderBase} z-40`}>
+                      <OrderQtyModeHeaderButtons />
+                    </th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Cover</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Week</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Month</th>
                     <th className={`${stickyHeaderBase} z-40`}>Alert</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Stock Alert</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Over Qty</th>
+                    <th className={`${stickyHeaderBase} z-40 text-right`}>Over Days</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>At order</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Coming</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Value</th>
@@ -414,6 +553,9 @@ export default async function PurchasingDecisionPage({
                 <tbody className="divide-y divide-[#edf1f5]">
                   {data.lines.map((line) => {
                     const rowBackground = line.hidden ? "bg-[#fbfcfd]" : "bg-white";
+                    const supplierSelectOptions = Array.from(
+                      new Set([line.supplier, ...data.supplierOptions].filter(Boolean)),
+                    );
 
                     return (
                       <tr className={rowBackground} key={line.sku}>
@@ -546,12 +688,14 @@ export default async function PurchasingDecisionPage({
                           name="supplier"
                         >
                           <option value="">Select supplier</option>
-                          {data.supplierOptions.map((option) => (
+                          {supplierSelectOptions.map((option) => (
                             <option key={option} value={option}>
                               {option}
                             </option>
                           ))}
                         </select>
+                        <input name="supplierSource" type="hidden" value={line.supplierSource} />
+                        <input name="originalSupplier" type="hidden" value={line.supplier} />
                       </td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.onHandUnits)}</td>
                       <td className={readOnlyMetricClass}>{formatNumber(line.totalSale)}</td>
@@ -570,6 +714,7 @@ export default async function PurchasingDecisionPage({
                         lastSaleDate={line.lastSaleDate}
                         orderCycleDays={line.orderCycleDays}
                         orderQtyMode={line.orderQtyMode}
+                        manualRopUnits={line.manualRopUnits}
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
                         safetySource={line.safetySource}

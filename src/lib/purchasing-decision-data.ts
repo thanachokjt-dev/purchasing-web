@@ -144,6 +144,10 @@ export type PurchasingDecisionLine = {
   week: number;
   month: number;
   ropAlert: "order_now" | "watch" | "healthy" | "hidden";
+  stockAlert: "dead_stock" | "heavy_overstock" | "overstock" | "healthy" | "under_target" | "hidden";
+  stockPositionUnits: number;
+  overstockUnits: number;
+  overstockDays: number | null;
   totalCoverageAtOrder: number | null;
   targetCoverageDays: number | null;
   coming: number;
@@ -174,6 +178,10 @@ export type PurchasingDecisionData = {
     lineCount: number;
   }>;
   supplierOptions: string[];
+  tagFilterOptions: Array<{
+    label: string;
+    value: string;
+  }>;
   tagOptions: string[];
   lines: PurchasingDecisionLine[];
   totals: {
@@ -181,8 +189,10 @@ export type PurchasingDecisionData = {
     activeSkuCount: number;
     hiddenSkuCount: number;
     onHandUnits: number;
+    overallOnHandUnits: number;
     comingUnits: number;
     inventoryValue: number;
+    overallInventoryValue: number;
   };
 };
 
@@ -191,6 +201,9 @@ const DEFAULT_SAFETY_DAYS = 14;
 const DEFAULT_LEAD_TIME_DAYS = 60;
 const DEFAULT_ORDER_CYCLE_DAYS = 30;
 const excelSupplierBySku = new Map(excelSupplierMap.map((row) => [row.sku, row]));
+const SUPPLIER_ALIASES: Record<string, string> = {
+  "twins phuket": "SSTWINPHUKET001",
+};
 
 function numeric(value: number | string | null | undefined) {
   if (typeof value === "number") {
@@ -410,34 +423,47 @@ async function fetchLatestInventoryRows(supabase: SupabaseClient) {
 }
 
 async function fetchControls(supabase: SupabaseClient) {
-  const query = await supabase
-    .from("purchasing_decision_controls")
-    .select(
-      "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note",
-    );
-  let data: unknown[] | null = query.data;
-  let error = query.error;
+  let data: DecisionControlRow[];
 
-  if (error) {
-    const fallback = await supabase
-      .from("purchasing_decision_controls")
-      .select(
-        "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+  try {
+    data = await fetchAll<DecisionControlRow>("Purchasing controls", (from, to) =>
+      supabase
+        .from("purchasing_decision_controls")
+        .select(
+          "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note",
+        )
+        .order("sku", { ascending: true })
+        .range(from, to),
+    );
+  } catch {
+    try {
+      data = await fetchAll<DecisionControlRow>("Purchasing controls", (from, to) =>
+        supabase
+          .from("purchasing_decision_controls")
+          .select(
+            "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+          )
+          .order("sku", { ascending: true })
+          .range(from, to),
       );
-    data = fallback.data;
-    error = fallback.error;
+    } catch {
+      return {
+        controls: new Map<string, DecisionControlRow>(),
+        controlsReady: false,
+      };
+    }
   }
 
-  if (error) {
+  if (!data.length) {
     return {
       controls: new Map<string, DecisionControlRow>(),
-      controlsReady: false,
+      controlsReady: true,
     };
   }
 
   return {
     controls: new Map(
-      ((data ?? []) as DecisionControlRow[])
+      data
         .filter((row) => row.sku?.trim())
         .map((row) => [row.sku!.trim(), row]),
     ),
@@ -640,38 +666,84 @@ function supplierForLine(
   control: DecisionControlRow | undefined,
   manualSupplierBySku: Map<string, string>,
   setupSupplierNames: Set<string>,
+  setupSupplierAliases: Map<string, string>,
 ) {
-  const override = compactText(control?.supplier_override);
-  if (override) {
-    return { supplier: override, source: "decision" as const };
+  function setupSupplierName(value: string) {
+    return setupSupplierAliases.get(value.toLowerCase()) ?? value;
   }
 
   const manual = manualSupplierBySku.get(sku);
+  let fallback: { supplier: string; source: PurchasingDecisionLine["supplierSource"] };
   if (manual) {
-    return {
-      supplier: manual,
-      source: setupSupplierNames.has(manual.toLowerCase())
+    const supplier = setupSupplierName(manual);
+    fallback = {
+      supplier,
+      source: setupSupplierNames.has(supplier.toLowerCase())
         ? ("setup" as const)
         : ("manual" as const),
     };
+  } else {
+    const excel = excelSupplierBySku.get(sku);
+    const vendor = compactText(firstProduct(row)?.vendor);
+    if (excel?.supplierName) {
+      const supplier = setupSupplierName(excel.supplierName);
+      fallback = {
+        supplier,
+        source: setupSupplierNames.has(supplier.toLowerCase())
+          ? ("setup" as const)
+          : ("excel" as const),
+      };
+    } else if (vendor) {
+      const supplier = setupSupplierName(vendor);
+      fallback = {
+        supplier,
+        source: setupSupplierNames.has(supplier.toLowerCase())
+          ? ("setup" as const)
+          : ("shopify_vendor" as const),
+      };
+    } else {
+      fallback = { supplier: "Unmapped", source: "pending" as const };
+    }
   }
 
-  const excel = excelSupplierBySku.get(sku);
-  if (excel?.supplierName) {
-    return { supplier: excel.supplierName, source: "excel" as const };
+  const override = compactText(control?.supplier_override);
+  if (override && override.toLowerCase() !== fallback.supplier.toLowerCase()) {
+    return { supplier: override, source: "decision" as const };
   }
 
-  const vendor = compactText(firstProduct(row)?.vendor);
-  if (vendor) {
-    return {
-      supplier: vendor,
-      source: setupSupplierNames.has(vendor.toLowerCase())
-        ? ("setup" as const)
-        : ("shopify_vendor" as const),
-    };
+  return fallback;
+}
+
+function buildSupplierAliases(activeSupplierNames: string[]) {
+  const aliases = new Map<string, string>();
+
+  for (const supplier of activeSupplierNames) {
+    aliases.set(supplier.toLowerCase(), supplier);
   }
 
-  return { supplier: "Unmapped", source: "pending" as const };
+  for (const [alias, supplier] of Object.entries(SUPPLIER_ALIASES)) {
+    if (activeSupplierNames.some((name) => name.toLowerCase() === supplier.toLowerCase())) {
+      aliases.set(alias, supplier);
+    }
+  }
+
+  for (const row of excelSupplierMap) {
+    const excelName = row.supplierName.trim();
+    if (!excelName) {
+      continue;
+    }
+
+    const excelKey = excelName.toLowerCase();
+    const setupName = activeSupplierNames.find((supplier) => {
+      const setupKey = supplier.toLowerCase();
+      return setupKey.includes(excelKey) || excelKey.includes(setupKey);
+    });
+    if (setupName) {
+      aliases.set(excelKey, setupName);
+    }
+  }
+
+  return aliases;
 }
 
 function ropStatus(hidden: boolean, onHand: number, coming: number, reorderPointUnits: number) {
@@ -687,6 +759,46 @@ function ropStatus(hidden: boolean, onHand: number, coming: number, reorderPoint
   return "healthy" as const;
 }
 
+function stockStatus({
+  demandIndex,
+  hidden,
+  overstockDays,
+  overstockUnits,
+  stockPosition,
+  targetQty,
+}: {
+  demandIndex: number;
+  hidden: boolean;
+  overstockDays: number | null;
+  overstockUnits: number;
+  stockPosition: number;
+  targetQty: number;
+}) {
+  if (hidden) {
+    return "hidden" as const;
+  }
+  if (demandIndex <= 0 && stockPosition > 0) {
+    return "dead_stock" as const;
+  }
+  if (stockPosition <= targetQty) {
+    return "under_target" as const;
+  }
+  if (
+    (overstockDays !== null && overstockDays >= 90) ||
+    (targetQty > 0 && overstockUnits >= targetQty)
+  ) {
+    return "heavy_overstock" as const;
+  }
+  if (
+    (overstockDays !== null && overstockDays >= 30) ||
+    overstockUnits >= Math.max(10, targetQty * 0.25)
+  ) {
+    return "overstock" as const;
+  }
+
+  return "healthy" as const;
+}
+
 function matchesSelectedSupplier(
   line: PurchasingDecisionLine,
   selectedSupplier: string,
@@ -694,7 +806,9 @@ function matchesSelectedSupplier(
   return (
     selectedSupplier === "all" ||
     (selectedSupplier === "__unset" && !line.supplierSetInSheet) ||
-    (selectedSupplier === "__unmapped" && line.supplierSource === "pending") ||
+    (selectedSupplier === "__unmapped" &&
+      !line.supplierSetInSheet &&
+      line.supplierSource !== "setup") ||
     line.supplier.toLowerCase() === selectedSupplier
   );
 }
@@ -737,6 +851,24 @@ function selectedAlertsFromParam(alert: string | string[]) {
   return selectedAlerts.length ? new Set(selectedAlerts) : null;
 }
 
+function selectedStocksFromParam(stock: string | string[]) {
+  const allowedStocks = new Set([
+    "any_overstock",
+    "dead_stock",
+    "heavy_overstock",
+    "overstock",
+    "healthy",
+    "under_target",
+    "hidden",
+  ]);
+  const selectedStocks = (Array.isArray(stock) ? stock : [stock])
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => allowedStocks.has(value));
+
+  return selectedStocks.length ? new Set(selectedStocks) : null;
+}
+
 export async function getPurchasingDecisionData({
   limit = 120,
   q = "",
@@ -748,6 +880,7 @@ export async function getPurchasingDecisionData({
   lifetimeWeight = DEFAULT_DEMAND_FORMULA.lifetimeWeight,
   recentFloor = DEFAULT_DEMAND_FORMULA.recentFloorPercent,
   sellingWeight = DEFAULT_DEMAND_FORMULA.sellingDayWeight,
+  stock = "all",
   visibility = "active",
 }: {
   limit?: number | null;
@@ -760,6 +893,7 @@ export async function getPurchasingDecisionData({
   lifetimeWeight?: number | string | null;
   recentFloor?: number | string | null;
   sellingWeight?: number | string | null;
+  stock?: string | string[];
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
@@ -779,6 +913,7 @@ export async function getPurchasingDecisionData({
       searchOptions: [],
       supplierFilterOptions: [],
       supplierOptions: [],
+      tagFilterOptions: [],
       tagOptions: [],
       lines: [],
       totals: {
@@ -786,8 +921,10 @@ export async function getPurchasingDecisionData({
         activeSkuCount: 0,
         hiddenSkuCount: 0,
         onHandUnits: 0,
+        overallOnHandUnits: 0,
         comingUnits: 0,
         inventoryValue: 0,
+        overallInventoryValue: 0,
       },
     };
   }
@@ -836,11 +973,14 @@ export async function getPurchasingDecisionData({
   const selectedTag = tag.trim().toLowerCase();
   const selectedItemStatus = itemStatus.trim().toLowerCase();
   const selectedAlerts = selectedAlertsFromParam(alert);
+  const selectedStocks = selectedStocksFromParam(stock);
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
+  const activeSupplierNamesList = activeSuppliers.map((item) => item.supplierName);
   const activeSupplierNames = new Set(
-    activeSuppliers.map((item) => item.supplierName.toLowerCase()),
+    activeSupplierNamesList.map((item) => item.toLowerCase()),
   );
+  const setupSupplierAliases = buildSupplierAliases(activeSupplierNamesList);
   const supplierDefaultByName = new Map(
     activeSuppliers.map((item) => [item.supplierName.toLowerCase(), item]),
   );
@@ -863,6 +1003,7 @@ export async function getPurchasingDecisionData({
       control,
       manualSupplierBySku,
       activeSupplierNames,
+      setupSupplierAliases,
     );
     const supplierDefault = supplierDefaultByName.get(lineSupplier.supplier.toLowerCase());
     const shopifyProductName = productName(row);
@@ -938,6 +1079,12 @@ export async function getPurchasingDecisionData({
     const orderQtyRaw = Math.max(0, targetQty - onHandUnits - incoming.active);
     const orderQtyRounded = roundUpToTen(orderQtyRaw);
     const ropUnits = orderQtyRounded;
+    const stockPositionUnits = onHandUnits + incoming.active;
+    const overstockUnits = Math.max(0, stockPositionUnits - targetQty);
+    const stockCoverageDays =
+      demandIndexHm > 0 ? stockPositionUnits / demandIndexHm : null;
+    const overstockDays =
+      stockCoverageDays === null ? null : Math.max(0, stockCoverageDays - planningDays);
     const coversSalesDuration =
       demandIndexHm > 0 ? onHandUnits / demandIndexHm : null;
     const totalCoverageAtOrder =
@@ -955,7 +1102,7 @@ export async function getPurchasingDecisionData({
         shopifyItemStatus,
         tags,
         supplier: lineSupplier.supplier,
-        supplierSetInSheet: Boolean(compactText(control?.supplier_override)),
+        supplierSetInSheet: lineSupplier.source === "decision",
         supplierSource: lineSupplier.source,
         onHandUnits,
         totalSale: sales.total,
@@ -986,6 +1133,17 @@ export async function getPurchasingDecisionData({
         week: coversSalesDuration === null ? 0 : coversSalesDuration / 7,
         month: coversSalesDuration === null ? 0 : coversSalesDuration / 30,
         ropAlert: ropStatus(hidden, onHandUnits, incoming.active, reorderPointUnits),
+        stockAlert: stockStatus({
+          demandIndex: demandIndexHm,
+          hidden,
+          overstockDays,
+          overstockUnits,
+          stockPosition: stockPositionUnits,
+          targetQty,
+        }),
+        stockPositionUnits,
+        overstockUnits,
+        overstockDays,
         totalCoverageAtOrder,
         targetCoverageDays,
         coming: incoming.active,
@@ -1031,27 +1189,43 @@ export async function getPurchasingDecisionData({
         a.supplier.localeCompare(b.supplier),
     );
 
-  const tagOptionsForSelection = (
+  const supplierScopedLines = (
     selectedSupplier === "all"
       ? allLines
       : allLines.filter((line) => matchesSelectedSupplier(line, selectedSupplier))
-  )
+  );
+  const tagOptionsForFilter = supplierScopedLines
     .flatMap((line) => line.tags)
     .filter((tag) => activeTagSet.has(tag.toLowerCase()));
-  const tagOptions = Array.from(new Set(tagOptionsForSelection)).sort((a, b) =>
-    a.localeCompare(b),
-  );
+  const hasUntaggedLines = supplierScopedLines.some((line) => line.tags.length === 0);
+  const tagFilterOptions = [
+    ...(hasUntaggedLines ? [{ label: "No tag selected", value: "__untagged" }] : []),
+    ...Array.from(new Set(tagOptionsForFilter))
+      .sort((a, b) => a.localeCompare(b))
+      .map((tag) => ({ label: tag, value: tag })),
+  ];
+  const tagOptions = Array.from(
+    new Set([...activeTagOptions, ...tagOptionsForFilter]),
+  ).sort((a, b) => a.localeCompare(b));
 
   function matchesFiltersExceptQuery(line: PurchasingDecisionLine) {
     const matchesSupplier = matchesSelectedSupplier(line, selectedSupplier);
     const matchesTag =
       selectedTag === "all" ||
+      (selectedTag === "__untagged" && line.tags.length === 0) ||
       line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
     const matchesItemStatus =
       selectedItemStatus === "all" ||
       line.itemStatus.toLowerCase() === selectedItemStatus;
     const matchesAlert =
       !selectedAlerts || selectedAlerts.has(line.ropAlert);
+    const matchesStock =
+      !selectedStocks ||
+      selectedStocks.has(line.stockAlert) ||
+      (selectedStocks.has("any_overstock") &&
+        (line.stockAlert === "overstock" ||
+          line.stockAlert === "heavy_overstock" ||
+          line.stockAlert === "dead_stock"));
     const matchesVisibility =
       selectedVisibility === "all" ||
       (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
@@ -1061,6 +1235,7 @@ export async function getPurchasingDecisionData({
       matchesTag &&
       matchesItemStatus &&
       matchesAlert &&
+      matchesStock &&
       matchesVisibility
     );
   }
@@ -1113,7 +1288,21 @@ export async function getPurchasingDecisionData({
     })
     .sort((a, b) => {
       const statusRank = { order_now: 0, watch: 1, healthy: 2, hidden: 3 };
+      const stockRank = {
+        dead_stock: 0,
+        heavy_overstock: 1,
+        overstock: 2,
+        healthy: 3,
+        under_target: 4,
+        hidden: 5,
+      };
+      const stockSort =
+        !selectedStocks
+          ? 0
+          : stockRank[a.stockAlert] - stockRank[b.stockAlert] ||
+            b.overstockUnits - a.overstockUnits;
       return (
+        stockSort ||
         a.mainName.localeCompare(b.mainName) ||
         productGroupName(a).localeCompare(productGroupName(b)) ||
         sizeRank(a) - sizeRank(b) ||
@@ -1138,6 +1327,7 @@ export async function getPurchasingDecisionData({
     searchOptions,
     supplierFilterOptions,
     supplierOptions,
+    tagFilterOptions,
     tagOptions,
     lines: visibleLines,
     totals: {
@@ -1145,8 +1335,10 @@ export async function getPurchasingDecisionData({
       activeSkuCount: activeLines.length,
       hiddenSkuCount: allLines.length - activeLines.length,
       onHandUnits: activeLines.reduce((sum, line) => sum + line.onHandUnits, 0),
+      overallOnHandUnits: allLines.reduce((sum, line) => sum + line.onHandUnits, 0),
       comingUnits: activeLines.reduce((sum, line) => sum + line.coming, 0),
       inventoryValue: activeLines.reduce((sum, line) => sum + line.inventoryValue, 0),
+      overallInventoryValue: allLines.reduce((sum, line) => sum + line.inventoryValue, 0),
     },
   };
 }

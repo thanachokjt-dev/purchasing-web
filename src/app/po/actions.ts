@@ -8,13 +8,20 @@ export type PoActionState = {
   ok: boolean;
   message: string;
   poId?: string;
+  supplierDiscussionNote?: string;
 };
 
 const ACTIVE_RECEIVING_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
-const BLOCKED_RECEIVING_STATUSES = new Set(["closed", "cancelled", "canceled"]);
+const BLOCKED_RECEIVING_STATUSES = new Set([
+  "closed",
+  "cancelled",
+  "canceled",
+  "fully_received",
+]);
 const VALID_STATUSES = new Set([
   "draft",
   "waiting_for_approve",
+  "follow_up",
   "inpro",
   "delivery",
   "final_payment",
@@ -24,6 +31,11 @@ const VALID_STATUSES = new Set([
 
 const initialError = (message: string): PoActionState => ({ ok: false, message });
 const success = (message: string): PoActionState => ({ ok: true, message });
+
+function numericValue(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 function requiredText(formData: FormData, name: string) {
   const value = String(formData.get(name) ?? "").trim();
@@ -38,12 +50,34 @@ function optionalText(formData: FormData, name: string) {
   return value || null;
 }
 
+function optionalDateText(formData: FormData, name: string) {
+  const value = optionalText(formData, name);
+  if (!value) {
+    return null;
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${name} must be a date`);
+  }
+
+  return value;
+}
+
 function positiveNumber(formData: FormData, name: string) {
   const value = Number(formData.get(name));
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be greater than 0`);
   }
   return value;
+}
+
+function receiveQuantity(value: FormDataEntryValue | null, label: string) {
+  const raw = String(value ?? "").trim();
+  const parsed = Number(raw);
+  if (!raw || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be greater than 0`);
+  }
+  return parsed;
 }
 
 function nonNegativeNumber(formData: FormData, name: string) {
@@ -85,7 +119,47 @@ function nonNegativeTextNumber(value: string, label: string) {
 }
 
 function normalizeStatus(value: string) {
-  return value.trim().toLowerCase();
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function orderIsClosedOrCancelled(order: {
+  work_status?: string | null;
+  closed_at?: string | null;
+  cancelled_at?: string | null;
+}) {
+  const status = normalizeStatus(order.work_status ?? "");
+  return Boolean(
+    order.closed_at ||
+      order.cancelled_at ||
+      status === "closed" ||
+      status === "cancelled" ||
+      status === "canceled",
+  );
+}
+
+function assertReceivableLineStatus(statusValue: string | null | undefined, lineLabel: string) {
+  const status = normalizeStatus(statusValue ?? "");
+  if (BLOCKED_RECEIVING_STATUSES.has(status)) {
+    throw new Error(`${lineLabel} is closed, cancelled, or fully received and cannot be received`);
+  }
+  if (!ACTIVE_RECEIVING_STATUSES.has(status)) {
+    throw new Error(`${lineLabel} must be in progress, delivery, or final payment before receiving`);
+  }
+}
+
+function receiptOutstandingQty(total: {
+  ordered_qty?: number | string | null;
+  total_received_qty?: number | string | null;
+  outstanding_qty?: number | string | null;
+}) {
+  const orderedQty = numericValue(total.ordered_qty);
+  const totalReceivedQty = numericValue(total.total_received_qty);
+  const calculatedOutstandingQty = Math.max(0, orderedQty - totalReceivedQty);
+  const viewOutstandingQty = numericValue(total.outstanding_qty);
+
+  // The hard cap is ordered qty minus all received qty. The receipt-total view
+  // can be stricter when a line has cancelled qty, so use the smaller value.
+  return Math.min(calculatedOutstandingQty, viewOutstandingQty);
 }
 
 function generatedPoId() {
@@ -107,6 +181,28 @@ function refreshPoViews(poId?: string | null) {
   if (poId) {
     revalidatePath(`/po/${encodeURIComponent(poId)}`);
   }
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function schemaColumnMiss(errorMessage: string) {
+  const message = errorMessage.toLowerCase();
+  return message.includes("schema cache") || message.includes("column");
+}
+
+function appendStampedNote(existingNote: string | null | undefined, nextNote: string | null) {
+  if (!nextNote) {
+    return existingNote?.trim() || null;
+  }
+
+  const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+  const entry = `[${stamp}] ${nextNote}`;
+  const existing = existingNote?.trim();
+  return existing ? `${existing}\n\n${entry}` : entry;
 }
 
 const NON_PRODUCT_PAYMENT_TYPES = new Set([
@@ -162,6 +258,17 @@ async function exchangeRateByCurrency(poId: string) {
 async function recalculatePoAmount(poId: string) {
   const supabase = actionClient();
   const rates = await exchangeRateByCurrency(poId);
+  const { data: order, error: orderReadError } = await supabase
+    .from("po_orders")
+    .select("currency")
+    .eq("po_id", poId)
+    .maybeSingle();
+
+  if (orderReadError) {
+    throw new Error(orderReadError.message);
+  }
+
+  const orderCurrency = String(order?.currency ?? "THB").trim().toUpperCase();
   const { data: items, error: itemError } = await supabase
     .from("po_items")
     .select("ordered_qty,unit_price,freight_unit_cost,currency")
@@ -184,9 +291,18 @@ async function recalculatePoAmount(poId: string) {
       const currency = String(item.currency ?? "THB").trim().toUpperCase();
       const landedAmount = qty * (unitPrice + freightUnitCost);
       const exchangeRate = rates.get(currency) ?? 0;
+      const orderExchangeRate = rates.get(orderCurrency) ?? 0;
+      const amountThb = currency === "THB" ? landedAmount : landedAmount * exchangeRate;
+      const amountForeign =
+        currency === orderCurrency
+          ? landedAmount
+          : currency === "THB" && orderCurrency !== "THB" && orderExchangeRate > 0
+            ? landedAmount / orderExchangeRate
+            : landedAmount;
+
       return {
-        amountForeign: sum.amountForeign + landedAmount,
-        amountThb: sum.amountThb + landedAmount * exchangeRate,
+        amountForeign: sum.amountForeign + amountForeign,
+        amountThb: sum.amountThb + amountThb,
       };
     },
     { amountForeign: 0, amountThb: 0 },
@@ -509,21 +625,167 @@ export async function updatePoHeaderRefsAction(
   try {
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
+    const updateScope = optionalText(formData, "updateScope");
+    const quickCommentOnly = updateScope === "quickComment";
+    const supplierDiscussionNote = optionalText(formData, "supplierDiscussionNote");
+    const estimatedDeliveryDate = optionalDateText(formData, "estimatedDeliveryDate");
+    const estimatedArrivedDate = optionalDateText(formData, "estimatedArrivedDate");
+    const actualReceivedDate = optionalDateText(formData, "actualReceivedDate");
+    const { data: currentOrder, error: currentOrderError } = await supabase
+      .from("po_orders")
+      .select(
+        [
+          "work_status",
+          "source_payload",
+          "quotation_reference",
+          "supplier_invoice_no",
+          "estimated_delivery_date",
+          "estimated_arrived_date",
+          "actual_received_date",
+          "supplier_discussion_note",
+        ].join(","),
+      )
+      .eq("po_id", poId)
+      .maybeSingle();
+
+    if (currentOrderError) {
+      throw new Error(currentOrderError.message);
+    }
+    if (!currentOrder) {
+      throw new Error(`PO ${poId} does not exist`);
+    }
+    const currentOrderRow = currentOrder as {
+      actual_received_date?: string | null;
+      estimated_arrived_date?: string | null;
+      estimated_delivery_date?: string | null;
+      quotation_reference?: string | null;
+      source_payload?: unknown;
+      supplier_discussion_note?: string | null;
+      supplier_invoice_no?: string | null;
+      work_status?: string | null;
+    };
+
+    const sourcePayload = objectValue(currentOrderRow.source_payload);
+    const currentHeader = objectValue(sourcePayload.po_detail_header);
+    const currentSupplierNote =
+      typeof currentOrderRow.supplier_discussion_note === "string" &&
+      currentOrderRow.supplier_discussion_note.trim()
+        ? currentOrderRow.supplier_discussion_note
+        : typeof currentHeader.supplierDiscussionNote === "string"
+        ? currentHeader.supplierDiscussionNote
+        : "";
+    const appendedSupplierNote = appendStampedNote(currentSupplierNote, supplierDiscussionNote);
+    const supplierUpdateHistory = Array.isArray(currentHeader.supplierDiscussionUpdates)
+      ? currentHeader.supplierDiscussionUpdates
+      : [];
+    const headerText = (key: string) => {
+      const value = currentHeader[key];
+      return typeof value === "string" ? value.trim() : "";
+    };
+    const preservedQuotationReference =
+      String(currentOrderRow.quotation_reference ?? "").trim() ||
+      headerText("quotationReference");
+    const preservedSupplierInvoiceNo =
+      String(currentOrderRow.supplier_invoice_no ?? "").trim() ||
+      headerText("supplierInvoiceNo");
+    const preservedEstimatedDeliveryDate =
+      String(currentOrderRow.estimated_delivery_date ?? "").trim() ||
+      headerText("estimatedDeliveryDate");
+    const preservedEstimatedArrivedDate =
+      String(currentOrderRow.estimated_arrived_date ?? "").trim() ||
+      headerText("estimatedArrivedDate");
+    const preservedActualReceivedDate =
+      String(currentOrderRow.actual_received_date ?? "").trim() ||
+      headerText("actualReceivedDate");
+    const submittedQuotationReference = optionalText(formData, "quotationReference");
+    const submittedSupplierInvoiceNo = optionalText(formData, "supplierInvoiceNo");
+    const updatePayload: Record<string, string | null> = {
+      quotation_reference:
+        quickCommentOnly && !submittedQuotationReference
+          ? preservedQuotationReference || null
+          : submittedQuotationReference,
+      supplier_invoice_no:
+        quickCommentOnly && !submittedSupplierInvoiceNo
+          ? preservedSupplierInvoiceNo || null
+          : submittedSupplierInvoiceNo,
+      estimated_delivery_date:
+        quickCommentOnly && !estimatedDeliveryDate
+          ? preservedEstimatedDeliveryDate || null
+          : estimatedDeliveryDate,
+      estimated_arrived_date:
+        quickCommentOnly && !estimatedArrivedDate
+          ? preservedEstimatedArrivedDate || null
+          : estimatedArrivedDate,
+      actual_received_date:
+        quickCommentOnly && !actualReceivedDate
+          ? preservedActualReceivedDate || null
+          : actualReceivedDate,
+      updated_at: new Date().toISOString(),
+    };
+    if (supplierDiscussionNote) {
+      updatePayload.supplier_discussion_note = appendedSupplierNote;
+    }
+
     const { error } = await supabase
       .from("po_orders")
-      .update({
-        quotation_reference: optionalText(formData, "quotationReference"),
-        supplier_invoice_no: optionalText(formData, "supplierInvoiceNo"),
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("po_id", poId);
     if (error) {
-      throw new Error(error.message);
+      if (!schemaColumnMiss(error.message)) {
+        throw new Error(error.message);
+      }
+
+      const fallbackHeader = {
+        ...currentHeader,
+        quotationReference: updatePayload.quotation_reference,
+        supplierInvoiceNo: updatePayload.supplier_invoice_no,
+        estimatedDeliveryDate: updatePayload.estimated_delivery_date,
+        estimatedArrivedDate: updatePayload.estimated_arrived_date,
+        actualReceivedDate: updatePayload.actual_received_date,
+        supplierDiscussionNote: appendedSupplierNote,
+        supplierDiscussionUpdates: supplierDiscussionNote
+          ? [
+              ...supplierUpdateHistory,
+              {
+                note: supplierDiscussionNote,
+                createdAt: new Date().toISOString(),
+              },
+            ]
+          : supplierUpdateHistory,
+      };
+      const fallbackUpdate = await supabase
+        .from("po_orders")
+        .update({
+          quotation_reference: updatePayload.quotation_reference,
+          supplier_invoice_no: updatePayload.supplier_invoice_no,
+          source_payload: {
+            ...sourcePayload,
+            po_detail_header: fallbackHeader,
+          },
+          updated_at: updatePayload.updated_at,
+        })
+        .eq("po_id", poId);
+      if (fallbackUpdate.error) {
+        throw new Error(fallbackUpdate.error.message);
+      }
     }
+
+    if (supplierDiscussionNote) {
+      await supabase.from("po_status_events").insert({
+        po_id: poId,
+        from_status: currentOrderRow.work_status ?? null,
+        to_status: currentOrderRow.work_status ?? "update",
+        note: `Supplier update: ${supplierDiscussionNote}`,
+      });
+    }
+
     refreshPoViews(poId);
-    return success("Saved quotation and invoice refs");
+    return {
+      ...success("Saved PO header"),
+      supplierDiscussionNote: appendedSupplierNote ?? "",
+    };
   } catch (error) {
-    return initialError(error instanceof Error ? error.message : "Save PO header refs failed");
+    return initialError(error instanceof Error ? error.message : "Save PO header failed");
   }
 }
 
@@ -583,6 +845,22 @@ export async function changePoStatusAction(
       }
       if (!order) {
         throw new Error(`PO ${poId} does not exist`);
+      }
+
+      if (toStatus === "closed") {
+        const { data: receivedRows, error: receivedRowsError } = await supabase
+          .from("po_item_receipt_totals")
+          .select("total_received_qty")
+          .eq("po_id", poId)
+          .gt("total_received_qty", 0)
+          .limit(1);
+
+        if (receivedRowsError) {
+          throw new Error(receivedRowsError.message);
+        }
+        if (!receivedRows?.length) {
+          throw new Error("Receive stock before closing this PO");
+        }
       }
 
       const timestampFields: Record<string, string | null> = {};
@@ -727,11 +1005,11 @@ export async function receivePoItemAction(
   try {
     const supabase = actionClient();
     const itemUuid = requiredText(formData, "itemUuid");
-    const receivedQty = positiveNumber(formData, "receivedQty");
+    const receivedQty = receiveQuantity(formData.get("receivedQty"), "Receive quantity");
 
     const { data: item, error: itemError } = await supabase
       .from("po_items")
-      .select("id,po_id,line_status")
+      .select("id,po_id,line_no,sku,line_status")
       .eq("id", itemUuid)
       .maybeSingle();
     if (itemError) {
@@ -743,43 +1021,43 @@ export async function receivePoItemAction(
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
-      .select("closed_at,cancelled_at")
+      .select("work_status,closed_at,cancelled_at")
       .eq("po_id", item.po_id)
       .maybeSingle();
     if (orderError) {
       throw new Error(orderError.message);
     }
-    if (order?.closed_at || order?.cancelled_at) {
+    if (!order) {
+      throw new Error(`PO ${item.po_id} does not exist`);
+    }
+    if (orderIsClosedOrCancelled(order)) {
       throw new Error("Closed or cancelled POs cannot be received");
     }
 
-    const status = normalizeStatus(item.line_status ?? "");
-    if (BLOCKED_RECEIVING_STATUSES.has(status)) {
-      throw new Error("Closed or cancelled lines cannot be received");
-    }
-    if (!ACTIVE_RECEIVING_STATUSES.has(status)) {
-      throw new Error("Only inpro, delivery, or final_payment lines can be received");
-    }
+    const lineLabel = `Line ${item.line_no ?? item.sku ?? itemUuid}`;
+    assertReceivableLineStatus(item.line_status, lineLabel);
 
     const { data: receiptTotal, error: totalError } = await supabase
       .from("po_item_receipt_totals")
-      .select("outstanding_qty")
+      .select("ordered_qty,total_received_qty,outstanding_qty")
       .eq("po_item_uuid", itemUuid)
       .maybeSingle();
     if (totalError) {
       throw new Error(totalError.message);
     }
 
-    const outstandingQty = Number(receiptTotal?.outstanding_qty ?? 0);
+    const outstandingQty = receiptOutstandingQty(receiptTotal ?? {});
     if (!Number.isFinite(outstandingQty) || outstandingQty <= 0) {
-      throw new Error("This line has no outstanding quantity left");
+      throw new Error(`${lineLabel} is already fully received`);
     }
     if (receivedQty > outstandingQty) {
       throw new Error(`Receive quantity exceeds outstanding quantity (${outstandingQty})`);
     }
 
+    const receivedAt = new Date().toISOString();
     const { error: receiptError } = await supabase.from("po_receipts").insert({
       po_item_id: itemUuid,
+      received_at: receivedAt,
       received_qty: receivedQty,
       received_by: optionalText(formData, "receivedBy"),
       note: optionalText(formData, "note"),
@@ -812,17 +1090,14 @@ export async function batchReceivePoItemsAction(
 
     const requestedReceipts = itemUuids.flatMap((itemUuid, index) => {
       const qtyText = qtyValues[index] ?? "";
-      if (!qtyText || Number(qtyText) === 0) {
+      if (!qtyText) {
         return [];
       }
 
-      const receivedQty = Number(qtyText);
       if (!itemUuid) {
         throw new Error(`Line ${index + 1} is missing an item id`);
       }
-      if (!Number.isFinite(receivedQty) || receivedQty < 0) {
-        throw new Error(`Line ${index + 1} receive quantity must be 0 or greater`);
-      }
+      const receivedQty = receiveQuantity(qtyText, `Line ${index + 1} receive quantity`);
 
       return [{ itemUuid, receivedQty }];
     });
@@ -837,7 +1112,7 @@ export async function batchReceivePoItemsAction(
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
-      .select("closed_at,cancelled_at")
+      .select("work_status,closed_at,cancelled_at")
       .eq("po_id", poId)
       .maybeSingle();
     if (orderError) {
@@ -846,7 +1121,7 @@ export async function batchReceivePoItemsAction(
     if (!order) {
       throw new Error(`PO ${poId} does not exist`);
     }
-    if (order.closed_at || order.cancelled_at) {
+    if (orderIsClosedOrCancelled(order)) {
       throw new Error("Closed or cancelled POs cannot be received");
     }
 
@@ -870,7 +1145,7 @@ export async function batchReceivePoItemsAction(
 
     const { data: totals, error: totalError } = await supabase
       .from("po_item_receipt_totals")
-      .select("po_item_uuid,outstanding_qty")
+      .select("po_item_uuid,ordered_qty,total_received_qty,outstanding_qty")
       .in("po_item_uuid", uniqueItemUuids);
     if (totalError) {
       throw new Error(totalError.message);
@@ -879,11 +1154,17 @@ export async function batchReceivePoItemsAction(
     const outstandingByItemId = new Map(
       ((totals ?? []) as Array<{
         po_item_uuid: string | null;
+        ordered_qty: number | string | null;
+        total_received_qty: number | string | null;
         outstanding_qty: number | string | null;
       }>)
         .filter((row) => row.po_item_uuid)
-        .map((row) => [row.po_item_uuid, Number(row.outstanding_qty ?? 0)]),
+        .map((row) => [row.po_item_uuid, receiptOutstandingQty(row)]),
     );
+    const requestedQtyByItemId = requestedReceipts.reduce((map, receipt) => {
+      map.set(receipt.itemUuid, (map.get(receipt.itemUuid) ?? 0) + receipt.receivedQty);
+      return map;
+    }, new Map<string, number>());
 
     for (const receipt of requestedReceipts) {
       const item = itemById.get(receipt.itemUuid);
@@ -894,32 +1175,28 @@ export async function batchReceivePoItemsAction(
         throw new Error(`Line ${item.line_no ?? item.sku ?? receipt.itemUuid} does not belong to ${poId}`);
       }
 
-      const status = normalizeStatus(item.line_status ?? "");
-      if (BLOCKED_RECEIVING_STATUSES.has(status)) {
-        throw new Error(`Line ${item.line_no ?? item.sku} is closed or cancelled`);
-      }
-      if (!ACTIVE_RECEIVING_STATUSES.has(status)) {
-        throw new Error(
-          `Line ${item.line_no ?? item.sku} must be inpro, delivery, or final_payment before receiving`,
-        );
-      }
+      const lineLabel = `Line ${item.line_no ?? item.sku ?? receipt.itemUuid}`;
+      assertReceivableLineStatus(item.line_status, lineLabel);
 
       const outstandingQty = outstandingByItemId.get(receipt.itemUuid) ?? 0;
       if (!Number.isFinite(outstandingQty) || outstandingQty <= 0) {
-        throw new Error(`Line ${item.line_no ?? item.sku} has no outstanding quantity left`);
+        throw new Error(`${lineLabel} is already fully received`);
       }
-      if (receipt.receivedQty > outstandingQty) {
+      const totalRequestedQty = requestedQtyByItemId.get(receipt.itemUuid) ?? receipt.receivedQty;
+      if (totalRequestedQty > outstandingQty) {
         throw new Error(
-          `Line ${item.line_no ?? item.sku} receive quantity exceeds outstanding quantity (${outstandingQty})`,
+          `${lineLabel} receive quantity exceeds outstanding quantity (${outstandingQty})`,
         );
       }
     }
 
     const receivedBy = optionalText(formData, "receivedBy");
     const note = optionalText(formData, "note");
+    const receivedAt = new Date().toISOString();
     const { error: receiptError } = await supabase.from("po_receipts").insert(
       requestedReceipts.map((receipt) => ({
         po_item_id: receipt.itemUuid,
+        received_at: receivedAt,
         received_qty: receipt.receivedQty,
         received_by: receivedBy,
         note,
@@ -1007,6 +1284,7 @@ export async function updatePoDraftLinesAction(
     const qtyValues = formData.getAll("orderedQty").map((value) => String(value).trim());
     const priceValues = formData.getAll("unitPrice").map((value) => String(value).trim());
     const freightValues = formData.getAll("freightUnitCost").map((value) => String(value).trim());
+    const currencyValues = formData.getAll("currency").map((value) => String(value).trim());
     const remarkValues = formData.getAll("remark").map((value) => String(value).trim());
 
     if (!itemUuids.length) {
@@ -1044,6 +1322,7 @@ export async function updatePoDraftLinesAction(
         freightValues[index] ?? "",
         `Line ${index + 1} freight`,
       );
+      const currency = (currencyValues[index] || "THB").toUpperCase();
       const landedUnitCost = unitPrice + freightUnitCost;
 
       const { error } = await supabase
@@ -1059,6 +1338,7 @@ export async function updatePoDraftLinesAction(
           freight_unit_cost: freightUnitCost,
           landed_unit_cost: landedUnitCost,
           line_amount: orderedQty * unitPrice,
+          currency,
           remark: remarkValues[index] || null,
           updated_at: new Date().toISOString(),
         })
@@ -1252,10 +1532,7 @@ export async function updatePoPaymentsAction(
       const dueDate = dueDates[index] || null;
       const hasContent =
         Boolean(rawId) ||
-        amount > 0 ||
-        Boolean(dueDate) ||
-        Boolean(references[index]) ||
-        Boolean(notes[index]);
+        amount > 0;
 
       if (!hasContent) {
         continue;

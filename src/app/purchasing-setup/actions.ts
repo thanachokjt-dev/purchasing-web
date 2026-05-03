@@ -12,6 +12,32 @@ function nullableText(formData: FormData, name: string) {
   return value || null;
 }
 
+function textListFromValue(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeProductScope(formData: FormData) {
+  const typedScope = textListFromValue(text(formData, "productScope"));
+  const selectedTags = formData
+    .getAll("supplierTag")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  const merged = new Map<string, string>();
+
+  for (const item of [...typedScope, ...selectedTags]) {
+    const key = item.toLowerCase();
+    if (!merged.has(key)) {
+      merged.set(key, item);
+    }
+  }
+
+  const value = Array.from(merged.values()).join(", ");
+  return value || null;
+}
+
 function nonNegativeNumber(formData: FormData, name: string) {
   const raw = text(formData, name);
   if (!raw) {
@@ -87,7 +113,7 @@ export async function saveSupplierSetupAction(formData: FormData) {
         moq: nullableText(formData, "moq"),
         safety_days: Math.round(nonNegativeNumber(formData, "safetyDays")),
         lead_time_days: Math.round(nonNegativeNumber(formData, "leadTimeDays")),
-        product_scope: nullableText(formData, "productScope"),
+        product_scope: mergeProductScope(formData),
         bank_name: nullableText(formData, "bankName"),
         bank_account_name: nullableText(formData, "bankAccountName"),
         bank_account_no: nullableText(formData, "bankAccountNo"),

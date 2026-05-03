@@ -82,6 +82,156 @@ type ProductTagRow = {
   tags: string[] | null;
 };
 
+const DEFAULT_PURCHASING_TAGS: PurchasingTag[] = [
+  {
+    tag: "Hand Wraps",
+    label: "Hand Wraps",
+    category: "product",
+    description: "Hand wrap products and accessories",
+    isActive: true,
+  },
+  {
+    tag: "MMA Shorts",
+    label: "MMA Shorts",
+    category: "product",
+    description: "MMA shorts product group",
+    isActive: true,
+  },
+  {
+    tag: "Mouth Guard",
+    label: "Mouth Guard",
+    category: "product",
+    description: "Mouth guard product group",
+    isActive: true,
+  },
+  {
+    tag: "Muay Thai Gloves",
+    label: "Muay Thai Gloves",
+    category: "product",
+    description: "Muay Thai gloves product group",
+    isActive: true,
+  },
+  {
+    tag: "Muay Thai Shorts",
+    label: "Muay Thai Shorts",
+    category: "product",
+    description: "Muay Thai shorts product group",
+    isActive: true,
+  },
+  {
+    tag: "Rash Guards & Compression",
+    label: "Rash Guards & Compression",
+    category: "product",
+    description: "Rash guards and compression wear product group",
+    isActive: true,
+  },
+  {
+    tag: "Shin Guards",
+    label: "Shin Guards",
+    category: "product",
+    description: "Shin guards product group",
+    isActive: true,
+  },
+  {
+    tag: "core",
+    label: "Core",
+    category: "planning",
+    description: "Always-on product that should stay visible in purchase planning",
+    isActive: true,
+  },
+  {
+    tag: "event",
+    label: "Event",
+    category: "planning",
+    description: "Event or limited-run item; can be hidden from regular reorder flow",
+    isActive: true,
+  },
+  {
+    tag: "seasonal",
+    label: "Seasonal",
+    category: "planning",
+    description: "Seasonal demand item",
+    isActive: true,
+  },
+  {
+    tag: "new_drop",
+    label: "New Drop",
+    category: "planning",
+    description: "New product drop or launch item",
+    isActive: true,
+  },
+  {
+    tag: "slow_mover",
+    label: "Slow Mover",
+    category: "planning",
+    description: "Low movement item that needs cautious replenishment",
+    isActive: true,
+  },
+  {
+    tag: "markdown_list",
+    label: "Markdown List",
+    category: "planning",
+    description: "Item intentionally hidden from standard reorder planning",
+    isActive: true,
+  },
+  {
+    tag: "one_time_event",
+    label: "One-Time Event",
+    category: "planning",
+    description: "Strong seller from a one-off event or campaign; exclude from normal PO demand",
+    isActive: true,
+  },
+  {
+    tag: "restock_candidate",
+    label: "Restock Candidate",
+    category: "planning",
+    description: "Candidate for reorder review after buyer confirmation",
+    isActive: true,
+  },
+  {
+    tag: "oos_comeback",
+    label: "OOS Comeback",
+    category: "planning",
+    description: "Stockout item with enough demand history to consider bringing back",
+    isActive: true,
+  },
+  {
+    tag: "high_margin",
+    label: "High Margin",
+    category: "commercial",
+    description: "Product with strong margin profile",
+    isActive: true,
+  },
+  {
+    tag: "cash_sensitive",
+    label: "Cash Sensitive",
+    category: "commercial",
+    description: "Reorder should consider cash flow or deposit timing before PO",
+    isActive: true,
+  },
+  {
+    tag: "supplier_risk",
+    label: "Supplier Risk",
+    category: "supplier",
+    description: "Item needs attention due to supplier reliability or lead-time risk",
+    isActive: true,
+  },
+  {
+    tag: "long_lead_time",
+    label: "Long Lead Time",
+    category: "supplier",
+    description: "Supplier or item usually needs longer production or delivery planning",
+    isActive: true,
+  },
+  {
+    tag: "size_run",
+    label: "Size Run",
+    category: "merchandising",
+    description: "Item should be reviewed as a size run rather than standalone SKU",
+    isActive: true,
+  },
+];
+
 function compactText(value: string | null | undefined) {
   return value?.trim() || "";
 }
@@ -168,6 +318,18 @@ function mapTag(row: PurchasingTagRow): PurchasingTag {
   };
 }
 
+function mergeDefaultTags(rows: PurchasingTag[]) {
+  const tags = new Map<string, PurchasingTag>();
+  for (const tag of DEFAULT_PURCHASING_TAGS) {
+    tags.set(tag.tag.toLowerCase(), tag);
+  }
+  for (const tag of rows) {
+    tags.set(tag.tag.toLowerCase(), tag);
+  }
+
+  return Array.from(tags.values()).sort((a, b) => a.tag.localeCompare(b.tag));
+}
+
 async function getProductTagsFallback() {
   const productRows = await fetchAllRows<ProductTagRow>("products", "tags", "product_title");
   const tags = new Map<string, PurchasingTag>();
@@ -188,108 +350,7 @@ async function getProductTagsFallback() {
     }
   }
 
-  const defaults: PurchasingTag[] = [
-    {
-      tag: "core",
-      label: "Core",
-      category: "planning",
-      description: "Always-on product that should stay visible in purchase planning",
-      isActive: true,
-    },
-    {
-      tag: "event",
-      label: "Event",
-      category: "planning",
-      description: "Event or limited-run item; can be hidden from regular reorder flow",
-      isActive: true,
-    },
-    {
-      tag: "seasonal",
-      label: "Seasonal",
-      category: "planning",
-      description: "Seasonal demand item",
-      isActive: true,
-    },
-    {
-      tag: "new_drop",
-      label: "New Drop",
-      category: "planning",
-      description: "New product drop or launch item",
-      isActive: true,
-    },
-    {
-      tag: "slow_mover",
-      label: "Slow Mover",
-      category: "planning",
-      description: "Low movement item that needs cautious replenishment",
-      isActive: true,
-    },
-    {
-      tag: "markdown_list",
-      label: "Markdown List",
-      category: "planning",
-      description: "Item intentionally hidden from standard reorder planning",
-      isActive: true,
-    },
-    {
-      tag: "one_time_event",
-      label: "One-Time Event",
-      category: "planning",
-      description: "Strong seller from a one-off event or campaign; exclude from normal PO demand",
-      isActive: true,
-    },
-    {
-      tag: "restock_candidate",
-      label: "Restock Candidate",
-      category: "planning",
-      description: "Candidate for reorder review after buyer confirmation",
-      isActive: true,
-    },
-    {
-      tag: "oos_comeback",
-      label: "OOS Comeback",
-      category: "planning",
-      description: "Stockout item with enough demand history to consider bringing back",
-      isActive: true,
-    },
-    {
-      tag: "high_margin",
-      label: "High Margin",
-      category: "commercial",
-      description: "Product with strong margin profile",
-      isActive: true,
-    },
-    {
-      tag: "cash_sensitive",
-      label: "Cash Sensitive",
-      category: "commercial",
-      description: "Reorder should consider cash flow or deposit timing before PO",
-      isActive: true,
-    },
-    {
-      tag: "supplier_risk",
-      label: "Supplier Risk",
-      category: "supplier",
-      description: "Item needs attention due to supplier reliability or lead-time risk",
-      isActive: true,
-    },
-    {
-      tag: "long_lead_time",
-      label: "Long Lead Time",
-      category: "supplier",
-      description: "Supplier or item usually needs longer production or delivery planning",
-      isActive: true,
-    },
-    {
-      tag: "size_run",
-      label: "Size Run",
-      category: "merchandising",
-      description: "Item should be reviewed as a size run rather than standalone SKU",
-      isActive: true,
-    },
-  ];
-
-  for (const tag of defaults) {
+  for (const tag of DEFAULT_PURCHASING_TAGS) {
     if (!tags.has(tag.tag)) {
       tags.set(tag.tag, tag);
     }
@@ -345,6 +406,6 @@ export async function getPurchasingSetupData() {
     contacts: contacts.map(mapContact),
     setupReady: Boolean(tagRows),
     suppliers: suppliers.map(mapSupplier),
-    tags: tagRows ? tagRows.map(mapTag) : await getProductTagsFallback(),
+    tags: tagRows ? mergeDefaultTags(tagRows.map(mapTag)) : await getProductTagsFallback(),
   };
 }

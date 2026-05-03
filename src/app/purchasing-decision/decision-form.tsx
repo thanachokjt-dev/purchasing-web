@@ -1,12 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { LoadingLabel, type FormServerAction } from "@/app/loading-controls";
 
 const compactInputClass =
   "h-9 w-20 rounded-md border border-[#cfd6df] bg-white px-2 text-right font-mono text-sm text-[#172026] outline-none focus:border-[#255f85]";
+const fillDemandEvent = "purchasing-decision:fill-demand-calc";
+const qtyModeEvent = "purchasing-decision:set-qty-mode";
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -74,6 +76,86 @@ function alertClass(status: string) {
     return "bg-[#eef0f3] text-[#5c6670]";
   }
   return "bg-[#eaf6ef] text-[#1f6b3d]";
+}
+
+function stockAlertLabel(status: string) {
+  if (status === "dead_stock") {
+    return "Dead stock";
+  }
+  if (status === "heavy_overstock") {
+    return "Heavy over";
+  }
+  if (status === "overstock") {
+    return "Overstock";
+  }
+  if (status === "under_target") {
+    return "Under target";
+  }
+  if (status === "hidden") {
+    return "Hidden";
+  }
+
+  return "Healthy";
+}
+
+function stockAlertClass(status: string) {
+  if (status === "dead_stock") {
+    return "bg-[#f8e8e8] text-[#9f2323]";
+  }
+  if (status === "heavy_overstock") {
+    return "bg-[#fff1e8] text-[#9a3412]";
+  }
+  if (status === "overstock") {
+    return "bg-[#fff4e5] text-[#946200]";
+  }
+  if (status === "under_target") {
+    return "bg-[#e9f1fb] text-[#255f85]";
+  }
+  if (status === "hidden") {
+    return "bg-[#eef0f3] text-[#5c6670]";
+  }
+
+  return "bg-[#eaf6ef] text-[#1f6b3d]";
+}
+
+function stockAlertStatus({
+  demand,
+  hidden,
+  overstockDays,
+  overstockUnits,
+  stockPosition,
+  targetQty,
+}: {
+  demand: number;
+  hidden: boolean;
+  overstockDays: number | null;
+  overstockUnits: number;
+  stockPosition: number;
+  targetQty: number;
+}) {
+  if (hidden) {
+    return "hidden";
+  }
+  if (demand <= 0 && stockPosition > 0) {
+    return "dead_stock";
+  }
+  if (stockPosition <= targetQty) {
+    return "under_target";
+  }
+  if (
+    (overstockDays !== null && overstockDays >= 90) ||
+    (targetQty > 0 && overstockUnits >= targetQty)
+  ) {
+    return "heavy_overstock";
+  }
+  if (
+    (overstockDays !== null && overstockDays >= 30) ||
+    overstockUnits >= Math.max(10, targetQty * 0.25)
+  ) {
+    return "overstock";
+  }
+
+  return "healthy";
 }
 
 export function DecisionSaveButton() {
@@ -430,6 +512,71 @@ export function DemandFormulaHeaderButton({
   );
 }
 
+export function DemandHmHeaderControls({
+  capAtSellingDayAverage,
+  lifetimeWeight,
+  recentFloorPercent,
+  sellingDayWeight,
+}: {
+  capAtSellingDayAverage: boolean;
+  lifetimeWeight: number;
+  recentFloorPercent: number;
+  sellingDayWeight: number;
+}) {
+  return (
+    <div className="grid justify-items-end gap-1">
+      <DemandFormulaHeaderButton
+        capAtSellingDayAverage={capAtSellingDayAverage}
+        lifetimeWeight={lifetimeWeight}
+        recentFloorPercent={recentFloorPercent}
+        sellingDayWeight={sellingDayWeight}
+      />
+      <button
+        className="rounded border border-[#cfd6df] bg-white px-2 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-[#255f85]"
+        onClick={() => window.dispatchEvent(new Event(fillDemandEvent))}
+        title="Fill calculated Demand HM for every visible row"
+        type="button"
+      >
+        Fill all calc
+      </button>
+    </div>
+  );
+}
+
+export function OrderQtyModeHeaderButtons() {
+  function setMode(mode: "raw" | "rounded") {
+    window.dispatchEvent(
+      new CustomEvent(qtyModeEvent, {
+        detail: { mode },
+      }),
+    );
+  }
+
+  return (
+    <div className="grid gap-1">
+      <span>Use</span>
+      <div className="flex items-center gap-1 normal-case tracking-normal">
+        <button
+          className="h-7 rounded-md border border-[#cfd6df] bg-white px-2 text-[11px] font-semibold text-[#364252]"
+          onClick={() => setMode("raw")}
+          title="Use Order Qty for every visible row"
+          type="button"
+        >
+          Order Qty
+        </button>
+        <button
+          className="h-7 rounded-md border border-[#cfd6df] bg-white px-2 text-[11px] font-semibold text-[#364252]"
+          onClick={() => setMode("rounded")}
+          title="Use Round 10 for every visible row"
+          type="button"
+        >
+          Round 10
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AlertFilterSelect({
   options,
   selectedAlerts,
@@ -507,6 +654,83 @@ export function AlertFilterSelect({
   );
 }
 
+export function StockFilterSelect({
+  options,
+  selectedStock,
+}: {
+  options: { label: string; value: string }[];
+  selectedStock: string[];
+}) {
+  const initialSelection =
+    selectedStock.length && !selectedStock.includes("all")
+      ? selectedStock
+      : options.map((option) => option.value);
+  const [selected, setSelected] = useState(initialSelection);
+  const allSelected = selected.length === options.length;
+  const valuesForSubmit = allSelected ? ["all"] : selected;
+  const label = allSelected
+    ? "All stock"
+    : options
+        .filter((option) => selected.includes(option.value))
+        .map((option) => option.label)
+        .join(", ") || "No stock";
+
+  function toggle(value: string) {
+    setSelected((current) => {
+      if (!current.includes(value)) {
+        return [...current, value];
+      }
+      if (current.length === 1) {
+        return current;
+      }
+
+      return current.filter((item) => item !== value);
+    });
+  }
+
+  return (
+    <div className="grid gap-1">
+      {valuesForSubmit.map((value) => (
+        <input key={value} name="stock" type="hidden" value={value} />
+      ))}
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Stock
+      </span>
+      <details className="group relative z-[90]">
+        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+          <span className="truncate">{label}</span>
+          <span aria-hidden="true" className="text-xs text-[#65717f]">
+            v
+          </span>
+        </summary>
+        <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+          <button
+            className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
+            onClick={() => setSelected(options.map((option) => option.value))}
+            type="button"
+          >
+            Select all
+          </button>
+          {options.map((option) => (
+            <label
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#172026] hover:bg-[#f3f5f7]"
+              key={option.value}
+            >
+              <input
+                checked={selected.includes(option.value)}
+                className="size-4 accent-[#172026]"
+                onChange={() => toggle(option.value)}
+                type="checkbox"
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
@@ -518,6 +742,7 @@ export function DecisionPlanningCells({
   lastSaleDate,
   orderCycleDays,
   orderQtyMode,
+  manualRopUnits,
   onHandUnits,
   reorderPointUnits,
   ropAlert,
@@ -539,6 +764,7 @@ export function DecisionPlanningCells({
   lastSaleDate: string | null;
   orderCycleDays: number;
   orderQtyMode: "raw" | "rounded";
+  manualRopUnits: number | null;
   onHandUnits: number;
   reorderPointUnits: number;
   ropAlert: "order_now" | "watch" | "healthy" | "hidden";
@@ -559,6 +785,15 @@ export function DecisionPlanningCells({
   const [safety, setSafety] = useState(String(safetyDays));
   const [lead, setLead] = useState(String(leadTimeDays));
   const [cycle, setCycle] = useState(String(orderCycleDays));
+  useEffect(() => {
+    function fillCalculatedDemand() {
+      setDemand(formatDecimal(calculatedDemandIndexHm, 4));
+      setAcceptedDemandOverride(true);
+    }
+
+    window.addEventListener(fillDemandEvent, fillCalculatedDemand);
+    return () => window.removeEventListener(fillDemandEvent, fillCalculatedDemand);
+  }, [calculatedDemandIndexHm]);
   const liveDemand = demand ? numberOrZero(demand) : calculatedDemandIndexHm;
   const liveReorderPoint = useMemo(() => {
     const nextValue = Math.ceil(liveDemand * (numberOrZero(safety) + numberOrZero(lead)));
@@ -574,21 +809,51 @@ export function DecisionPlanningCells({
   const orderQtyRaw = Math.max(0, liveTargetQty - onHandUnits - comingQty);
   const orderQtyRounded = roundUpToTen(orderQtyRaw);
   const [selectedMode, setSelectedMode] = useState<"raw" | "rounded">(orderQtyMode);
-  const [manualOrderQty, setManualOrderQty] = useState<string | null>(null);
+  const [manualOrderQty, setManualOrderQty] = useState(
+    manualRopUnits === null ? "" : String(manualRopUnits),
+  );
+  useEffect(() => {
+    function setBatchQtyMode(event: Event) {
+      const mode = (event as CustomEvent<{ mode?: string }>).detail?.mode;
+      if (mode === "raw" || mode === "rounded") {
+        setSelectedMode(mode);
+        setManualOrderQty("");
+      }
+    }
+
+    window.addEventListener(qtyModeEvent, setBatchQtyMode);
+    return () => window.removeEventListener(qtyModeEvent, setBatchQtyMode);
+  }, []);
   const computedOrderQty = String(
     selectedMode === "raw" ? orderQtyRaw : orderQtyRounded,
   );
-  const orderQty = manualOrderQty ?? computedOrderQty;
+  // Keep computed recommendation display separate from the manual override field.
+  // Blank manual input means the row should continue recalculating naturally.
+  const hasManualOrderQty = manualOrderQty.trim() !== "";
+  const orderQty = hasManualOrderQty ? manualOrderQty : computedOrderQty;
   const orderQtyNumber = numberOrZero(orderQty);
   const coverDays = liveDemand > 0 ? onHandUnits / liveDemand : null;
   const coverWeeks = coverDays === null ? null : coverDays / 7;
   const coverMonths = coverDays === null ? null : coverDays / 30;
+  const livePlanningDays = numberOrZero(safety) + numberOrZero(lead) + numberOrZero(cycle);
+  const stockPosition = onHandUnits + comingQty;
+  const liveOverstockQty = Math.max(0, stockPosition - liveTargetQty);
+  const liveOverstockDays =
+    liveDemand > 0 ? Math.max(0, stockPosition / liveDemand - livePlanningDays) : null;
+  const liveStockAlert = stockAlertStatus({
+    demand: liveDemand,
+    hidden: ropAlert === "hidden",
+    overstockDays: liveOverstockDays,
+    overstockUnits: liveOverstockQty,
+    stockPosition,
+    targetQty: liveTargetQty,
+  });
   const atOrderCoverageDays =
     liveDemand > 0 ? (comingQty + orderQtyNumber) / liveDemand : null;
 
   function chooseMode(mode: "raw" | "rounded") {
     setSelectedMode(mode);
-    setManualOrderQty(null);
+    setManualOrderQty("");
   }
 
   return (
@@ -710,14 +975,31 @@ export function DecisionPlanningCells({
       </td>
       <td className="px-3 py-3 align-top text-right">
         <input
+          name="manualRopUnitsIntent"
+          type="hidden"
+          value={hasManualOrderQty ? "manual" : "computed"}
+        />
+        <input
           className={compactInputClass}
           min="0"
           name="manualRopUnits"
           onChange={(event) => setManualOrderQty(event.target.value)}
-          placeholder={String(orderQtyRounded)}
+          placeholder={computedOrderQty}
           type="number"
-          value={orderQty}
+          value={manualOrderQty}
         />
+        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+          calc {formatNumber(numberOrZero(computedOrderQty))}
+        </p>
+        {hasManualOrderQty ? (
+          <button
+            className="mt-1 w-full rounded border border-[#cfd6df] px-1 py-0.5 text-[10px] font-semibold text-[#52606d]"
+            onClick={() => setManualOrderQty("")}
+            type="button"
+          >
+            Clear manual
+          </button>
+        ) : null}
       </td>
       <td className="px-3 py-3 align-top">
         <input name="orderQtyMode" type="hidden" value={selectedMode} />
@@ -774,6 +1056,24 @@ export function DecisionPlanningCells({
           {alertLabel(ropAlert)}
         </span>
       </td>
+      <td className="px-3 py-3 align-top">
+        <span
+          className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${stockAlertClass(
+            liveStockAlert,
+          )}`}
+        >
+          {stockAlertLabel(liveStockAlert)}
+        </span>
+        <p className="mt-1 font-mono text-[10px] text-[#7a8794]">
+          stock {formatNumber(stockPosition)}
+        </p>
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        {formatNumber(liveOverstockQty)}
+      </td>
+      <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
+        {coverageText(liveOverstockDays)}
+      </td>
       <td className="px-3 py-3 text-right align-top font-mono text-sm text-[#172026]">
         <p>{coverageText(atOrderCoverageDays)}</p>
         <p className="mt-1 text-[10px] text-[#7a8794]">
@@ -794,8 +1094,9 @@ export function TagDropdownSelect({
   initialTags: string[];
   options: string[];
 }) {
+  const selectableOptions = Array.from(new Set([...initialTags, ...options])).filter(Boolean);
   const [selected, setSelected] = useState(
-    initialTags.find((tag) => options.includes(tag)) ?? "",
+    initialTags.find((tag) => selectableOptions.includes(tag)) ?? "",
   );
 
   return (
@@ -807,7 +1108,7 @@ export function TagDropdownSelect({
         value={selected}
       >
         <option value="">Select tag</option>
-        {options.map((tag) => (
+        {selectableOptions.map((tag) => (
           <option key={tag} value={tag}>
             {tag}
           </option>

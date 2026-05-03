@@ -27,6 +27,29 @@ function nullableNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function manualOverrideNumber(value: string, intent: string) {
+  // Computed order quantities are display/read-model values. Persist only when
+  // the row explicitly marks the submitted quantity as a manual buyer override.
+  if (intent !== "manual") {
+    return null;
+  }
+
+  const parsed = nullableNumber(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
+}
+
+type ExistingDecisionControl = {
+  sku: string | null;
+  product_name_override: string | null;
+  main_name_override: string | null;
+  supplier_override: string | null;
+  item_status_override: string | null;
+  tags_override: string[] | null;
+  demand_index_override: number | string | null;
+  hide_reason: string | null;
+  note: string | null;
+};
+
 function autoNumber(value: string, calculatedValue: string, forceOverride = false) {
   const parsed = nullableNumber(value);
   const calculated = nullableNumber(calculatedValue);
@@ -68,6 +91,14 @@ function plannedNumber(
   return parsed;
 }
 
+function existingText(value: string | null | undefined) {
+  return value?.trim() || "";
+}
+
+function textOrExisting(value: string, existing: string | null | undefined) {
+  return value || existingText(existing);
+}
+
 export async function savePurchasingDecisionAction(formData: FormData) {
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
@@ -98,6 +129,8 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const productNames = formData.getAll("productName");
   const mainNames = formData.getAll("mainName");
   const suppliers = formData.getAll("supplier");
+  const supplierSources = formData.getAll("supplierSource");
+  const originalSuppliers = formData.getAll("originalSupplier");
   const itemStatuses = formData.getAll("itemStatus");
   const shopifyItemStatuses = formData.getAll("shopifyItemStatus");
   const tags = formData.getAll("tags");
@@ -114,11 +147,33 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const supplierLeadTimeDays = formData.getAll("supplierLeadTimeDays");
   const orderCycleDays = formData.getAll("orderCycleDays");
   const manualRopUnits = formData.getAll("manualRopUnits");
+  const manualRopUnitIntents = formData.getAll("manualRopUnitsIntent");
   const orderQtyModes = formData.getAll("orderQtyMode");
   const targetCoverageDays = formData.getAll("targetCoverageDays");
   const hideReasons = formData.getAll("hideReason");
   const notes = formData.getAll("note");
   const now = new Date().toISOString();
+  const submittedSkus = skus
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const existingControls = new Map<string, ExistingDecisionControl>();
+
+  for (let index = 0; index < submittedSkus.length; index += 1000) {
+    const chunk = submittedSkus.slice(index, index + 1000);
+    const { data } = await supabase
+      .from("purchasing_decision_controls")
+      .select(
+        "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,hide_reason,note",
+      )
+      .in("sku", chunk);
+
+    for (const row of (data ?? []) as ExistingDecisionControl[]) {
+      const sku = row.sku?.trim();
+      if (sku) {
+        existingControls.set(sku, row);
+      }
+    }
+  }
 
   const rows = skus.flatMap((skuValue, index) => {
     const sku = String(skuValue ?? "").trim();
@@ -127,9 +182,18 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     }
 
     const supplierValue = textAt(suppliers, index);
-    const nextSupplier = allowedSuppliers.has(supplierValue.toLowerCase())
-      ? supplierValue
-      : "";
+    const supplierSource = textAt(supplierSources, index);
+    const originalSupplier = textAt(originalSuppliers, index);
+    const existing = existingControls.get(sku);
+    const supplierIsAllowed = allowedSuppliers.has(supplierValue.toLowerCase());
+    const nextSupplier =
+      supplierIsAllowed &&
+      (supplierSource === "decision" ||
+        supplierValue.toLowerCase() !== originalSupplier.toLowerCase())
+        ? supplierValue
+        : supplierSource === "decision"
+          ? existingText(existing?.supplier_override)
+          : "";
     const supplierDefault = supplierDefaultByName.get(nextSupplier.toLowerCase());
     const supplierSafetyDefault =
       supplierDefault && supplierDefault.safetyDays > 0
@@ -142,23 +206,39 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     const nextTags = parseDecisionTags(textAt(tags, index)).filter((tag) =>
       allowedTags.has(tag.toLowerCase()),
     );
+    const existingTags = existing?.tags_override ?? [];
+    const tagsToSave =
+      textAt(tags, index) || nextTags.length
+        ? nextTags
+        : existingTags.filter((tag) => allowedTags.has(tag.toLowerCase()));
+    const demandIndexValue = textAt(demandIndexes, index);
+    const demandToSave = demandIndexValue
+      ? autoNumber(
+          demandIndexValue,
+          textAt(calculatedDemandIndexes, index),
+          textAt(demandOverrideAccepted, index) === "true",
+        )
+      : nullableNumber(String(existing?.demand_index_override ?? ""));
 
     return [
       {
         sku,
-        product_name_override: nullableText(textAt(productNames, index)),
-        main_name_override: nullableText(textAt(mainNames, index)),
+        product_name_override: nullableText(
+          textOrExisting(textAt(productNames, index), existing?.product_name_override),
+        ),
+        main_name_override: nullableText(
+          textOrExisting(textAt(mainNames, index), existing?.main_name_override),
+        ),
         supplier_override: nullableText(nextSupplier),
-        item_status_override: overrideText(
-          textAt(itemStatuses, index),
-          textAt(shopifyItemStatuses, index),
-        ),
-        tags_override: nextTags,
-        demand_index_override: autoNumber(
-          textAt(demandIndexes, index),
-          textAt(calculatedDemandIndexes, index),
-          textAt(demandOverrideAccepted, index) === "true",
-        ),
+        item_status_override:
+          textAt(itemStatuses, index) || existing?.item_status_override
+            ? overrideText(
+                textOrExisting(textAt(itemStatuses, index), existing?.item_status_override),
+                textAt(shopifyItemStatuses, index),
+              )
+            : null,
+        tags_override: tagsToSave,
+        demand_index_override: demandToSave,
         safety_days: plannedNumber(
           textAt(safetyDays, index),
           textAt(safetySources, index),
@@ -172,12 +252,17 @@ export async function savePurchasingDecisionAction(formData: FormData) {
           textAt(originalLeadTimeDays, index),
         ),
         order_cycle_days: nullableNumber(textAt(orderCycleDays, index)),
-        manual_rop_units: nullableNumber(textAt(manualRopUnits, index)),
+        manual_rop_units: manualOverrideNumber(
+          textAt(manualRopUnits, index),
+          textAt(manualRopUnitIntents, index),
+        ),
         order_qty_mode: textAt(orderQtyModes, index) === "raw" ? "raw" : "rounded",
         target_coverage_days: nullableNumber(textAt(targetCoverageDays, index)),
         hide_from_purchasing: hiddenSkus.has(sku),
-        hide_reason: nullableText(textAt(hideReasons, index)),
-        note: nullableText(textAt(notes, index)),
+        hide_reason: nullableText(
+          textOrExisting(textAt(hideReasons, index), existing?.hide_reason),
+        ),
+        note: nullableText(textOrExisting(textAt(notes, index), existing?.note)),
         updated_at: now,
       },
     ];
@@ -211,6 +296,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   revalidatePath("/purchasing-decision");
   revalidatePath("/");
   revalidatePath("/po");
+  redirectWithDecisionSaved(formData, rows.length);
 }
 
 function generatedPoId() {
@@ -227,6 +313,12 @@ function redirectWithPoError(formData: FormData, message: string): never {
   const returnTo = decisionReturnTo(formData);
   const separator = returnTo.includes("?") ? "&" : "?";
   redirect(`${returnTo}${separator}poError=${encodeURIComponent(message)}`);
+}
+
+function redirectWithDecisionSaved(formData: FormData, savedRows: number): never {
+  const returnTo = decisionReturnTo(formData);
+  const separator = returnTo.includes("?") ? "&" : "?";
+  redirect(`${returnTo}${separator}saved=1&savedRows=${savedRows}`);
 }
 
 function numberFromMap(

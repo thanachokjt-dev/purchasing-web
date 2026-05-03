@@ -1,10 +1,12 @@
 import Link from "next/link";
 import {
   ArrowLeft,
+  CalendarClock,
   ClipboardList,
   Factory,
   PackageCheck,
   Truck,
+  WalletCards,
 } from "lucide-react";
 import { getPoPortalData } from "@/lib/po-portal";
 import { formatNumber } from "@/lib/baseline-data";
@@ -13,10 +15,46 @@ import {
   AddPoItemForm,
   CreatePoForm,
   DeleteDraftPoForm,
+  PoStatusFilterSelect,
+  QuickPoCommentForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
 
 export const dynamic = "force-dynamic";
+
+const SORT_KEYS = new Set([
+  "po",
+  "date",
+  "supplier",
+  "status",
+  "lines",
+  "incoming",
+  "pending",
+  "amount",
+]);
+
+const DEFAULT_PO_STATUS_OPTIONS = [
+  "draft",
+  "waiting_for_approve",
+  "follow_up",
+  "inpro",
+  "delivery",
+  "final_payment",
+  "closed",
+  "cancelled",
+];
+
+const statusLabels: Record<string, string> = {
+  cancelled: "Cancelled",
+  closed: "Closed",
+  delivery: "Delivery",
+  draft: "Draft",
+  final_payment: "Final payment",
+  follow_up: "Follow-up",
+  inpro: "In progress",
+  unknown: "Unknown",
+  waiting_for_approve: "Waiting approve",
+};
 
 const formatCurrency = (value: number, currency: string) =>
   new Intl.NumberFormat("en-US", {
@@ -33,6 +71,30 @@ const formatPercent = (value: number) =>
     style: "percent",
   }).format(value);
 
+function normalizeValues(value?: string | string[]) {
+  return (Array.isArray(value) ? value : value ? [value] : [])
+    .flatMap((item) => item.split(","))
+    .map((item) => normalizeStatusLabel(item))
+    .filter(Boolean);
+}
+
+function normalizeSelectedStatuses(value?: string | string[]) {
+  const statuses = Array.from(new Set(normalizeValues(value)));
+  return statuses.length === 0 || statuses.includes("all") ? ["all"] : statuses;
+}
+
+function compareText(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function normalizeStatusLabel(value: string) {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function displayStatus(value: string) {
+  return statusLabels[normalizeStatusLabel(value)] ?? value;
+}
+
 function generatedPoId() {
   const now = new Date();
   const stamp = [
@@ -48,12 +110,15 @@ function generatedPoId() {
 }
 
 const statusClass = (status: string) => {
-  const normalized = status.toLowerCase();
+  const normalized = normalizeStatusLabel(status);
   if (normalized === "delivery") {
     return "bg-[#eaf6ef] text-[#1f6b3d]";
   }
   if (normalized === "inpro" || normalized === "final_payment") {
     return "bg-[#fff4e5] text-[#946200]";
+  }
+  if (normalized === "follow_up") {
+    return "bg-[#f1ecff] text-[#6b3fb3]";
   }
   if (normalized === "waiting_for_approve") {
     return "bg-[#eef4f8] text-[#255f85]";
@@ -64,50 +129,125 @@ const statusClass = (status: string) => {
 export default async function PoPortalPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{
+    dir?: string;
+    q?: string;
+    sort?: string;
+    status?: string | string[];
+  }>;
 }) {
   const data = await getPoPortalData();
-  const { q = "", status = "all" } = await searchParams;
-  const selectedStatus = status.trim().toLowerCase();
+  const params = await searchParams;
+  const { q = "" } = params;
+  const selectedStatuses = normalizeSelectedStatuses(params.status);
+  const selectedStatusSet = new Set(selectedStatuses);
+  const sortKey = SORT_KEYS.has(params.sort ?? "") ? params.sort ?? "incoming" : "incoming";
+  const sortDir = params.dir === "asc" ? "asc" : "desc";
   const today = new Date().toISOString().slice(0, 10);
   const query = q.trim().toLowerCase();
-  const filteredWorkbenchOrders = data.workbenchOrders.filter((order) => {
-    const matchesStatus =
-      selectedStatus === "all" ||
-      order.workStatus.toLowerCase() === selectedStatus ||
-      order.statuses.some((itemStatus) => itemStatus.toLowerCase() === selectedStatus);
-    const matchesQuery =
-      !query ||
-      [
-        order.poId,
-        order.poTitle,
-        order.supplierName,
-        order.supplierCode,
-        order.owner,
-        order.requester,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
+  const filteredWorkbenchOrders = data.workbenchOrders
+    .filter((order) => {
+      const orderWorkStatus = normalizeStatusLabel(order.workStatus);
+      const isClosed = orderWorkStatus === "closed";
+      const matchesStatus =
+        (selectedStatusSet.has("all") && !isClosed) ||
+        selectedStatusSet.has(orderWorkStatus) ||
+        order.statuses.some((itemStatus) =>
+          selectedStatusSet.has(normalizeStatusLabel(itemStatus)),
+        );
+      const matchesQuery =
+        !query ||
+        [
+          order.poId,
+          order.poTitle,
+          order.supplierName,
+          order.supplierCode,
+          order.quotationReference,
+          order.supplierInvoiceNo,
+          order.supplierDiscussionNote,
+          order.owner,
+          order.requester,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
 
-    return matchesStatus && matchesQuery;
-  });
-  const statusOptions = Array.from(
+      return matchesStatus && matchesQuery;
+    })
+    .sort((a, b) => {
+      const direction = sortDir === "asc" ? 1 : -1;
+      let result = 0;
+
+      if (sortKey === "po") {
+        result = compareText(a.poId, b.poId);
+      } else if (sortKey === "date") {
+        result = compareText(a.poDate, b.poDate);
+      } else if (sortKey === "supplier") {
+        result = compareText(a.supplierName, b.supplierName);
+      } else if (sortKey === "status") {
+        result = compareText(
+          a.workStatus || a.statuses[0] || "",
+          b.workStatus || b.statuses[0] || "",
+        );
+      } else if (sortKey === "lines") {
+        result = a.itemCount - b.itemCount;
+      } else if (sortKey === "pending") {
+        result = a.pendingApprovalQty - b.pendingApprovalQty;
+      } else if (sortKey === "amount") {
+        result = a.poAmountThb - b.poAmountThb;
+      } else {
+        result = a.activeIncomingQty - b.activeIncomingQty;
+      }
+
+      return result * direction || compareText(a.poId, b.poId);
+    });
+  const detectedStatusOptions = Array.from(
     new Set(
       data.workbenchOrders
         .flatMap((order) => [order.workStatus, ...order.statuses])
-        .map((value) => value.trim().toLowerCase())
+        .map((value) => normalizeStatusLabel(value))
         .filter(Boolean),
     ),
-  ).sort();
+  );
+  const statusOptions = [
+    ...DEFAULT_PO_STATUS_OPTIONS,
+    ...Array.from(detectedStatusOptions)
+      .filter((status) => !DEFAULT_PO_STATUS_OPTIONS.includes(status))
+      .sort(),
+  ];
+  const hasFilters = Boolean(q.trim()) || !selectedStatusSet.has("all");
+  const buildSortHref = (key: string) => {
+    const nextParams = new URLSearchParams();
+    const nextDir = sortKey === key && sortDir === "asc" ? "desc" : "asc";
+
+    if (q.trim()) {
+      nextParams.set("q", q.trim());
+    }
+    if (!selectedStatusSet.has("all")) {
+      nextParams.set("status", selectedStatuses.join(","));
+    }
+    nextParams.set("sort", key);
+    nextParams.set("dir", nextDir);
+
+    return `/po?${nextParams.toString()}`;
+  };
+  const sortHeader = (key: string, label: string, align: "left" | "right" = "left") => (
+    <Link
+      className={`inline-flex w-full ${align === "right" ? "justify-end" : ""} underline-offset-2 hover:underline`}
+      href={buildSortHref(key)}
+    >
+      {label}
+      {sortKey === key ? ` ${sortDir}` : ""}
+    </Link>
+  );
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
       <header className="border-b border-[#d9dde3] bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-5 py-5 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mx-auto flex max-w-[1800px] flex-col gap-5 px-4 py-5 sm:px-6 2xl:px-8 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">
-              Phase 2 preview · AppSheet PO export
+              Phase 2 preview - AppSheet PO export
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal">
               PO Portal
@@ -132,8 +272,8 @@ export default async function PoPortalPage({
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-6 sm:px-8">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mx-auto grid max-w-[1800px] gap-5 px-4 py-5 sm:px-6 2xl:px-8">
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           {[
             {
               detail: `${formatNumber(data.metrics.supplierCount)} suppliers`,
@@ -142,7 +282,7 @@ export default async function PoPortalPage({
               value: formatNumber(data.metrics.poCount),
             },
             {
-              detail: "active PO statuses only",
+              detail: "in progress / delivery outstanding only",
               icon: Truck,
               label: "Incoming units",
               value: formatNumber(data.metrics.activeIncomingTotal),
@@ -160,6 +300,18 @@ export default async function PoPortalPage({
               icon: PackageCheck,
               label: "Receiving rate",
               value: formatPercent(data.metrics.receivedRate),
+            },
+            {
+              detail: "paid rows from non-closed PO",
+              icon: WalletCards,
+              label: "Paid on open PO",
+              value: formatCurrency(data.metrics.openPaidAmountThb, "THB"),
+            },
+            {
+              detail: "payment_status = planned",
+              icon: CalendarClock,
+              label: "Planned payments",
+              value: formatCurrency(data.metrics.plannedAmountThb, "THB"),
             },
           ].map((metric) => {
             const Icon = metric.icon;
@@ -211,37 +363,65 @@ export default async function PoPortalPage({
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
+        <section className="grid gap-5 xl:grid-cols-[minmax(420px,520px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(460px,540px)_minmax(0,1fr)]">
           <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">PO Status Pipeline</h2>
               <p className="mt-1 text-sm text-[#667380]">
-                Line-level status from AppSheet `PO_ITEMS`.
+                Supplier incoming counts only unreceived in-progress or delivery lines.
               </p>
             </div>
             <div className="divide-y divide-[#edf1f5]">
-              {data.statusSummaries.map((row) => (
+              {data.supplierSummaries.map((row) => (
                 <div
-                  className="grid grid-cols-[1fr_auto] gap-3 px-5 py-4"
-                  key={row.status}
+                  className="grid gap-3 px-5 py-4"
+                  key={`${row.supplierCode}-${row.supplierName}`}
                 >
-                  <div>
-                    <span
-                      className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${statusClass(
-                        row.status,
-                      )}`}
-                    >
-                      {row.status}
-                    </span>
-                    <p className="mt-2 text-sm text-[#667380]">
-                      {formatNumber(row.poCount)} POs · {formatNumber(row.lineCount)} lines
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">{row.supplierName}</p>
+                      <p className="mt-1 text-xs text-[#667380]">
+                        {row.supplierCode || "No code"} | {formatNumber(row.poCount)} POs |{" "}
+                        {formatNumber(row.lineCount)} lines
+                      </p>
+                    </div>
+                    <p className="text-right font-mono font-semibold">
+                      {formatNumber(row.incomingQty)}
                     </p>
                   </div>
-                  <p className="self-center text-right font-mono font-semibold">
-                    {formatNumber(row.outstandingQty)}
-                  </p>
+                  <div className="grid gap-2 text-xs text-[#667380] sm:grid-cols-2">
+                    <p>
+                      Term:{" "}
+                      <span className="font-semibold text-[#364252]">
+                        {row.paymentTerms}
+                      </span>
+                    </p>
+                    <p className="sm:text-right">
+                      Open qty:{" "}
+                      <span className="font-mono text-[#364252]">
+                        {formatNumber(row.totalQty)}
+                      </span>
+                    </p>
+                    <p>
+                      Paid:{" "}
+                      <span className="font-mono text-[#1f6b3d]">
+                        {formatCurrency(row.paidAmountThb, "THB")}
+                      </span>
+                    </p>
+                    <p className="sm:text-right">
+                      Planned:{" "}
+                      <span className="font-mono text-[#946200]">
+                        {formatCurrency(row.plannedAmountThb, "THB")}
+                      </span>
+                    </p>
+                  </div>
                 </div>
               ))}
+              {data.supplierSummaries.length === 0 ? (
+                <p className="px-5 py-6 text-sm text-[#667380]">
+                  No active incoming supplier pipeline rows.
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -249,27 +429,16 @@ export default async function PoPortalPage({
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Active PO Workbench</h2>
               <p className="mt-1 text-sm text-[#667380]">
-                POs with active incoming, waiting approval, draft, and closed statuses.
+                POs with active incoming, waiting approval, draft, and open workflow statuses.
               </p>
-              <form className="mt-4 grid gap-3 md:grid-cols-[1fr_220px_auto]" action="/po">
+              <form className="mt-4 grid gap-3 lg:grid-cols-[minmax(280px,1fr)_minmax(300px,520px)_auto]" action="/po">
                 <input
                   className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
                   defaultValue={q}
                   name="q"
                   placeholder="Search PO, supplier, owner"
                 />
-                <select
-                  className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
-                  defaultValue={selectedStatus}
-                  name="status"
-                >
-                  <option value="all">All statuses</option>
-                  {statusOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
+                <PoStatusFilterSelect options={statusOptions} selected={selectedStatuses} />
                 <PendingSubmitButton
                   className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                   loadingText="Filtering..."
@@ -277,23 +446,37 @@ export default async function PoPortalPage({
                   Filter
                 </PendingSubmitButton>
               </form>
-              {(q || selectedStatus !== "all") ? (
+              {hasFilters ? (
                 <Link className="mt-3 inline-flex text-sm font-semibold text-[#255f85]" href="/po">
                   Clear filters
                 </Link>
               ) : null}
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
+              <table className="min-w-[1500px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
-                    <th className="px-4 py-3 font-semibold">PO</th>
-                    <th className="px-4 py-3 font-semibold">Supplier</th>
-                    <th className="px-4 py-3 font-semibold">Status</th>
-                    <th className="px-4 py-3 text-right font-semibold">Lines</th>
-                    <th className="px-4 py-3 text-right font-semibold">Incoming</th>
-                    <th className="px-4 py-3 text-right font-semibold">Pending</th>
-                    <th className="px-4 py-3 text-right font-semibold">Amount</th>
+                    <th className="px-4 py-3 font-semibold">{sortHeader("po", "PO")}</th>
+                    <th className="px-4 py-3 font-semibold">{sortHeader("date", "Date")}</th>
+                    <th className="px-4 py-3 font-semibold">
+                      {sortHeader("supplier", "Supplier")}
+                    </th>
+                    <th className="px-4 py-3 font-semibold">Comment</th>
+                    <th className="px-4 py-3 font-semibold">
+                      {sortHeader("status", "Status")}
+                    </th>
+                    <th className="px-4 py-3 text-right font-semibold">
+                      {sortHeader("lines", "Lines", "right")}
+                    </th>
+                    <th className="px-4 py-3 text-right font-semibold">
+                      {sortHeader("incoming", "Incoming", "right")}
+                    </th>
+                    <th className="px-4 py-3 text-right font-semibold">
+                      {sortHeader("pending", "Pending", "right")}
+                    </th>
+                    <th className="px-4 py-3 text-right font-semibold">
+                      {sortHeader("amount", "Amount", "right")}
+                    </th>
                     <th className="px-4 py-3 font-semibold">Update</th>
                   </tr>
                 </thead>
@@ -302,19 +485,45 @@ export default async function PoPortalPage({
                     <tr key={order.poId}>
                       <td className="whitespace-nowrap px-4 py-3">
                         <p className="font-mono text-xs font-semibold text-[#172026]">
-                          <Link className="underline-offset-2 hover:underline" href={`/po/${encodeURIComponent(order.poId)}`}>
+                          <Link
+                            className="underline-offset-2 hover:underline"
+                            href={`/po/${encodeURIComponent(order.poId)}`}
+                          >
                             {order.poId}
                           </Link>
                         </p>
-                        <p className="mt-1 text-xs text-[#6b7785]">
-                          {order.poDate ? order.poDate.slice(0, 10) : "No date"}
-                        </p>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-[#6b7785]">
+                        {order.poDate ? order.poDate.slice(0, 10) : "No date"}
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-medium">{order.supplierName}</p>
                         <p className="mt-1 text-xs text-[#6b7785]">
-                          {order.supplierCode} · {order.currency}
+                          Quotation: {order.quotationReference || "-"}
                         </p>
+                        <p className="mt-0.5 text-xs text-[#6b7785]">
+                          Supplier INV: {order.supplierInvoiceNo || "-"}
+                        </p>
+                      </td>
+                      <td className="min-w-[320px] px-4 py-3 align-top">
+                        {data.source === "supabase" ? (
+                          <QuickPoCommentForm
+                            actualReceivedDate={order.actualReceivedDate}
+                            estimatedArrivedDate={order.estimatedArrivedDate}
+                            estimatedDeliveryDate={order.estimatedDeliveryDate}
+                            poId={order.poId}
+                            quotationReference={order.quotationReference}
+                            supplierDiscussionNote={order.supplierDiscussionNote}
+                            supplierInvoiceNo={order.supplierInvoiceNo}
+                          />
+                        ) : (
+                          <p
+                            className="max-h-24 max-w-[360px] overflow-y-auto whitespace-pre-wrap rounded-md border border-[#e2e7ed] bg-[#fbfcfd] px-3 py-2 text-xs leading-5 text-[#52606d]"
+                            title={order.supplierDiscussionNote}
+                          >
+                            {order.supplierDiscussionNote || "-"}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
@@ -325,7 +534,7 @@ export default async function PoPortalPage({
                               )}`}
                               key={status}
                             >
-                              {status}
+                              {displayStatus(status)}
                             </span>
                           ))}
                         </div>
@@ -363,7 +572,7 @@ export default async function PoPortalPage({
                   ))}
                   {filteredWorkbenchOrders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-6 text-sm text-[#667380]" colSpan={8}>
+                      <td className="px-4 py-6 text-sm text-[#667380]" colSpan={10}>
                         No purchase orders match this search.
                       </td>
                     </tr>
@@ -373,7 +582,6 @@ export default async function PoPortalPage({
             </div>
           </div>
         </section>
-
       </div>
     </main>
   );

@@ -8,16 +8,19 @@ import { excelSupplierMap } from "@/lib/excel-supplier-map";
 import { getPurchasingDecisionData } from "@/lib/purchasing-decision-data";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
-const ACTIVE_STATUSES = new Set(["inpro", "delivery", "final_payment"]);
+// final_payment is payment follow-up, not physical inbound stock.
+// Incoming stock only counts unreceived lines still expected to arrive.
+const PHYSICAL_INCOMING_STATUSES = new Set(["inpro", "delivery"]);
 const PENDING_STATUSES = new Set(["waiting_for_approve"]);
 const WORKBENCH_ORDER_STATUSES = new Set([
   "draft",
   "waiting_for_approve",
+  "follow_up",
   "inpro",
   "delivery",
   "final_payment",
-  "closed",
 ]);
+const CLOSED_ORDER_STATUSES = new Set(["closed"]);
 const PAGE_SIZE = 1000;
 
 type PoPortalSupplierRow = {
@@ -32,6 +35,11 @@ type PoPortalOrderRow = {
   rqq_id: string | null;
   po_title: string | null;
   po_date: string | null;
+  actual_received_date?: string | null;
+  cancelled_at?: string | null;
+  closed_at?: string | null;
+  estimated_arrived_date?: string | null;
+  estimated_delivery_date?: string | null;
   work_status: string | null;
   requester: string | null;
   owner: string | null;
@@ -45,8 +53,10 @@ type PoPortalOrderRow = {
   landed_cost_note?: string | null;
   quotation_reference?: string | null;
   supplier_invoice_no?: string | null;
+  supplier_discussion_note?: string | null;
   vat_mode?: string | null;
   payment_terms_snapshot: string | null;
+  source_payload?: unknown;
 };
 
 type PoPortalItemRow = {
@@ -229,6 +239,8 @@ type PortalOrder = {
   poTitle: string;
   poDate: string;
   workStatus: string;
+  cancelledAt: string;
+  closedAt: string;
   requester: string;
   owner: string;
   supplierCode: string;
@@ -241,8 +253,14 @@ type PortalOrder = {
   landedCostNote: string;
   quotationReference: string;
   supplierInvoiceNo: string;
+  supplierDiscussionNote: string;
   vatMode: string;
+  estimatedDeliveryDate: string;
+  estimatedArrivedDate: string;
+  actualReceivedDate: string;
   paymentTerms: string;
+  paidAmountThb: number;
+  plannedAmountThb: number;
   itemCount: number;
   statuses: string[];
   totalQty: number;
@@ -251,15 +269,34 @@ type PortalOrder = {
 };
 
 function normalizedStatus(value: string) {
-  return value.trim().toLowerCase();
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
-function isActiveStatus(value: string) {
-  return ACTIVE_STATUSES.has(normalizedStatus(value));
+function isPhysicalIncomingStatus(value: string) {
+  return PHYSICAL_INCOMING_STATUSES.has(normalizedStatus(value));
 }
 
 function isPendingStatus(value: string) {
   return PENDING_STATUSES.has(normalizedStatus(value));
+}
+
+function isClosedOrderStatus(value: string) {
+  return CLOSED_ORDER_STATUSES.has(normalizedStatus(value));
+}
+
+function isOrderClosedOrCancelled(order: {
+  cancelledAt?: string;
+  closedAt?: string;
+  workStatus: string;
+}) {
+  const status = normalizedStatus(order.workStatus);
+  return Boolean(
+    order.closedAt ||
+      order.cancelledAt ||
+      status === "closed" ||
+      status === "cancelled" ||
+      status === "canceled",
+  );
 }
 
 function statusLabel(value: string) {
@@ -283,20 +320,97 @@ function compactText(value: string | null | undefined) {
   return value?.trim() || "";
 }
 
+function objectValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function poDetailHeaderPayload(value: unknown) {
+  const payload = objectValue(value);
+  return objectValue(payload.po_detail_header);
+}
+
+function payloadText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function firstProduct(row: PoCatalogVariantRow) {
   return Array.isArray(row.products) ? row.products[0] : row.products;
 }
 
-function activeIncomingQty(items: PoPortalItem[]) {
+function isActiveIncomingLine(
+  item: PoPortalItem,
+  order: { cancelledAt?: string; closedAt?: string; workStatus: string },
+) {
+  return (
+    item.outstandingQty > 0 &&
+    isPhysicalIncomingStatus(item.status) &&
+    isPhysicalIncomingStatus(order.workStatus) &&
+    !isOrderClosedOrCancelled(order)
+  );
+}
+
+function isPendingApprovalLine(
+  item: PoPortalItem,
+  order: { cancelledAt?: string; closedAt?: string; workStatus: string },
+) {
+  return (
+    item.outstandingQty > 0 &&
+    isPendingStatus(item.status) &&
+    isPendingStatus(order.workStatus) &&
+    !isOrderClosedOrCancelled(order)
+  );
+}
+
+function activeIncomingQty(
+  items: PoPortalItem[],
+  order: { cancelledAt?: string; closedAt?: string; workStatus: string },
+) {
   return items
-    .filter((item) => isActiveStatus(item.status))
+    .filter((item) => isActiveIncomingLine(item, order))
     .reduce((sum, item) => sum + item.outstandingQty, 0);
 }
 
-function pendingApprovalQty(items: PoPortalItem[]) {
+function pendingApprovalQty(
+  items: PoPortalItem[],
+  order: { cancelledAt?: string; closedAt?: string; workStatus: string },
+) {
   return items
-    .filter((item) => isPendingStatus(item.status))
+    .filter((item) => isPendingApprovalLine(item, order))
     .reduce((sum, item) => sum + item.outstandingQty, 0);
+}
+
+function paymentAmountThb(payment: PoPaymentRow) {
+  const amountThb = numeric(payment.amount_thb);
+  if (amountThb > 0) {
+    return amountThb;
+  }
+
+  const exchangeRate = numeric(payment.exchange_rate) || 1;
+  return numeric(payment.amount) * exchangeRate;
+}
+
+function paymentTotalsByPoId(payments: PoPaymentRow[]) {
+  const totals = new Map<string, { paidAmountThb: number; plannedAmountThb: number }>();
+
+  for (const payment of payments) {
+    const poId = payment.po_id?.trim();
+    if (!poId) {
+      continue;
+    }
+
+    const current = totals.get(poId) ?? { paidAmountThb: 0, plannedAmountThb: 0 };
+    if ((payment.payment_status ?? "paid").toLowerCase() === "planned") {
+      current.plannedAmountThb += paymentAmountThb(payment);
+    } else {
+      current.paidAmountThb += paymentAmountThb(payment);
+    }
+    totals.set(poId, current);
+  }
+
+  return totals;
 }
 
 function mapSupabaseItem(
@@ -402,7 +516,12 @@ function latestOnHandBySku(rows: InventorySnapshotRow[]) {
   return onHandBySku;
 }
 
-function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[]): PortalOrder {
+function mapSupabaseOrder(
+  order: PoPortalOrderRow,
+  orderLineItems: PortalItem[],
+  paymentTotals?: { paidAmountThb: number; plannedAmountThb: number },
+): PortalOrder {
+  const headerPayload = poDetailHeaderPayload(order.source_payload);
   const statuses = Array.from(new Set(orderLineItems.map((item) => item.status)));
   const totalQty = orderLineItems.reduce((sum, item) => sum + item.qty, 0);
   const receivedQty = orderLineItems.reduce((sum, item) => sum + item.receivedQty, 0);
@@ -414,6 +533,8 @@ function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[])
     poTitle: order.po_title ?? "",
     poDate: order.po_date ?? "",
     workStatus: order.work_status ?? "",
+    cancelledAt: order.cancelled_at ?? "",
+    closedAt: order.closed_at ?? "",
     requester: order.requester ?? "",
     owner: order.owner ?? "",
     supplierCode: order.supplier_code ?? "",
@@ -424,10 +545,28 @@ function mapSupabaseOrder(order: PoPortalOrderRow, orderLineItems: PortalItem[])
     freightTotal: numeric(order.freight_total),
     otherLandedCostTotal: numeric(order.other_landed_cost_total),
     landedCostNote: order.landed_cost_note ?? "",
-    quotationReference: order.quotation_reference ?? "",
-    supplierInvoiceNo: order.supplier_invoice_no ?? "",
+    quotationReference:
+      compactText(order.quotation_reference) ||
+      payloadText(headerPayload, "quotationReference"),
+    supplierInvoiceNo:
+      compactText(order.supplier_invoice_no) ||
+      payloadText(headerPayload, "supplierInvoiceNo"),
+    supplierDiscussionNote:
+      compactText(order.supplier_discussion_note) ||
+      payloadText(headerPayload, "supplierDiscussionNote"),
     vatMode: order.vat_mode ?? "",
+    estimatedDeliveryDate:
+      compactText(order.estimated_delivery_date) ||
+      payloadText(headerPayload, "estimatedDeliveryDate"),
+    estimatedArrivedDate:
+      compactText(order.estimated_arrived_date) ||
+      payloadText(headerPayload, "estimatedArrivedDate"),
+    actualReceivedDate:
+      compactText(order.actual_received_date) ||
+      payloadText(headerPayload, "actualReceivedDate"),
     paymentTerms: order.payment_terms_snapshot ?? "",
+    paidAmountThb: paymentTotals?.paidAmountThb ?? 0,
+    plannedAmountThb: paymentTotals?.plannedAmountThb ?? 0,
     itemCount: orderLineItems.length,
     statuses: statuses.length > 0 ? statuses : [order.work_status ?? "unknown"],
     totalQty,
@@ -479,19 +618,38 @@ function summarizePoPortalData(
     const orderLineItems = itemByPoId.get(order.poId) ?? [];
     return {
       ...order,
-      activeIncomingQty: activeIncomingQty(orderLineItems),
-      pendingApprovalQty: pendingApprovalQty(orderLineItems),
-      activeLineCount: orderLineItems.filter((item) => isActiveStatus(item.status)).length,
-      pendingLineCount: orderLineItems.filter((item) => isPendingStatus(item.status)).length,
+      activeIncomingQty: activeIncomingQty(orderLineItems, order),
+      pendingApprovalQty: pendingApprovalQty(orderLineItems, order),
+      activeLineCount: orderLineItems.filter((item) =>
+        isActiveIncomingLine(item, order),
+      ).length,
+      pendingLineCount: orderLineItems.filter((item) =>
+        isPendingApprovalLine(item, order),
+      ).length,
     };
   });
 
+  const openOrders = enrichedOrders.filter((order) => !isOrderClosedOrCancelled(order));
   const activeOrders = enrichedOrders
+    .filter(
+      (order) =>
+        !isOrderClosedOrCancelled(order) &&
+        (order.activeIncomingQty > 0 ||
+          order.pendingApprovalQty > 0 ||
+          WORKBENCH_ORDER_STATUSES.has(normalizedStatus(order.workStatus))),
+    )
+    .sort(
+      (a, b) =>
+        b.activeIncomingQty - a.activeIncomingQty ||
+        b.pendingApprovalQty - a.pendingApprovalQty,
+    );
+  const workbenchOrders = enrichedOrders
     .filter(
       (order) =>
         order.activeIncomingQty > 0 ||
         order.pendingApprovalQty > 0 ||
-        WORKBENCH_ORDER_STATUSES.has(normalizedStatus(order.workStatus)),
+        WORKBENCH_ORDER_STATUSES.has(normalizedStatus(order.workStatus)) ||
+        isClosedOrderStatus(order.workStatus),
     )
     .sort(
       (a, b) =>
@@ -517,6 +675,83 @@ function summarizePoPortalData(
     }))
     .sort((a, b) => b.outstandingQty - a.outstandingQty || b.lineCount - a.lineCount);
 
+  const supplierSummaryMap = new Map<
+    string,
+    {
+      supplierCode: string;
+      supplierName: string;
+      paymentTerms: Set<string>;
+      poCount: Set<string>;
+      lineCount: number;
+      incomingQty: number;
+      totalQty: number;
+      outstandingQty: number;
+      paidAmountThb: number;
+      plannedAmountThb: number;
+    }
+  >();
+
+  const pipelineOrders = openOrders.filter(
+    (order) =>
+      order.activeIncomingQty > 0 ||
+      order.pendingApprovalQty > 0 ||
+      WORKBENCH_ORDER_STATUSES.has(normalizedStatus(order.workStatus)),
+  );
+
+  for (const order of pipelineOrders) {
+    const supplierKey =
+      order.supplierCode.trim().toLowerCase() ||
+      order.supplierName.trim().toLowerCase() ||
+      "unknown";
+    const current =
+      supplierSummaryMap.get(supplierKey) ??
+      {
+        supplierCode: order.supplierCode,
+        supplierName: order.supplierName || order.supplierCode || "Unknown supplier",
+        paymentTerms: new Set<string>(),
+        poCount: new Set<string>(),
+        lineCount: 0,
+        incomingQty: 0,
+        totalQty: 0,
+        outstandingQty: 0,
+        paidAmountThb: 0,
+        plannedAmountThb: 0,
+      };
+
+    if (order.paymentTerms.trim()) {
+      current.paymentTerms.add(order.paymentTerms.trim());
+    }
+    current.poCount.add(order.poId);
+    current.lineCount += order.itemCount;
+    current.incomingQty += order.activeIncomingQty;
+    current.totalQty += order.activeIncomingQty + order.pendingApprovalQty;
+    current.outstandingQty += order.activeIncomingQty + order.pendingApprovalQty;
+    current.paidAmountThb += order.paidAmountThb;
+    current.plannedAmountThb += order.plannedAmountThb;
+    supplierSummaryMap.set(supplierKey, current);
+  }
+
+  const supplierSummaries = Array.from(supplierSummaryMap.values())
+    .map((row) => ({
+      supplierCode: row.supplierCode,
+      supplierName: row.supplierName,
+      paymentTerms: Array.from(row.paymentTerms).join(" | ") || "-",
+      poCount: row.poCount.size,
+      lineCount: row.lineCount,
+      incomingQty: row.incomingQty,
+      totalQty: row.totalQty,
+      outstandingQty: row.outstandingQty,
+      paidAmountThb: row.paidAmountThb,
+      plannedAmountThb: row.plannedAmountThb,
+    }))
+    .sort(
+      (a, b) =>
+        b.incomingQty - a.incomingQty ||
+        b.outstandingQty - a.outstandingQty ||
+        b.totalQty - a.totalQty ||
+        a.supplierName.localeCompare(b.supplierName),
+    );
+
   const activeIncomingTotal = enrichedOrders.reduce(
     (sum, order) => sum + order.activeIncomingQty,
     0,
@@ -530,6 +765,14 @@ function summarizePoPortalData(
     0,
   );
   const orderedTotal = orders.reduce((sum, order) => sum + order.totalQty, 0);
+  const openPaidAmountThb = openOrders.reduce(
+    (sum, order) => sum + order.paidAmountThb,
+    0,
+  );
+  const plannedAmountThb = orders.reduce(
+    (sum, order) => sum + order.plannedAmountThb,
+    0,
+  );
 
   return {
     metrics: {
@@ -541,13 +784,16 @@ function summarizePoPortalData(
       orderedTotal,
       receivedTotal,
       receivedRate: orderedTotal > 0 ? receivedTotal / orderedTotal : 0,
+      openPaidAmountThb,
+      plannedAmountThb,
     },
     source,
     suppliers,
     catalogItems,
     statusSummaries,
+    supplierSummaries,
     activeOrders: activeOrders.slice(0, 20),
-    workbenchOrders: activeOrders,
+    workbenchOrders,
     openItems,
   };
 }
@@ -565,7 +811,15 @@ function getAppSheetPoPortalData() {
       freightTotal: 0,
       landedCostNote: "",
       otherLandedCostTotal: 0,
+      paidAmountThb: 0,
+      plannedAmountThb: 0,
       quotationReference: "",
+      actualReceivedDate: "",
+      cancelledAt: "",
+      closedAt: "",
+      estimatedArrivedDate: "",
+      estimatedDeliveryDate: "",
+      supplierDiscussionNote: "",
       supplierInvoiceNo: "",
       vatMode: "",
     })),
@@ -614,8 +868,27 @@ async function fetchAllRows<T>(
   }
 }
 
+async function fetchPaymentRows() {
+  const rowsWithThb = await fetchAllRows<PoPaymentRow>(
+    "po_payments",
+    "id,po_id,payment_date,payment_type,payment_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at",
+    "po_id",
+  );
+  if (rowsWithThb) {
+    return rowsWithThb;
+  }
+
+  return (
+    (await fetchAllRows<PoPaymentRow>(
+      "po_payments",
+      "id,po_id,payment_date,payment_type,payment_status,due_date,amount,currency,paid_by,reference,note,created_at",
+      "po_id",
+    )) ?? []
+  );
+}
+
 async function getSupabasePoPortalData() {
-  const [suppliers, orders, items, receiptTotals] = await Promise.all([
+  const [suppliers, orders, items, receiptTotals, payments] = await Promise.all([
     fetchAllRows<PoPortalSupplierRow>(
       "po_suppliers",
       "supplier_code,supplier_name,currency,payment_terms",
@@ -628,18 +901,28 @@ async function getSupabasePoPortalData() {
         "rqq_id",
         "po_title",
         "po_date",
+        "actual_received_date",
+        "cancelled_at",
+        "closed_at",
+        "estimated_arrived_date",
+        "estimated_delivery_date",
         "work_status",
         "requester",
         "owner",
         "supplier_code",
         "supplier_name_snapshot",
         "currency",
-      "po_amount_foreign",
-      "po_amount_thb",
-      "freight_total",
-      "other_landed_cost_total",
-      "landed_cost_note",
-      "payment_terms_snapshot",
+        "po_amount_foreign",
+        "po_amount_thb",
+        "freight_total",
+        "other_landed_cost_total",
+        "landed_cost_note",
+        "quotation_reference",
+        "supplier_invoice_no",
+        "supplier_discussion_note",
+        "vat_mode",
+        "payment_terms_snapshot",
+        "source_payload",
       ].join(","),
       "po_date",
     ),
@@ -672,6 +955,7 @@ async function getSupabasePoPortalData() {
       "po_item_uuid,workflow_received_qty,total_received_qty,outstanding_qty",
       "po_id",
     ),
+    fetchPaymentRows(),
   ]);
 
   if (!suppliers || !orders || !items || !receiptTotals || orders.length === 0) {
@@ -700,12 +984,17 @@ async function getSupabasePoPortalData() {
   for (const item of mappedItems) {
     itemsByPoId.set(item.poId, [...(itemsByPoId.get(item.poId) ?? []), item]);
   }
+  const paymentTotalsByPo = paymentTotalsByPoId(payments);
 
   const mappedOrders = orders
     .filter((order) => order.po_id)
     .map((order) => {
       const orderLineItems = itemsByPoId.get(order.po_id ?? "") ?? [];
-      return mapSupabaseOrder(order, orderLineItems);
+      return mapSupabaseOrder(
+        order,
+        orderLineItems,
+        paymentTotalsByPo.get(order.po_id ?? ""),
+      );
     });
 
   return summarizePoPortalData(
@@ -758,12 +1047,15 @@ async function getPoCatalogItems(suppliers: PoPortalSupplierOption[]) {
     return [];
   }
 
-  const supplierCodeByName = new Map(
-    suppliers.map((supplier) => [supplier.supplierName.toLowerCase(), supplier.supplierCode]),
-  );
-  const supplierCurrencyByName = new Map(
-    suppliers.map((supplier) => [supplier.supplierName.toLowerCase(), supplier.currency || "THB"]),
-  );
+  const supplierCodeByName = new Map<string, string>();
+  const supplierCurrencyByName = new Map<string, string>();
+  for (const supplier of suppliers) {
+    const supplierKey = supplier.supplierName.toLowerCase();
+    if (!supplierCodeByName.has(supplierKey)) {
+      supplierCodeByName.set(supplierKey, supplier.supplierCode);
+      supplierCurrencyByName.set(supplierKey, supplier.currency || "THB");
+    }
+  }
   const manualSupplierBySku = new Map(
     (manualSupplierRows ?? [])
       .filter((row) => row.sku?.trim() && row.supplier?.trim())
@@ -861,6 +1153,12 @@ export async function getPoPortalDetailData(poId: string) {
         landedCostNote: "",
         otherLandedCostTotal: 0,
         quotationReference: "",
+        actualReceivedDate: "",
+        cancelledAt: "",
+        closedAt: "",
+        estimatedArrivedDate: "",
+        estimatedDeliveryDate: "",
+        supplierDiscussionNote: "",
         supplierInvoiceNo: "",
         vatMode: "",
       },
@@ -889,6 +1187,11 @@ export async function getPoPortalDetailData(poId: string) {
         "rqq_id",
         "po_title",
         "po_date",
+        "actual_received_date",
+        "cancelled_at",
+        "closed_at",
+        "estimated_arrived_date",
+        "estimated_delivery_date",
         "work_status",
         "requester",
         "owner",
@@ -902,8 +1205,10 @@ export async function getPoPortalDetailData(poId: string) {
         "landed_cost_note",
         "quotation_reference",
         "supplier_invoice_no",
+        "supplier_discussion_note",
         "vat_mode",
         "payment_terms_snapshot",
+        "source_payload",
       ].join(","),
     )
     .eq("po_id", poId)
@@ -918,6 +1223,8 @@ export async function getPoPortalDetailData(poId: string) {
           "rqq_id",
           "po_title",
           "po_date",
+          "cancelled_at",
+          "closed_at",
           "work_status",
           "requester",
           "owner",
@@ -929,6 +1236,10 @@ export async function getPoPortalDetailData(poId: string) {
           "freight_total",
           "other_landed_cost_total",
           "landed_cost_note",
+          "quotation_reference",
+          "supplier_invoice_no",
+          "vat_mode",
+          "source_payload",
           "payment_terms_snapshot",
         ].join(","),
       )

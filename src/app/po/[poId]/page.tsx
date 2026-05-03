@@ -624,20 +624,42 @@ export default async function PoDetailPage({
                 ["Currency", order.currency || "-"],
                 ["Quotation", order.quotationReference || "-"],
                 ["Supplier INV", order.supplierInvoiceNo || "-"],
+                ["Est. delivery", order.estimatedDeliveryDate ? formatDate(order.estimatedDeliveryDate) : "-"],
+                ["Est. arrived", order.estimatedArrivedDate ? formatDate(order.estimatedArrivedDate) : "-"],
+                ["Date received", order.actualReceivedDate ? formatDate(order.actualReceivedDate) : "-"],
               ].map(([label, value]) => (
                 <div className="grid grid-cols-[120px_1fr] gap-4" key={label}>
                   <p className="font-semibold text-[#667380]">{label}</p>
                   <p>{value}</p>
                 </div>
               ))}
+              {order.supplierDiscussionNote ? (
+                <div className="grid grid-cols-[120px_1fr] gap-4">
+                  <p className="font-semibold text-[#667380]">Supplier note</p>
+                  <p className="whitespace-pre-wrap">{order.supplierDiscussionNote}</p>
+                </div>
+              ) : null}
               {data.source === "supabase" ? (
                 <div className="grid gap-4 border-t border-[#e2e7ed] pt-4">
                   <PoHeaderRefsForm
+                    actualReceivedDate={order.actualReceivedDate}
+                    estimatedArrivedDate={order.estimatedArrivedDate}
+                    estimatedDeliveryDate={order.estimatedDeliveryDate}
                     poId={order.poId}
                     quotationReference={order.quotationReference}
+                    supplierDiscussionNote={order.supplierDiscussionNote}
                     supplierInvoiceNo={order.supplierInvoiceNo}
                   />
-                  <StatusActionForm currentStatus={order.workStatus || "draft"} poId={order.poId} />
+                  <StatusActionForm
+                    allowClosed={order.receivedQty > 0}
+                    currentStatus={order.workStatus || "draft"}
+                    poId={order.poId}
+                  />
+                  {order.receivedQty <= 0 ? (
+                    <p className="rounded-md bg-[#fff4e5] px-3 py-2 text-xs font-semibold text-[#946200]">
+                      Closed status appears after this PO has received stock.
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
