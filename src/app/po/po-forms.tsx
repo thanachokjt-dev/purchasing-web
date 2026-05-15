@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import type { DragEvent, ReactNode } from "react";
 import {
   addPoItemAction,
   addPoItemsBatchAction,
@@ -80,6 +80,7 @@ type PaymentRowItem = {
 };
 
 const initialState: PoActionState = { ok: false, message: "" };
+const printIntentEvent = "po-detail:print-intent";
 const statusOptions = [
   "draft",
   "waiting_for_approve",
@@ -108,30 +109,68 @@ function statusOptionLabel(status: string) {
 }
 
 const standardPaymentTypes = [
-  ["deposit50", "Deposit 50%"],
-  ["deposit30", "Deposit 30%"],
-  ["before_shipment50", "Before shipment 50%"],
-  ["for_shipment25", "For shipment 25%"],
-  ["after_received25", "After received 25%"],
+  ["deposit50%", "Deposit 50%"],
+  ["deposit30%", "Deposit 30%"],
+  ["beforeshipments25%", "Before Shipment 25%"],
+  ["beforeshipments50%", "Before Shipment 50%"],
+  ["afterreceived25%", "After Received 25%"],
+  ["afterreceived25%_1month", "After Received 25% - 1 Month"],
+  ["aftersale25%_1month", "After Sale 25% - 1 Month"],
   ["balance", "Balance"],
   ["freight", "Freight"],
   ["shipping", "Shipping"],
   ["fine", "Fine / penalty"],
-  ["other", "Other cost"],
+  ["other", "Other"],
 ] as const;
 
-function paymentTypeOptions(paymentTerms?: string | null) {
+function readablePaymentType(value: string) {
+  const compact = value.trim().toLowerCase().replace(/[^a-z0-9%]+/g, "");
+  const labels: Record<string, string> = {
+    afterreceived25: "After Received 25%",
+    "afterreceived25%": "After Received 25%",
+    afterreceived251month: "After Received 25% - 1 Month",
+    afterrecived25: "After Received 25%",
+    "afterrecived25%": "After Received 25%",
+    afterrecived251month: "After Received 25% - 1 Month",
+    aftersale251month: "After Sale 25% - 1 Month",
+    before_shipment50: "Before Shipment 50%",
+    beforeshipment50: "Before Shipment 50%",
+    beforeshipments25: "Before Shipment 25%",
+    "beforeshipments25%": "Before Shipment 25%",
+    beforeshipments50: "Before Shipment 50%",
+    "beforeshipments50%": "Before Shipment 50%",
+    deposit30: "Deposit 30%",
+    "deposit30%": "Deposit 30%",
+    deposit50: "Deposit 50%",
+    "deposit50%": "Deposit 50%",
+    freight: "Freight",
+    other: "Other",
+    shipping: "Shipping",
+  };
+
+  return labels[compact] ?? (value.trim() || "-");
+}
+
+function paymentTypeOptions(paymentTerms?: string | null, savedTypes: string[] = []) {
+  const fromSavedTypes = savedTypes
+    .map((type) => type.trim())
+    .filter(Boolean)
+    .map((type) => ({
+      label: readablePaymentType(type),
+      value: type,
+    }));
   const fromTerms = String(paymentTerms ?? "")
     .split(/[,+/|]/)
     .map((term) => term.trim())
     .filter(Boolean)
     .map((term) => ({
-      label: term,
+      label: readablePaymentType(term),
       value: term.toLowerCase().replace(/[^a-z0-9%]+/g, "_").replace(/^_+|_+$/g, ""),
     }));
 
   const seen = new Set<string>();
   return [
+    ...fromSavedTypes,
     ...fromTerms,
     ...standardPaymentTypes.map(([value, label]) => ({ label, value })),
   ].filter((option) => {
@@ -141,6 +180,16 @@ function paymentTypeOptions(paymentTerms?: string | null) {
     seen.add(option.value);
     return true;
   });
+}
+
+function paymentTypeOptionsWithBlank(
+  paymentTerms?: string | null,
+  savedTypes: string[] = [],
+) {
+  return [
+    { label: "Select payment type", value: "" },
+    ...paymentTypeOptions(paymentTerms, savedTypes),
+  ];
 }
 
 function draftLineKey(item: DraftLineItem) {
@@ -221,6 +270,77 @@ const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em]
 const buttonClass =
   "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
 
+function useCatalogSearch({
+  limit,
+  query,
+  supplierCode,
+  supplierName,
+}: {
+  limit: number;
+  query: string;
+  supplierCode?: string;
+  supplierName?: string;
+}) {
+  const [items, setItems] = useState<CatalogItemOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let stale = false;
+    const debounceTimer = window.setTimeout(() => {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        q: normalizedQuery,
+      });
+      if (supplierCode) {
+        params.set("supplierCode", supplierCode);
+      }
+      if (supplierName) {
+        params.set("supplierName", supplierName);
+      }
+
+      setLoading(true);
+      fetch(`/api/po/catalog-search?${params.toString()}`, {
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : { items: [] }))
+        .then((payload: { items?: CatalogItemOption[] }) => {
+          if (!stale) {
+            setItems(Array.isArray(payload.items) ? payload.items : []);
+          }
+        })
+        .catch((error) => {
+          if (!stale && !(error instanceof DOMException && error.name === "AbortError")) {
+            setItems([]);
+          }
+        })
+        .finally(() => {
+          if (!stale) {
+            setLoading(false);
+          }
+        });
+    }, 275);
+
+    return () => {
+      stale = true;
+      window.clearTimeout(debounceTimer);
+      controller.abort();
+    };
+  }, [limit, query, supplierCode, supplierName]);
+
+  const hasSearchQuery = query.trim().length >= 2;
+
+  return {
+    items: hasSearchQuery ? items : [],
+    loading: hasSearchQuery && loading,
+  };
+}
+
 export function PoStatusFilterSelect({
   options,
   selected,
@@ -277,12 +397,10 @@ export function PoStatusFilterSelect({
 }
 
 export function CreatePoForm({
-  catalogItems,
   suggestedPoId,
   suppliers,
   today,
 }: {
-  catalogItems: CatalogItemOption[];
   suggestedPoId: string;
   suppliers: SupplierOption[];
   today: string;
@@ -300,23 +418,12 @@ export function CreatePoForm({
   const selectedSupplier = suppliers.find(
     (supplier) => supplier.supplierCode === supplierCode,
   );
-  const selectedSupplierName = selectedSupplier?.supplierName.toLowerCase() ?? "";
-  const filteredCatalogItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    return catalogItems
-      .filter((item) => {
-        const matchesSupplier =
-          !supplierCode ||
-          item.supplierCode === supplierCode ||
-          item.supplierName.toLowerCase() === selectedSupplierName;
-        const matchesQuery =
-          !normalizedQuery || item.searchText.includes(normalizedQuery);
-
-        return matchesSupplier && matchesQuery;
-      })
-      .slice(0, 10);
-  }, [catalogItems, query, selectedSupplierName, supplierCode]);
+  const { items: filteredCatalogItems, loading: catalogLoading } = useCatalogSearch({
+    limit: 10,
+    query,
+    supplierCode,
+    supplierName: selectedSupplier?.supplierName ?? "",
+  });
 
   function selectCatalogItem(item: CatalogItemOption) {
     setQuery(`${item.sku} - ${item.productTitle}`);
@@ -395,8 +502,13 @@ export function CreatePoForm({
           />
           <input name="sku" type="hidden" value={sku} />
           <input name="variantTitle" type="hidden" value={variantTitle} />
-          {query && filteredCatalogItems.length > 0 ? (
+          {query.trim().length >= 2 && (filteredCatalogItems.length > 0 || catalogLoading) ? (
             <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
+              {catalogLoading ? (
+                <p className="px-3 py-2 text-sm font-medium normal-case tracking-normal text-[#667380]">
+                  Searching...
+                </p>
+              ) : null}
               {filteredCatalogItems.map((item) => (
                 <button
                   className="grid w-full grid-cols-[48px_1fr] gap-3 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
@@ -574,6 +686,7 @@ export function PoHeaderRefsForm({
   actualReceivedDate,
   estimatedArrivedDate,
   estimatedDeliveryDate,
+  headerPurpose,
   poId,
   quotationReference,
   supplierDiscussionNote,
@@ -582,6 +695,7 @@ export function PoHeaderRefsForm({
   actualReceivedDate: string;
   estimatedArrivedDate: string;
   estimatedDeliveryDate: string;
+  headerPurpose: string;
   poId: string;
   quotationReference: string;
   supplierDiscussionNote: string;
@@ -596,6 +710,15 @@ export function PoHeaderRefsForm({
     <form action={formAction} className="grid gap-3">
       <input name="poId" type="hidden" value={poId} />
       <div className="grid gap-3 sm:grid-cols-2">
+        <label className={`${labelClass} sm:col-span-2`}>
+          PO Purpose / Header Tag
+          <input
+            className={inputClass}
+            defaultValue={headerPurpose}
+            name="headerPurpose"
+            placeholder="e.g. Customs, Import Docs, Retail Stock"
+          />
+        </label>
         <label className={labelClass}>
           Quotation
           <input
@@ -744,13 +867,11 @@ export function QuickPoCommentForm({
 }
 
 export function SmartAddPoItemForm({
-  catalogItems,
   currency,
   poId,
   supplierCode,
   supplierName,
 }: {
-  catalogItems: CatalogItemOption[];
   currency: string;
   poId: string;
   supplierCode: string;
@@ -762,30 +883,24 @@ export function SmartAddPoItemForm({
   const [qtyBySku, setQtyBySku] = useState<Record<string, string>>({});
   const [priceBySku, setPriceBySku] = useState<Record<string, string>>({});
   const [freightBySku, setFreightBySku] = useState<Record<string, string>>({});
-  const supplierKey = supplierName.toLowerCase();
-  const filteredCatalogItems = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    return catalogItems
-      .filter((item) => {
-        const matchesSupplier =
-          item.supplierCode === supplierCode ||
-          item.supplierName.toLowerCase() === supplierKey;
-        const matchesQuery =
-          !normalizedQuery || item.searchText.includes(normalizedQuery);
-
-        return matchesSupplier && matchesQuery;
-      })
-      .slice(0, 40);
-  }, [catalogItems, query, supplierCode, supplierKey]);
+  const { items: filteredCatalogItems, loading: catalogLoading } = useCatalogSearch({
+    limit: 40,
+    query,
+    supplierCode,
+    supplierName,
+  });
   const mainNameGroups = useMemo(() => {
+    if (query.trim().length < 2) {
+      return [];
+    }
+
     const groups = new Map<string, CatalogItemOption[]>();
     for (const item of filteredCatalogItems) {
       const key = item.mainName || item.productTitle;
       groups.set(key, [...(groups.get(key) ?? []), item]);
     }
     return Array.from(groups.entries());
-  }, [filteredCatalogItems]);
+  }, [filteredCatalogItems, query]);
 
   function toggleItem(item: CatalogItemOption, checked: boolean) {
     setSelectedSkus((current) =>
@@ -833,6 +948,16 @@ export function SmartAddPoItemForm({
         </button>
       </div>
 
+      {query.trim().length > 0 && query.trim().length < 2 ? (
+        <p className="rounded-md bg-[#fbfcfd] px-3 py-2 text-sm text-[#667380]">
+          Type at least 2 characters to search SKU catalog.
+        </p>
+      ) : null}
+      {catalogLoading ? (
+        <p className="rounded-md bg-[#fbfcfd] px-3 py-2 text-sm text-[#667380]">
+          Searching catalog...
+        </p>
+      ) : null}
       {mainNameGroups.length > 0 ? (
         <div className="max-h-[420px] overflow-auto rounded-lg border border-[#dfe4ea]">
           {mainNameGroups.map(([mainName, items]) => (
@@ -1459,10 +1584,16 @@ export function LandedCostAllocationForm({
 
 function PaymentAmountFields({
   amount,
+  amountName = "amount",
+  currency,
   exchangeRate,
+  exchangeRateName = "exchangeRate",
 }: {
   amount: number | string | null | undefined;
+  amountName?: string;
+  currency: string | null | undefined;
   exchangeRate: number | string | null | undefined;
+  exchangeRateName?: string;
 }) {
   const [amountValue, setAmountValue] = useState(amount === null || amount === undefined ? "" : String(amount));
   const [rateValue, setRateValue] = useState(
@@ -1472,6 +1603,8 @@ function PaymentAmountFields({
   const rateNumber = Number(rateValue || 0);
   const thbAmount =
     Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
+  const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
+  const hasInvalidForeignFx = normalizedCurrency !== "THB" && rateNumber <= 1;
 
   return (
     <>
@@ -1479,7 +1612,7 @@ function PaymentAmountFields({
         <input
           className={`${inputClass} text-right font-mono`}
           min="0"
-          name="amount"
+          name={amountName}
           onChange={(event) => setAmountValue(event.target.value)}
           step="0.0001"
           type="number"
@@ -1488,17 +1621,26 @@ function PaymentAmountFields({
       </td>
       <td className="px-3 py-3">
         <input
-          className={`${inputClass} text-right font-mono`}
+          className={`${inputClass} text-right font-mono ${hasInvalidForeignFx ? "border-[#d64545]" : ""}`}
           min="0.000001"
-          name="exchangeRate"
+          name={exchangeRateName}
           onChange={(event) => setRateValue(event.target.value)}
           step="0.000001"
           type="number"
           value={rateValue}
         />
+        {hasInvalidForeignFx ? (
+          <p className="mt-1 text-xs font-semibold text-[#b42318]">
+            FX rate missing or invalid for {normalizedCurrency}
+          </p>
+        ) : null}
       </td>
       <td className="px-3 py-3 text-right font-mono font-semibold">
-        {formatMoney(thbAmount)} THB
+        {hasInvalidForeignFx ? (
+          <span className="text-[#b42318]">FX required</span>
+        ) : (
+          `${formatMoney(thbAmount)} THB`
+        )}
       </td>
     </>
   );
@@ -1516,7 +1658,7 @@ export function AddPaymentForm({
   today: string;
 }) {
   const [state, formAction, pending] = useActionState(addPoPaymentAction, initialState);
-  const options = paymentTypeOptions(paymentTerms);
+  const options = paymentTypeOptionsWithBlank(paymentTerms);
 
   return (
     <form action={formAction} className="grid gap-3">
@@ -1528,7 +1670,7 @@ export function AddPaymentForm({
         </label>
         <label className={labelClass}>
           Type
-          <select className={inputClass} defaultValue={options[0]?.value ?? "deposit50"} name="paymentType">
+          <select className={inputClass} defaultValue="" name="paymentType">
             {options.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -1547,6 +1689,9 @@ export function AddPaymentForm({
         <label className={labelClass}>
           Exchange rate
           <input className={inputClass} defaultValue="1" min="0.000001" name="exchangeRate" step="0.000001" type="number" />
+          <span className="text-[11px] normal-case tracking-normal text-[#667380]">
+            Use 1 for THB. Foreign currency needs the real FX rate before saving.
+          </span>
         </label>
         <label className={labelClass}>
           Paid by
@@ -1598,7 +1743,14 @@ export function PaymentScheduleForm({
     ...sortedPayments,
     ...Array.from({ length: Math.max(1, extraRows) }, () => null),
   ];
-  const options = paymentTypeOptions(paymentTerms);
+  const options = paymentTypeOptions(
+    paymentTerms,
+    sortedPayments.map((payment) => payment.payment_type ?? ""),
+  );
+  const optionsForNewRows = paymentTypeOptionsWithBlank(
+    paymentTerms,
+    sortedPayments.map((payment) => payment.payment_type ?? ""),
+  );
   const paidTotal = payments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
@@ -1668,25 +1820,48 @@ export function PaymentScheduleForm({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#edf1f5]">
-            {rows.map((payment, index) => (
-              <tr key={payment?.id ?? `new-${index}`}>
+            {rows.map((payment, index) => {
+              const rowKey = payment?.id ? `existing-${payment.id}` : `new-${index}`;
+              const rowOptions = payment ? options : optionsForNewRows;
+
+              return (
+              <tr key={rowKey}>
                 <td className="px-3 py-3 font-semibold">Payment {index + 1}</td>
                 <td className="px-3 py-3">
-                  <input name="paymentId" type="hidden" value={payment?.id ?? ""} />
-                  <select className={inputClass} defaultValue={payment?.payment_status ?? "paid"} name="paymentStatus">
+                  <input name="paymentRowKey" type="hidden" value={rowKey} />
+                  <input name={`paymentId:${rowKey}`} type="hidden" value={payment?.id ?? ""} />
+                  <select
+                    className={inputClass}
+                    defaultValue={payment?.payment_status ?? "paid"}
+                    name={`paymentStatus:${rowKey}`}
+                  >
                     <option value="paid">Paid</option>
                     <option value="planned">Planned</option>
                   </select>
                 </td>
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.payment_date ?? ""} name="paymentDate" type="date" />
+                  <input
+                    className={inputClass}
+                    defaultValue={payment?.payment_date ?? ""}
+                    name={`paymentDate:${rowKey}`}
+                    type="date"
+                  />
                 </td>
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.due_date ?? ""} name="dueDate" type="date" />
+                  <input
+                    className={inputClass}
+                    defaultValue={payment?.due_date ?? ""}
+                    name={`dueDate:${rowKey}`}
+                    type="date"
+                  />
                 </td>
                 <td className="px-3 py-3">
-                  <select className={inputClass} defaultValue={payment?.payment_type ?? options[0]?.value ?? `payment_${index + 1}`} name="paymentType">
-                    {options.map((option) => (
+                  <select
+                    className={inputClass}
+                    defaultValue={payment?.payment_type ?? ""}
+                    name={`paymentType:${rowKey}`}
+                  >
+                    {rowOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
@@ -1695,17 +1870,35 @@ export function PaymentScheduleForm({
                 </td>
                 <PaymentAmountFields
                   amount={payment?.amount ?? ""}
+                  amountName={`amount:${rowKey}`}
+                  currency={payment?.currency ?? currency}
                   exchangeRate={payment?.exchange_rate ?? 1}
+                  exchangeRateName={`exchangeRate:${rowKey}`}
                 />
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.currency ?? currency} name="currency" />
+                  <input
+                    className={inputClass}
+                    defaultValue={payment?.currency ?? currency}
+                    name={`currency:${rowKey}`}
+                  />
+                  <p className="mt-1 text-xs text-[#667380]">
+                    THB uses FX 1. Foreign currency needs real FX.
+                  </p>
                 </td>
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.reference ?? ""} name="reference" />
-                  <input name="paidBy" type="hidden" value={payment?.paid_by ?? ""} />
+                  <input
+                    className={inputClass}
+                    defaultValue={payment?.reference ?? ""}
+                    name={`reference:${rowKey}`}
+                  />
+                  <input name={`paidBy:${rowKey}`} type="hidden" value={payment?.paid_by ?? ""} />
                 </td>
                 <td className="px-3 py-3">
-                  <input className={inputClass} defaultValue={payment?.note ?? ""} name="note" />
+                  <input
+                    className={inputClass}
+                    defaultValue={payment?.note ?? ""}
+                    name={`note:${rowKey}`}
+                  />
                 </td>
                 <td className="px-3 py-3">
                   {payment?.id ? (
@@ -1718,7 +1911,8 @@ export function PaymentScheduleForm({
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1892,9 +2086,11 @@ export function RemovePoReceiptForm({
 }
 
 export function BatchReceiveFormBar({
+  defaultReceiptDate,
   formId,
   poId,
 }: {
+  defaultReceiptDate: string;
   formId: string;
   poId: string;
 }) {
@@ -1905,8 +2101,18 @@ export function BatchReceiveFormBar({
 
   return (
     <div className="grid gap-3 border-b border-[#e2e7ed] p-5">
-      <form action={formAction} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]" id={formId}>
+      <form action={formAction} className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_auto]" id={formId}>
         <input name="poId" type="hidden" value={poId} />
+        <label className={labelClass}>
+          Receipt Date
+          <input
+            className={inputClass}
+            defaultValue={defaultReceiptDate}
+            name="receiptDate"
+            required
+            type="date"
+          />
+        </label>
         <label className={labelClass}>
           Received By
           <input className={inputClass} name="receivedBy" placeholder="Receiver name" />
@@ -1977,9 +2183,13 @@ export function BatchReceiveLineFields({
 export function PrintDocumentButton({
   label,
   mode,
+  poId,
+  supplierName,
 }: {
   label: string;
   mode: "quote" | "receiving";
+  poId: string;
+  supplierName: string;
 }) {
   const [printing, setPrinting] = useState(false);
 
@@ -1987,13 +2197,34 @@ export function PrintDocumentButton({
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
       onClick={() => {
-        setPrinting(true);
-        document.documentElement.dataset.printMode = mode;
-        window.print();
-        window.setTimeout(() => {
+        const originalTitle = document.title;
+        const printTitle = buildPrintFilename(mode, supplierName, poId);
+        let cleanedUp = false;
+        let fallbackTimer: number | null = null;
+        const cleanupPrintState = () => {
+          if (cleanedUp) {
+            return;
+          }
+          cleanedUp = true;
+          if (fallbackTimer) {
+            window.clearTimeout(fallbackTimer);
+          }
+          document.title = originalTitle;
           delete document.documentElement.dataset.printMode;
           setPrinting(false);
-        }, 300);
+          window.removeEventListener("afterprint", cleanupPrintState);
+        };
+
+        setPrinting(true);
+        document.documentElement.dataset.printMode = mode;
+        document.title = printTitle;
+        window.dispatchEvent(new CustomEvent(printIntentEvent));
+        window.addEventListener("afterprint", cleanupPrintState, { once: true });
+        fallbackTimer = window.setTimeout(cleanupPrintState, 8000);
+        window.requestAnimationFrame(() => {
+          window.print();
+          window.setTimeout(cleanupPrintState, 500);
+        });
       }}
       type="button"
     >
@@ -2002,6 +2233,48 @@ export function PrintDocumentButton({
       </LoadingLabel>
     </button>
   );
+}
+
+export function PrintIntentContent({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const markReady = () => setReady(true);
+
+    window.addEventListener(printIntentEvent, markReady);
+    return () => window.removeEventListener(printIntentEvent, markReady);
+  }, []);
+
+  return ready ? children : null;
+}
+
+function buildPrintFilename(
+  mode: "quote" | "receiving",
+  supplierName: string,
+  poId: string,
+) {
+  const prefix = mode === "quote" ? "PQ" : "GR";
+  const supplierShortName =
+    supplierName
+      .replace(/\bco\.?,?\s*ltd\.?\b/gi, "")
+      .replace(/\bco\.?\s*ltd\.?\b/gi, "")
+      .replace(/\blimited\b/gi, "")
+      .replace(/\bltd\.?\b/gi, "")
+      .replace(/\bcompany\b/gi, "")
+      .replace(/[^a-z0-9]+/gi, " ")
+      .trim()
+      .split(/\s+/)
+      .join("-")
+      .replace(/-+/g, "-")
+      .slice(0, 32)
+      .replace(/^-|-$/g, "") || "Supplier";
+  const last4Po =
+    poId
+      .match(/[a-z0-9]/gi)
+      ?.slice(-4)
+      .join("") || "PO";
+
+  return `${prefix}-${supplierShortName}-${last4Po}.pdf`;
 }
 
 export function DraftApprovalEmailButton({ emailText }: { emailText: string }) {

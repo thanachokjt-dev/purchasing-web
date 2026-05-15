@@ -8,30 +8,22 @@ type ProductRelation =
       product_title: string | null;
       vendor: string | null;
       tags: string[] | null;
-      product_type: string | null;
       product_image_url: string | null;
-      status: string | null;
     }
   | {
       product_title: string | null;
       vendor: string | null;
       tags: string[] | null;
-      product_type: string | null;
       product_image_url: string | null;
-      status: string | null;
     }[]
   | null;
 
 type VariantRow = {
   sku: string | null;
   variant_title: string | null;
-  option1_value: string | null;
-  option2_value: string | null;
-  option3_value: string | null;
   price: number | string | null;
   variant_image_url: string | null;
   item_status: string | null;
-  effective_status: string | null;
   products: ProductRelation;
 };
 
@@ -40,20 +32,22 @@ type InventoryRow = {
   on_hand: number | string | null;
 };
 
-type SalesRow = {
-  sku: string | null;
-  quantity: number | string | null;
-  order_date: string | null;
-  financial_status: string | null;
-  cancelled_at_shopify: string | null;
-};
-
-type SalesSummaryRow = {
+type DemandIndexRow = {
   sku: string | null;
   total_sale: number | string | null;
-  sold_7: number | string | null;
   sold_30: number | string | null;
-  sold_90: number | string | null;
+  first_sale_date: string | null;
+  last_sale_date: string | null;
+  selling_days: number | string | null;
+  lifetime_daily_average: number | string | null;
+  selling_day_average: number | string | null;
+  demand_index_hm: number | string | null;
+};
+
+type SalesBySkuDayRow = {
+  sku: string | null;
+  sales_date: string | null;
+  qty_sold: number | string | null;
 };
 
 type SalesStats = {
@@ -102,6 +96,9 @@ type DecisionControlRow = {
   hide_from_purchasing: boolean | null;
   hide_reason: string | null;
   note: string | null;
+  planning_override_note?: string | null;
+  planning_override_source?: string | null;
+  updated_by?: string | null;
 };
 
 export type PurchasingDecisionLine = {
@@ -127,12 +124,15 @@ export type PurchasingDecisionLine = {
   calculatedDemandIndexHm: number;
   demandIndexOverride: number | null;
   safetyDays: number;
+  safetyIsManual: boolean;
   supplierSafetyDays: number | null;
   safetySource: "sku" | "supplier" | "default";
   leadTimeDays: number;
+  leadTimeIsManual: boolean;
   supplierLeadTimeDays: number | null;
   leadTimeSource: "sku" | "supplier" | "default";
   orderCycleDays: number;
+  orderCycleIsManual: boolean;
   planningDays: number;
   reorderPointUnits: number;
   ropUnits: number;
@@ -197,6 +197,7 @@ export type PurchasingDecisionData = {
 };
 
 const PAGE_SIZE = 1000;
+const FETCH_RETRY_ATTEMPTS = 2;
 const DEFAULT_SAFETY_DAYS = 14;
 const DEFAULT_LEAD_TIME_DAYS = 60;
 const DEFAULT_ORDER_CYCLE_DAYS = 30;
@@ -233,14 +234,6 @@ function firstProduct(row: VariantRow) {
 
 function compactText(value: string | null | undefined) {
   return value?.trim() || "";
-}
-
-function isRefundedStatus(status: string | null | undefined) {
-  return status === "REFUNDED" || status === "VOIDED";
-}
-
-function isCountableDemandLine(row: SalesRow) {
-  return Boolean(row.sku?.trim()) && !row.cancelled_at_shopify && !isRefundedStatus(row.financial_status);
 }
 
 function daysAgo(days: number, now = new Date()) {
@@ -377,6 +370,22 @@ function averageDemandFromStats(stats: {
   };
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function warnOptionalReadFailure(label: string, error: unknown) {
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[purchasing-decision] Optional ${label} read failed; continuing without it. ${errorMessage(error)}`,
+    );
+  }
+}
+
 async function fetchAll<T>(
   label: string,
   queryForRange: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
@@ -384,9 +393,29 @@ async function fetchAll<T>(
   const rows: T[] = [];
 
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await queryForRange(from, from + PAGE_SIZE - 1);
-    if (error) {
-      throw new Error(`${label} query failed: ${error.message}`);
+    let data: unknown[] | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await queryForRange(from, from + PAGE_SIZE - 1);
+        data = result.data;
+        lastError = result.error;
+
+        if (!result.error) {
+          break;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < FETCH_RETRY_ATTEMPTS) {
+        await sleep(150 * (attempt + 1));
+      }
+    }
+
+    if (lastError) {
+      throw new Error(`${label} query failed: ${errorMessage(lastError)}`);
     }
 
     rows.push(...((data ?? []) as T[]));
@@ -398,28 +427,68 @@ async function fetchAll<T>(
   return rows;
 }
 
-async function fetchLatestInventoryRows(supabase: SupabaseClient) {
-  const { data: latestInventoryDate, error } = await supabase
-    .from("inventory_snapshots")
-    .select("snapshot_date")
-    .order("snapshot_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Latest inventory query failed: ${error.message}`);
+async function fetchIncomingRows(supabase: SupabaseClient) {
+  try {
+    return await fetchAll<IncomingRow>("Incoming by SKU", (from, to) =>
+      supabase
+        .from("po_incoming_by_sku")
+        .select("sku,active_incoming_qty,pending_approval_qty")
+        .order("sku", { ascending: true })
+        .range(from, to),
+    );
+  } catch (error) {
+    warnOptionalReadFailure("po_incoming_by_sku", error);
+    return [] as IncomingRow[];
   }
-  if (!latestInventoryDate?.snapshot_date) {
-    return [] as InventoryRow[];
-  }
+}
 
-  return fetchAll<InventoryRow>("Inventory", (from, to) =>
-    supabase
+async function fetchManualSupplierRows(supabase: SupabaseClient) {
+  try {
+    return await fetchAll<ManualSupplierRow>("Manual supplier mappings", (from, to) =>
+      supabase
+        .from("manual_supplier_mappings")
+        .select("sku,supplier")
+        .order("sku", { ascending: true })
+        .range(from, to),
+    );
+  } catch (error) {
+    warnOptionalReadFailure("manual_supplier_mappings", error);
+    return [] as ManualSupplierRow[];
+  }
+}
+
+async function fetchCurrentInventoryRows(supabase: SupabaseClient) {
+  try {
+    return await fetchAll<InventoryRow>("Current inventory summary", (from, to) =>
+      supabase
+        .from("current_inventory_by_sku")
+        .select("sku,on_hand")
+        .order("sku", { ascending: true })
+        .range(from, to),
+    );
+  } catch {
+    const { data: latestInventoryDate, error } = await supabase
       .from("inventory_snapshots")
-      .select("sku,on_hand")
-      .eq("snapshot_date", latestInventoryDate.snapshot_date)
-      .range(from, to),
-  );
+      .select("snapshot_date")
+      .order("snapshot_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Latest inventory query failed: ${error.message}`);
+    }
+    if (!latestInventoryDate?.snapshot_date) {
+      return [] as InventoryRow[];
+    }
+
+    return fetchAll<InventoryRow>("Inventory", (from, to) =>
+      supabase
+        .from("inventory_snapshots")
+        .select("sku,on_hand")
+        .eq("snapshot_date", latestInventoryDate.snapshot_date)
+        .range(from, to),
+    );
+  }
 }
 
 async function fetchControls(supabase: SupabaseClient) {
@@ -430,7 +499,7 @@ async function fetchControls(supabase: SupabaseClient) {
       supabase
         .from("purchasing_decision_controls")
         .select(
-          "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note",
+          "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note,updated_by,planning_override_source,planning_override_note",
         )
         .order("sku", { ascending: true })
         .range(from, to),
@@ -510,7 +579,19 @@ function buildManualSupplierBySku(rows: ManualSupplierRow[]) {
   return bySku;
 }
 
-function buildSalesBySku(rows: SalesRow[], formula: DemandFormulaSettings) {
+function isDefaultDemandFormula(formula: DemandFormulaSettings) {
+  return (
+    formula.capAtSellingDayAverage === DEFAULT_DEMAND_FORMULA.capAtSellingDayAverage &&
+    formula.lifetimeWeight === DEFAULT_DEMAND_FORMULA.lifetimeWeight &&
+    formula.recentFloorPercent === DEFAULT_DEMAND_FORMULA.recentFloorPercent &&
+    formula.sellingDayWeight === DEFAULT_DEMAND_FORMULA.sellingDayWeight
+  );
+}
+
+function buildSalesBySkuFromDailySummary(
+  rows: SalesBySkuDayRow[],
+  formula: DemandFormulaSettings,
+) {
   const d30 = daysAgo(30);
   const bySku = new Map<
     string,
@@ -518,12 +599,8 @@ function buildSalesBySku(rows: SalesRow[], formula: DemandFormulaSettings) {
   >();
 
   for (const row of rows) {
-    if (!isCountableDemandLine(row)) {
-      continue;
-    }
-
     const sku = row.sku?.trim();
-    const orderDate = row.order_date;
+    const orderDate = row.sales_date;
     if (!sku || !orderDate) {
       continue;
     }
@@ -535,7 +612,7 @@ function buildSalesBySku(rows: SalesRow[], formula: DemandFormulaSettings) {
       lastSaleDate: null,
       saleDates: new Set<string>(),
     };
-    const qty = numeric(row.quantity);
+    const qty = numeric(row.qty_sold);
     existing.total += qty;
     if (orderDate >= d30) {
       existing.sold30 += qty;
@@ -577,11 +654,12 @@ function buildSalesBySku(rows: SalesRow[], formula: DemandFormulaSettings) {
   );
 }
 
-function buildSalesBySkuFromSummary(
-  rows: SalesSummaryRow[],
+function buildSalesBySkuFromDemandSnapshot(
+  rows: DemandIndexRow[],
   formula: DemandFormulaSettings,
 ) {
   const bySku = new Map<string, SalesStats>();
+  const useStoredDefaultDemand = isDefaultDemandFormula(formula);
 
   for (const row of rows) {
     const sku = row.sku?.trim();
@@ -591,19 +669,29 @@ function buildSalesBySkuFromSummary(
 
     const total = numeric(row.total_sale);
     const sold30 = numeric(row.sold_30);
-    const averages = averageDemandFromStats({
-      firstSaleDate: null,
-      lastSaleDate: null,
-      sellingDays: 0,
-      sold30,
-      total,
-    }, formula);
+    const firstSaleDate = row.first_sale_date;
+    const lastSaleDate = row.last_sale_date;
+    const sellingDays = numeric(row.selling_days);
+    const averages = useStoredDefaultDemand
+      ? {
+          demandIndex: numeric(row.demand_index_hm),
+          lifetimeDailyAverage: numeric(row.lifetime_daily_average),
+          sellingDayAverage: numeric(row.selling_day_average),
+        }
+      : averageDemandFromStats({
+          firstSaleDate,
+          lastSaleDate,
+          sellingDays,
+          sold30,
+          total,
+        }, formula);
+
     bySku.set(sku, {
       total,
       sold30,
-      firstSaleDate: null,
-      lastSaleDate: null,
-      sellingDays: 0,
+      firstSaleDate,
+      lastSaleDate,
+      sellingDays,
       ...averages,
     });
   }
@@ -616,24 +704,42 @@ async function fetchSalesBySku(
   formula: DemandFormulaSettings,
 ) {
   try {
-    const rawSalesRows = await fetchAll<SalesRow>("Sales lines", (from, to) =>
+    const demandRows = await fetchAll<DemandIndexRow>("Demand index snapshot", (from, to) =>
       supabase
-        .from("sales_lines")
-        .select("sku,quantity,order_date,financial_status,cancelled_at_shopify")
+        .from("demand_index_current")
+        .select(
+          "sku,total_sale,sold_30,first_sale_date,last_sale_date,selling_days,lifetime_daily_average,selling_day_average,demand_index_hm",
+        )
+        .order("sku", { ascending: true })
         .range(from, to),
     );
 
-    return buildSalesBySku(rawSalesRows, formula);
-  } catch {
-    const { data, error } = await supabase
-      .from("purchasing_sales_by_sku")
-      .select("sku,total_sale,sold_7,sold_30,sold_90");
-
-    if (error) {
-      return new Map<string, SalesStats>();
+    if (!demandRows.length) {
+      return fetchSalesBySkuFromDailySummary(supabase, formula);
     }
 
-    return buildSalesBySkuFromSummary((data ?? []) as SalesSummaryRow[], formula);
+    return buildSalesBySkuFromDemandSnapshot(demandRows, formula);
+  } catch {
+    return fetchSalesBySkuFromDailySummary(supabase, formula);
+  }
+}
+
+async function fetchSalesBySkuFromDailySummary(
+  supabase: SupabaseClient,
+  formula: DemandFormulaSettings,
+) {
+  try {
+    const summaryRows = await fetchAll<SalesBySkuDayRow>("Daily sales summary", (from, to) =>
+      supabase
+        .from("sales_by_sku_day")
+        .select("sku,sales_date,qty_sold")
+        .order("sku", { ascending: true })
+        .range(from, to),
+    );
+
+    return buildSalesBySkuFromDailySummary(summaryRows, formula);
+  } catch {
+    return new Map<string, SalesStats>();
   }
 }
 
@@ -881,6 +987,7 @@ export async function getPurchasingDecisionData({
   recentFloor = DEFAULT_DEMAND_FORMULA.recentFloorPercent,
   sellingWeight = DEFAULT_DEMAND_FORMULA.sellingDayWeight,
   stock = "all",
+  round10 = "positive",
   visibility = "active",
 }: {
   limit?: number | null;
@@ -894,6 +1001,7 @@ export async function getPurchasingDecisionData({
   recentFloor?: number | string | null;
   sellingWeight?: number | string | null;
   stock?: string | string[];
+  round10?: string;
   visibility?: string;
 } = {}): Promise<PurchasingDecisionData> {
   const supabase = getSupabaseServiceClient();
@@ -942,28 +1050,22 @@ export async function getPurchasingDecisionData({
       supabase
         .from("product_variants")
         .select(
-          "sku,variant_title,option1_value,option2_value,option3_value,price,variant_image_url,item_status,effective_status,products(product_title,vendor,tags,product_type,product_image_url,status)",
+          "sku,variant_title,price,variant_image_url,item_status,products(product_title,vendor,tags,product_image_url)",
         )
         .order("sku", { ascending: true })
         .range(from, to),
     ),
-    fetchLatestInventoryRows(supabase),
+    fetchCurrentInventoryRows(supabase),
     fetchSalesBySku(supabase, demandFormula),
-    supabase
-      .from("po_incoming_by_sku")
-      .select("sku,active_incoming_qty,pending_approval_qty"),
-    supabase.from("manual_supplier_mappings").select("sku,supplier"),
+    fetchIncomingRows(supabase),
+    fetchManualSupplierRows(supabase),
     fetchControls(supabase),
     getPurchasingSetupData(),
   ]);
 
   const stockBySku = buildStockBySku(inventoryRows);
-  const incomingBySku = incomingResult.error
-    ? new Map<string, { active: number; pending: number }>()
-    : buildIncomingBySku((incomingResult.data ?? []) as IncomingRow[]);
-  const manualSupplierBySku = manualSupplierResult.error
-    ? new Map<string, string>()
-    : buildManualSupplierBySku((manualSupplierResult.data ?? []) as ManualSupplierRow[]);
+  const incomingBySku = buildIncomingBySku(incomingResult);
+  const manualSupplierBySku = buildManualSupplierBySku(manualSupplierResult);
   const query = q.trim().toLowerCase();
   const queryTerms = query
     .split(",")
@@ -974,6 +1076,9 @@ export async function getPurchasingDecisionData({
   const selectedItemStatus = itemStatus.trim().toLowerCase();
   const selectedAlerts = selectedAlertsFromParam(alert);
   const selectedStocks = selectedStocksFromParam(stock);
+  const selectedRound10 = ["all", "positive", "zero"].includes(round10)
+    ? round10
+    : "positive";
   const selectedVisibility = visibility.trim().toLowerCase();
   const activeSuppliers = setupData.suppliers.filter((item) => item.isActive);
   const activeSupplierNamesList = activeSuppliers.map((item) => item.supplierName);
@@ -1035,6 +1140,7 @@ export async function getPurchasingDecisionData({
     const demandIndexOverride = optionalNumber(control?.demand_index_override);
     const demandIndexHm = demandIndexOverride ?? calculatedDemandIndexHm;
     const skuSafetyDays = optionalInteger(control?.safety_days);
+    const safetyIsManual = skuSafetyDays !== null;
     const supplierSafetyDays =
       supplierDefault && supplierDefault.safetyDays > 0
         ? supplierDefault.safetyDays
@@ -1051,6 +1157,7 @@ export async function getPurchasingDecisionData({
           ? "sku"
           : "default";
     const skuLeadTimeDays = optionalInteger(control?.lead_time_days);
+    const leadTimeIsManual = skuLeadTimeDays !== null;
     const supplierLeadTimeDays =
       supplierDefault && supplierDefault.leadTimeDays > 0
         ? supplierDefault.leadTimeDays
@@ -1068,6 +1175,7 @@ export async function getPurchasingDecisionData({
           : "default";
     const orderCycleDays =
       optionalInteger(control?.order_cycle_days) ?? DEFAULT_ORDER_CYCLE_DAYS;
+    const orderCycleIsManual = optionalInteger(control?.order_cycle_days) !== null;
     const planningDays = safetyDays + leadTimeDays + orderCycleDays;
     const reorderPointUnits = Math.max(0, Math.ceil(demandIndexHm * (safetyDays + leadTimeDays)));
     const targetQty = Math.max(0, Math.ceil(demandIndexHm * planningDays));
@@ -1116,12 +1224,15 @@ export async function getPurchasingDecisionData({
         calculatedDemandIndexHm,
         demandIndexOverride,
         safetyDays,
+        safetyIsManual,
         supplierSafetyDays,
         safetySource,
         leadTimeDays,
+        leadTimeIsManual,
         supplierLeadTimeDays,
         leadTimeSource,
         orderCycleDays,
+        orderCycleIsManual,
         planningDays,
         reorderPointUnits,
         ropUnits,
@@ -1177,7 +1288,10 @@ export async function getPurchasingDecisionData({
 
       return {
         supplier: option,
-        orderQty: supplierLines.reduce((sum, line) => sum + line.ropUnits, 0),
+        orderQty: supplierLines.reduce(
+          (sum, line) => sum + (line.manualRopUnits ?? line.ropUnitsRounded),
+          0,
+        ),
         onHandUnits: supplierLines.reduce((sum, line) => sum + line.onHandUnits, 0),
         lineCount: supplierLines.length,
       };
@@ -1229,6 +1343,12 @@ export async function getPurchasingDecisionData({
     const matchesVisibility =
       selectedVisibility === "all" ||
       (selectedVisibility === "hidden" ? line.hidden : !line.hidden);
+    const effectiveRound10Qty = line.manualRopUnits ?? line.ropUnitsRounded;
+    const matchesRound10 =
+      selectedRound10 === "all" ||
+      (selectedRound10 === "positive"
+        ? effectiveRound10Qty > 0
+        : effectiveRound10Qty === 0);
 
     return (
       matchesSupplier &&
@@ -1236,6 +1356,7 @@ export async function getPurchasingDecisionData({
       matchesItemStatus &&
       matchesAlert &&
       matchesStock &&
+      matchesRound10 &&
       matchesVisibility
     );
   }

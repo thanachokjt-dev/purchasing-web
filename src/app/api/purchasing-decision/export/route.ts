@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
     limit: null,
     q: searchParams.get("q") ?? "",
     recentFloor: searchParams.get("recentFloor"),
+    round10: searchParams.get("round10") ?? "positive",
     sellingWeight: searchParams.get("sellingWeight"),
     stock: selectedStock(searchParams),
     supplier: searchParams.get("supplier") ?? "all",

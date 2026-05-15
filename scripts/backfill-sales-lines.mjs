@@ -4,6 +4,7 @@ const DEFAULT_BASE_URL = "http://localhost:3000";
 const DEFAULT_SINCE = "2025-01-01";
 const DEFAULT_UNTIL = "2025-02-01";
 const DEFAULT_MAX_PAGES = 10;
+const DEFAULT_FIELD = "created_at";
 
 function loadLocalEnv() {
   const env = {};
@@ -36,12 +37,16 @@ async function main() {
   const since = option("since", DEFAULT_SINCE);
   const until = option("until", DEFAULT_UNTIL);
   const maxPages = Number(option("max-pages", String(DEFAULT_MAX_PAGES)));
+  const field = option("field", DEFAULT_FIELD);
 
   if (!secret) {
     throw new Error("SYNC_SECRET is required in .env.local or process.env");
   }
   if (!Number.isInteger(maxPages) || maxPages < 1) {
     throw new Error("--max-pages must be a positive integer");
+  }
+  if (!["created_at", "updated_at"].includes(field)) {
+    throw new Error("--field must be created_at or updated_at");
   }
 
   let cursor = option("cursor", "");
@@ -55,6 +60,7 @@ async function main() {
     const url = new URL("/api/sync/sales-lines", baseUrl);
     url.searchParams.set("since", since);
     url.searchParams.set("until", until);
+    url.searchParams.set("field", field);
     url.searchParams.set("maxPages", String(maxPages));
     if (cursor) {
       url.searchParams.set("cursor", cursor);
@@ -93,6 +99,7 @@ async function main() {
       "done",
       `since=${since}`,
       `until=${until}`,
+      `field=${field}`,
       `orders=${totalOrders}`,
       `salesLines=${totalSalesLines}`,
       `pages=${totalPages}`,

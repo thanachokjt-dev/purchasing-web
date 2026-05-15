@@ -23,6 +23,9 @@ import {
   type PurchasingTag,
   type SupplierSetup,
 } from "@/lib/purchasing-setup";
+import { requireUser } from "@/lib/auth";
+import { canAccessAdminControlTower, defaultLandingForRole } from "@/lib/role-nav";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -242,6 +245,10 @@ function SupplierFields({
 }
 
 export default async function PurchasingSetupPage() {
+  const currentUser = await requireUser("/purchasing-setup");
+  if (!canAccessAdminControlTower(currentUser)) {
+    redirect(`/access-denied?from=${encodeURIComponent("/purchasing-setup")}&next=${encodeURIComponent(defaultLandingForRole(currentUser.role))}`);
+  }
   const data = await getPurchasingSetupData();
   const activeTags = data.tags.filter((tag) => tag.isActive);
   const activeSuppliers = data.suppliers.filter((supplier) => supplier.isActive);

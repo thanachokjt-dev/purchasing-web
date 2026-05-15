@@ -2,12 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { requireUser } from "@/lib/auth";
+import {
+  canCreatePo,
+  canEditPo,
+  canManagePayments,
+  canReceivePo,
+} from "@/lib/access-control";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type PoActionState = {
   ok: boolean;
   message: string;
   poId?: string;
+  headerPurpose?: string;
   supplierDiscussionNote?: string;
 };
 
@@ -31,6 +39,34 @@ const VALID_STATUSES = new Set([
 
 const initialError = (message: string): PoActionState => ({ ok: false, message });
 const success = (message: string): PoActionState => ({ ok: true, message });
+
+async function requirePoPermission(
+  nextPath: string,
+  allowed: (email: string) => boolean,
+  message: string,
+) {
+  const profile = await requireUser(nextPath);
+  if (profile.role !== "super_admin" || !allowed(profile.email)) {
+    throw new Error(message);
+  }
+  return profile;
+}
+
+async function requireCreatePoPermission(nextPath = "/po") {
+  return requirePoPermission(nextPath, canCreatePo, "You do not have permission to create purchase orders.");
+}
+
+async function requireEditPoPermission(nextPath = "/po") {
+  return requirePoPermission(nextPath, canEditPo, "You do not have permission to edit purchase orders.");
+}
+
+async function requireReceivePoPermission(nextPath = "/po") {
+  return requirePoPermission(nextPath, canReceivePo, "You do not have permission to receive purchase orders.");
+}
+
+async function requireManagePaymentPermission(nextPath = "/po") {
+  return requirePoPermission(nextPath, canManagePayments, "You do not have permission to manage PO payments.");
+}
 
 function numericValue(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -61,6 +97,53 @@ function optionalDateText(formData: FormData, name: string) {
   }
 
   return value;
+}
+
+function todayDateText() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+async function insertPoReceiptRows(
+  supabase: ReturnType<typeof actionClient>,
+  rows: Array<{
+    actual_received_date: string;
+    note: string | null;
+    po_item_id: string;
+    received_at: string;
+    received_by: string | null;
+    received_qty: number;
+    source: string;
+  }>,
+) {
+  const { error } = await supabase.from("po_receipts").insert(rows);
+  if (!error) {
+    return;
+  }
+
+  if (!schemaColumnMiss(error.message)) {
+    throw new Error(error.message);
+  }
+
+  const fallbackRows = rows.map((row) => ({
+    note: row.note,
+    po_item_id: row.po_item_id,
+    received_at: row.received_at,
+    received_by: row.received_by,
+    received_qty: row.received_qty,
+    source: row.source,
+  }));
+  const { error: fallbackError } = await supabase.from("po_receipts").insert(fallbackRows);
+  if (fallbackError) {
+    throw new Error(fallbackError.message);
+  }
 }
 
 function positiveNumber(formData: FormData, name: string) {
@@ -116,6 +199,10 @@ function nonNegativeTextNumber(value: string, label: string) {
     throw new Error(`${label} must be 0 or greater`);
   }
   return parsed;
+}
+
+function formText(formData: FormData, name: string) {
+  return String(formData.get(name) ?? "").trim();
 }
 
 function normalizeStatus(value: string) {
@@ -352,6 +439,7 @@ export async function createPoAction(
   let createdPoId: string | null = null;
 
   try {
+    await requireCreatePoPermission("/po");
     const supabase = actionClient();
     const supplierCode = requiredText(formData, "supplierCode");
     const supplier = await supplierSnapshot(supplierCode);
@@ -438,6 +526,7 @@ export async function addPoItemAction(
   let redirectPoId: string | null = null;
 
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const sku = requiredText(formData, "sku");
@@ -518,6 +607,7 @@ export async function addPoItemsBatchAction(
   let redirectPoId: string | null = null;
 
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const selectedSkus = new Set(
@@ -623,6 +713,7 @@ export async function updatePoHeaderRefsAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const updateScope = optionalText(formData, "updateScope");
@@ -631,12 +722,13 @@ export async function updatePoHeaderRefsAction(
     const estimatedDeliveryDate = optionalDateText(formData, "estimatedDeliveryDate");
     const estimatedArrivedDate = optionalDateText(formData, "estimatedArrivedDate");
     const actualReceivedDate = optionalDateText(formData, "actualReceivedDate");
-    const { data: currentOrder, error: currentOrderError } = await supabase
+    let { data: currentOrder, error: currentOrderError } = await supabase
       .from("po_orders")
       .select(
         [
           "work_status",
           "source_payload",
+          "header_purpose",
           "quotation_reference",
           "supplier_invoice_no",
           "estimated_delivery_date",
@@ -648,6 +740,27 @@ export async function updatePoHeaderRefsAction(
       .eq("po_id", poId)
       .maybeSingle();
 
+    if (currentOrderError && schemaColumnMiss(currentOrderError.message)) {
+      const fallback = await supabase
+        .from("po_orders")
+        .select(
+          [
+            "work_status",
+            "source_payload",
+            "quotation_reference",
+            "supplier_invoice_no",
+            "estimated_delivery_date",
+            "estimated_arrived_date",
+            "actual_received_date",
+            "supplier_discussion_note",
+          ].join(","),
+        )
+        .eq("po_id", poId)
+        .maybeSingle();
+      currentOrder = fallback.data;
+      currentOrderError = fallback.error;
+    }
+
     if (currentOrderError) {
       throw new Error(currentOrderError.message);
     }
@@ -658,6 +771,7 @@ export async function updatePoHeaderRefsAction(
       actual_received_date?: string | null;
       estimated_arrived_date?: string | null;
       estimated_delivery_date?: string | null;
+      header_purpose?: string | null;
       quotation_reference?: string | null;
       source_payload?: unknown;
       supplier_discussion_note?: string | null;
@@ -682,6 +796,9 @@ export async function updatePoHeaderRefsAction(
       const value = currentHeader[key];
       return typeof value === "string" ? value.trim() : "";
     };
+    const preservedHeaderPurpose =
+      String(currentOrderRow.header_purpose ?? "").trim() ||
+      headerText("headerPurpose");
     const preservedQuotationReference =
       String(currentOrderRow.quotation_reference ?? "").trim() ||
       headerText("quotationReference");
@@ -697,9 +814,14 @@ export async function updatePoHeaderRefsAction(
     const preservedActualReceivedDate =
       String(currentOrderRow.actual_received_date ?? "").trim() ||
       headerText("actualReceivedDate");
+    const submittedHeaderPurpose = optionalText(formData, "headerPurpose");
     const submittedQuotationReference = optionalText(formData, "quotationReference");
     const submittedSupplierInvoiceNo = optionalText(formData, "supplierInvoiceNo");
     const updatePayload: Record<string, string | null> = {
+      header_purpose:
+        quickCommentOnly && !submittedHeaderPurpose
+          ? preservedHeaderPurpose || null
+          : submittedHeaderPurpose,
       quotation_reference:
         quickCommentOnly && !submittedQuotationReference
           ? preservedQuotationReference || null
@@ -737,6 +859,7 @@ export async function updatePoHeaderRefsAction(
 
       const fallbackHeader = {
         ...currentHeader,
+        headerPurpose: updatePayload.header_purpose,
         quotationReference: updatePayload.quotation_reference,
         supplierInvoiceNo: updatePayload.supplier_invoice_no,
         estimatedDeliveryDate: updatePayload.estimated_delivery_date,
@@ -782,6 +905,7 @@ export async function updatePoHeaderRefsAction(
     refreshPoViews(poId);
     return {
       ...success("Saved PO header"),
+      headerPurpose: updatePayload.header_purpose ?? "",
       supplierDiscussionNote: appendedSupplierNote ?? "",
     };
   } catch (error) {
@@ -794,6 +918,7 @@ export async function changePoStatusAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const itemUuid = optionalText(formData, "itemUuid");
@@ -922,6 +1047,7 @@ export async function deleteDraftPoAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
 
@@ -1003,6 +1129,7 @@ export async function receivePoItemAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireReceivePoPermission("/po");
     const supabase = actionClient();
     const itemUuid = requiredText(formData, "itemUuid");
     const receivedQty = receiveQuantity(formData.get("receivedQty"), "Receive quantity");
@@ -1021,7 +1148,7 @@ export async function receivePoItemAction(
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
-      .select("work_status,closed_at,cancelled_at")
+      .select("work_status,closed_at,cancelled_at,actual_received_date")
       .eq("po_id", item.po_id)
       .maybeSingle();
     if (orderError) {
@@ -1055,17 +1182,19 @@ export async function receivePoItemAction(
     }
 
     const receivedAt = new Date().toISOString();
-    const { error: receiptError } = await supabase.from("po_receipts").insert({
+    const receiptDate =
+      optionalDateText(formData, "receiptDate") ||
+      String((order as { actual_received_date?: string | null }).actual_received_date ?? "").trim() ||
+      todayDateText();
+    await insertPoReceiptRows(supabase, [{
+      actual_received_date: receiptDate,
       po_item_id: itemUuid,
       received_at: receivedAt,
       received_qty: receivedQty,
       received_by: optionalText(formData, "receivedBy"),
       note: optionalText(formData, "note"),
       source: "web_app",
-    });
-    if (receiptError) {
-      throw new Error(receiptError.message);
-    }
+    }]);
 
     refreshPoViews(item.po_id);
     return success(`Received ${receivedQty} units`);
@@ -1079,6 +1208,7 @@ export async function batchReceivePoItemsAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireReceivePoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const itemUuids = formData.getAll("batchItemUuid").map((value) => String(value).trim());
@@ -1112,7 +1242,7 @@ export async function batchReceivePoItemsAction(
 
     const { data: order, error: orderError } = await supabase
       .from("po_orders")
-      .select("work_status,closed_at,cancelled_at")
+      .select("work_status,closed_at,cancelled_at,actual_received_date")
       .eq("po_id", poId)
       .maybeSingle();
     if (orderError) {
@@ -1193,8 +1323,14 @@ export async function batchReceivePoItemsAction(
     const receivedBy = optionalText(formData, "receivedBy");
     const note = optionalText(formData, "note");
     const receivedAt = new Date().toISOString();
-    const { error: receiptError } = await supabase.from("po_receipts").insert(
+    const receiptDate =
+      optionalDateText(formData, "receiptDate") ||
+      String((order as { actual_received_date?: string | null }).actual_received_date ?? "").trim() ||
+      todayDateText();
+    await insertPoReceiptRows(
+      supabase,
       requestedReceipts.map((receipt) => ({
+        actual_received_date: receiptDate,
         po_item_id: receipt.itemUuid,
         received_at: receivedAt,
         received_qty: receipt.receivedQty,
@@ -1203,9 +1339,6 @@ export async function batchReceivePoItemsAction(
         source: "web_app",
       })),
     );
-    if (receiptError) {
-      throw new Error(receiptError.message);
-    }
 
     const totalQty = requestedReceipts.reduce((sum, receipt) => sum + receipt.receivedQty, 0);
     refreshPoViews(poId);
@@ -1222,6 +1355,7 @@ export async function removePoReceiptAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireReceivePoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const receiptId = requiredText(formData, "receiptId");
@@ -1273,6 +1407,7 @@ export async function updatePoDraftLinesAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const itemUuids = formData.getAll("itemUuid").map((value) => String(value).trim());
@@ -1364,6 +1499,7 @@ export async function allocatePoLandedCostAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const freightTotal = nonNegativeNumber(formData, "freightTotal");
@@ -1436,6 +1572,7 @@ export async function addPoPaymentAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireManagePaymentPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
     const amount = nonNegativeNumber(formData, "amount");
@@ -1458,7 +1595,7 @@ export async function addPoPaymentAction(
     const { error } = await supabase.from("po_payments").insert({
       po_id: poId,
       payment_date: optionalText(formData, "paymentDate") ?? new Date().toISOString().slice(0, 10),
-      payment_type: optionalText(formData, "paymentType") ?? "deposit",
+      payment_type: optionalText(formData, "paymentType") ?? "payment",
       amount,
       currency: currencyInput || order.currency || "THB",
       exchange_rate: exchangeRate,
@@ -1485,21 +1622,23 @@ export async function updatePoPaymentsAction(
   formData: FormData,
 ): Promise<PoActionState> {
   try {
+    await requireManagePaymentPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
-    const ids = formData.getAll("paymentId").map((value) => String(value).trim());
-    const statuses = formData.getAll("paymentStatus").map((value) => String(value).trim());
-    const types = formData.getAll("paymentType").map((value) => String(value).trim());
-    const amountValues = formData.getAll("amount").map((value) => String(value).trim());
-    const exchangeRateValues = formData
+    const rowKeys = formData.getAll("paymentRowKey").map((value) => String(value).trim());
+    const legacyIds = formData.getAll("paymentId").map((value) => String(value).trim());
+    const legacyStatuses = formData.getAll("paymentStatus").map((value) => String(value).trim());
+    const legacyTypes = formData.getAll("paymentType").map((value) => String(value).trim());
+    const legacyAmountValues = formData.getAll("amount").map((value) => String(value).trim());
+    const legacyExchangeRateValues = formData
       .getAll("exchangeRate")
       .map((value) => String(value).trim());
-    const currencies = formData.getAll("currency").map((value) => String(value).trim());
-    const paymentDates = formData.getAll("paymentDate").map((value) => String(value).trim());
-    const dueDates = formData.getAll("dueDate").map((value) => String(value).trim());
-    const paidByValues = formData.getAll("paidBy").map((value) => String(value).trim());
-    const references = formData.getAll("reference").map((value) => String(value).trim());
-    const notes = formData.getAll("note").map((value) => String(value).trim());
+    const legacyCurrencies = formData.getAll("currency").map((value) => String(value).trim());
+    const legacyPaymentDates = formData.getAll("paymentDate").map((value) => String(value).trim());
+    const legacyDueDates = formData.getAll("dueDate").map((value) => String(value).trim());
+    const legacyPaidByValues = formData.getAll("paidBy").map((value) => String(value).trim());
+    const legacyReferences = formData.getAll("reference").map((value) => String(value).trim());
+    const legacyNotes = formData.getAll("note").map((value) => String(value).trim());
     const deleteIds = new Set(
       formData.getAll("deletePaymentId").map((value) => String(value).trim()).filter(Boolean),
     );
@@ -1517,19 +1656,51 @@ export async function updatePoPaymentsAction(
 
     const today = new Date().toISOString().slice(0, 10);
     let savedCount = 0;
-    for (const [index, rawId] of ids.entries()) {
+    const rows =
+      rowKeys.length > 0
+        ? rowKeys.map((rowKey, index) => ({
+            amountValue: formText(formData, `amount:${rowKey}`),
+            currency: formText(formData, `currency:${rowKey}`),
+            dueDate: formText(formData, `dueDate:${rowKey}`),
+            exchangeRateValue: formText(formData, `exchangeRate:${rowKey}`),
+            index,
+            paidBy: formText(formData, `paidBy:${rowKey}`),
+            paymentDate: formText(formData, `paymentDate:${rowKey}`),
+            rawId: formText(formData, `paymentId:${rowKey}`),
+            reference: formText(formData, `reference:${rowKey}`),
+            note: formText(formData, `note:${rowKey}`),
+            status: formText(formData, `paymentStatus:${rowKey}`),
+            type: formText(formData, `paymentType:${rowKey}`),
+          }))
+        : legacyIds.map((rawId, index) => ({
+            amountValue: legacyAmountValues[index] ?? "",
+            currency: legacyCurrencies[index] ?? "",
+            dueDate: legacyDueDates[index] ?? "",
+            exchangeRateValue: legacyExchangeRateValues[index] ?? "",
+            index,
+            paidBy: legacyPaidByValues[index] ?? "",
+            paymentDate: legacyPaymentDates[index] ?? "",
+            rawId,
+            reference: legacyReferences[index] ?? "",
+            note: legacyNotes[index] ?? "",
+            status: legacyStatuses[index] ?? "",
+            type: legacyTypes[index] ?? "",
+          }));
+
+    for (const rowInput of rows) {
+      const { index, rawId } = rowInput;
       if (rawId && deleteIds.has(rawId)) {
         continue;
       }
 
-      const status = statuses[index] === "planned" ? "planned" : "paid";
-      const amount = nonNegativeTextNumber(amountValues[index] ?? "", `Payment ${index + 1} amount`);
+      const status = rowInput.status === "planned" ? "planned" : "paid";
+      const amount = nonNegativeTextNumber(rowInput.amountValue, `Payment ${index + 1} amount`);
       const exchangeRate = nonNegativeTextNumber(
-        exchangeRateValues[index] ?? "1",
+        rowInput.exchangeRateValue || "1",
         `Payment ${index + 1} exchange rate`,
       ) || 1;
-      const paymentDate = paymentDates[index] || (status === "paid" ? today : null);
-      const dueDate = dueDates[index] || null;
+      const paymentDate = rowInput.paymentDate || (status === "paid" ? today : null);
+      const dueDate = rowInput.dueDate || null;
       const hasContent =
         Boolean(rawId) ||
         amount > 0;
@@ -1541,16 +1712,16 @@ export async function updatePoPaymentsAction(
       const row = {
         po_id: poId,
         payment_date: paymentDate,
-        payment_type: types[index] || `payment_${index + 1}`,
+        payment_type: rowInput.type || `payment_${index + 1}`,
         payment_status: status,
         due_date: dueDate,
         amount,
-        currency: currencies[index] || "THB",
+        currency: rowInput.currency || "THB",
         exchange_rate: exchangeRate,
         amount_thb: amount * exchangeRate,
-        paid_by: paidByValues[index] || null,
-        reference: references[index] || null,
-        note: notes[index] || null,
+        paid_by: rowInput.paidBy || null,
+        reference: rowInput.reference || null,
+        note: rowInput.note || null,
       };
 
       const { error } = rawId

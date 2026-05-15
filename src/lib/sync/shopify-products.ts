@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  INVENTORY_LEVELS_QUERY,
   PRODUCT_VARIANTS_QUERY,
   shopifyGraphql,
+  type InventoryLevelsPayload,
   type ShopifyGraphqlResult,
+  type ShopifyInventoryLevelNode,
   type ProductVariantsPayload,
   type ShopifyVariantNode,
 } from "@/lib/shopify/client";
@@ -31,6 +34,11 @@ type SyncStats = {
   hasNextPage: boolean;
   lastCursor: string | null;
   throttle: unknown;
+};
+
+type LocationFilter = {
+  excludedNames: Set<string>;
+  includedNames: Set<string>;
 };
 
 type ProductUpsert = {
@@ -92,9 +100,7 @@ type InventorySnapshotUpsert = {
   variant_id?: string;
 };
 
-type InventoryLevelNode = NonNullable<
-  ShopifyVariantNode["inventoryItem"]
->["inventoryLevels"]["nodes"][number];
+type InventoryLevelNode = ShopifyInventoryLevelNode;
 
 function dedupeBy<T>(items: T[], keyFn: (item: T) => string) {
   const map = new Map<string, T>();
@@ -108,6 +114,148 @@ function quantitiesMap(node: InventoryLevelNode) {
   return Object.fromEntries(
     node.quantities.map((quantity) => [quantity.name, quantity.quantity]),
   ) as Record<string, number | undefined>;
+}
+
+function normalizedLocationName(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function locationNameSet(value: string | undefined) {
+  return new Set(
+    String(value ?? "")
+      .split(",")
+      .map(normalizedLocationName)
+      .filter(Boolean),
+  );
+}
+
+function locationFilterFromEnv(): LocationFilter {
+  return {
+    excludedNames: locationNameSet(process.env.SHOPIFY_EXCLUDED_LOCATION_NAMES),
+    includedNames: locationNameSet(process.env.SHOPIFY_INCLUDED_LOCATION_NAMES),
+  };
+}
+
+function shouldIncludeLocation(locationName: string, filter: LocationFilter) {
+  const normalized = normalizedLocationName(locationName);
+  if (filter.includedNames.size > 0) {
+    return filter.includedNames.has(normalized);
+  }
+
+  return !filter.excludedNames.has(normalized);
+}
+
+function variantLabel(variant: ShopifyVariantNode) {
+  return [
+    variant.product.title,
+    variant.title,
+    extractShopifyNumericId(variant.id),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function assertSkuQuality(
+  nodes: ShopifyVariantNode[],
+  seenSkuByVariant: Map<string, string>,
+) {
+  const pageSkuByVariant = new Map<string, string>();
+  const blankSkuVariants: string[] = [];
+  const duplicateSkuVariants: string[] = [];
+
+  for (const variant of nodes) {
+    const sku = variant.sku?.trim();
+    const label = variantLabel(variant);
+
+    if (!sku) {
+      blankSkuVariants.push(label);
+      continue;
+    }
+
+    const existingVariant =
+      pageSkuByVariant.get(sku) ?? seenSkuByVariant.get(sku);
+    if (existingVariant) {
+      duplicateSkuVariants.push(`${sku}: ${existingVariant} + ${label}`);
+      continue;
+    }
+
+    pageSkuByVariant.set(sku, label);
+  }
+
+  if (blankSkuVariants.length || duplicateSkuVariants.length) {
+    const details = [
+      blankSkuVariants.length
+        ? `Blank SKU variants: ${blankSkuVariants.slice(0, 10).join("; ")}`
+        : null,
+      duplicateSkuVariants.length
+        ? `Duplicate SKUs: ${duplicateSkuVariants.slice(0, 10).join("; ")}`
+        : null,
+    ].filter(Boolean);
+
+    throw new Error(
+      `Shopify catalog data quality check failed. ${details.join(" ")} Fix these Shopify variants before syncing so rows are not skipped or merged incorrectly.`,
+    );
+  }
+
+  for (const [sku, label] of pageSkuByVariant.entries()) {
+    seenSkuByVariant.set(sku, label);
+  }
+}
+
+function dedupeInventoryLevels(nodes: ShopifyInventoryLevelNode[]) {
+  return dedupeBy(nodes, (node) => extractShopifyNumericId(node.location.id));
+}
+
+async function expandInventoryLevels(
+  variant: ShopifyVariantNode,
+): Promise<ShopifyVariantNode> {
+  const inventoryItem = variant.inventoryItem;
+  if (!inventoryItem?.inventoryLevels.pageInfo.hasNextPage) {
+    return variant;
+  }
+
+  let cursor = inventoryItem.inventoryLevels.pageInfo.endCursor;
+  let hasNextPage = true;
+  const nodes = [...inventoryItem.inventoryLevels.nodes];
+
+  while (hasNextPage) {
+    const result: ShopifyGraphqlResult<InventoryLevelsPayload> =
+      await shopifyGraphql<InventoryLevelsPayload>(INVENTORY_LEVELS_QUERY, {
+        cursor,
+        id: inventoryItem.id,
+      });
+    const levels = result.data.inventoryItem?.inventoryLevels;
+    if (!levels) {
+      throw new Error(
+        `Shopify inventory item ${extractShopifyNumericId(inventoryItem.id)} returned no inventory levels while paginating locations.`,
+      );
+    }
+
+    nodes.push(...levels.nodes);
+    hasNextPage = levels.pageInfo.hasNextPage;
+    cursor = levels.pageInfo.endCursor;
+  }
+
+  return {
+    ...variant,
+    inventoryItem: {
+      ...inventoryItem,
+      inventoryLevels: {
+        ...inventoryItem.inventoryLevels,
+        nodes: dedupeInventoryLevels(nodes),
+        pageInfo: {
+          endCursor: cursor,
+          hasNextPage: false,
+        },
+      },
+    },
+  };
+}
+
+async function expandPageInventoryLevels(
+  nodes: ShopifyVariantNode[],
+): Promise<ShopifyVariantNode[]> {
+  return Promise.all(nodes.map((node) => expandInventoryLevels(node)));
 }
 
 function dateInTimeZone(value: string, timeZone: string) {
@@ -125,6 +273,7 @@ function dateInTimeZone(value: string, timeZone: string) {
 function mapVariant(
   variant: ShopifyVariantNode,
   syncedAt: string,
+  locationFilter: LocationFilter,
 ): {
   product: ProductUpsert;
   variant: VariantUpsert | null;
@@ -189,7 +338,14 @@ function mapVariant(
   const inventory: InventorySnapshotUpsert[] = [];
   const snapshotDate = dateInTimeZone(syncedAt, "Asia/Bangkok");
 
+  // Reorder planning currently assumes every Shopify location is sellable stock.
+  // Keep summing all locations unless SHOPIFY_INCLUDED_LOCATION_NAMES or
+  // SHOPIFY_EXCLUDED_LOCATION_NAMES is deliberately configured.
   for (const level of variant.inventoryItem?.inventoryLevels.nodes ?? []) {
+    if (!shouldIncludeLocation(level.location.name, locationFilter)) {
+      continue;
+    }
+
     const locationId = extractShopifyNumericId(level.location.id);
     const quantities = quantitiesMap(level);
 
@@ -269,8 +425,9 @@ async function persistPage(
   supabase: SupabaseClient,
   nodes: ShopifyVariantNode[],
   syncedAt: string,
+  locationFilter: LocationFilter,
 ) {
-  const mapped = nodes.map((node) => mapVariant(node, syncedAt));
+  const mapped = nodes.map((node) => mapVariant(node, syncedAt, locationFilter));
   const products = dedupeBy(
     mapped.map((row) => row.product),
     (product) => product.shopify_product_id,
@@ -389,6 +546,8 @@ export async function syncShopifyProductsAndInventory(
   const maxPages = options.maxPages ?? 100;
   const syncedAt = new Date().toISOString();
   const runId = await createSyncRun(supabase, options);
+  const locationFilter = locationFilterFromEnv();
+  const seenSkuByVariant = new Map<string, string>();
   let cursor: string | null = null;
   const query =
     options.sinceAt || options.untilAt
@@ -421,7 +580,14 @@ export async function syncShopifyProductsAndInventory(
       const page = result.data.productVariants;
       throttle = result.extensions?.cost?.throttleStatus ?? null;
 
-      const persisted = await persistPage(supabase, page.nodes, syncedAt);
+      assertSkuQuality(page.nodes, seenSkuByVariant);
+      const nodesWithAllInventoryLevels = await expandPageInventoryLevels(page.nodes);
+      const persisted = await persistPage(
+        supabase,
+        nodesWithAllInventoryLevels,
+        syncedAt,
+        locationFilter,
+      );
       stats.productsSeen += persisted.products;
       stats.variantsSeen += persisted.variants;
       stats.inventoryRowsSeen += persisted.inventory;

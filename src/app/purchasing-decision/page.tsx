@@ -12,17 +12,22 @@ import {
   DemandHmHeaderControls,
   DecisionPlanningCells,
   DecisionSaveButton,
+  BulkPlanningControls,
   HideSelectionButtons,
   OrderQtyModeHeaderButtons,
   SelectionButtons,
   StockFilterSelect,
   TagDropdownSelect,
 } from "@/app/purchasing-decision/decision-form";
+import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import {
   getPurchasingDecisionData,
 } from "@/lib/purchasing-decision-data";
 import { PendingSubmitButton } from "@/app/loading-controls";
 import { formatNumber } from "@/lib/baseline-data";
+import { requireUser } from "@/lib/auth";
+import { canAccessAdminControlTower, defaultLandingForRole } from "@/lib/role-nav";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -138,6 +143,7 @@ function decisionReturnTo(params: {
   lifetimeWeight?: string;
   q?: string;
   recentFloor?: string;
+  round10?: string;
   sellingWeight?: string;
   status?: string;
   stock?: string | string[];
@@ -151,6 +157,7 @@ function decisionReturnTo(params: {
   appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
   appendParam(nextParams, "q", params.q);
   appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "round10", params.round10);
   appendParam(nextParams, "sellingWeight", params.sellingWeight);
   appendParam(nextParams, "status", params.status);
   appendParam(nextParams, "stock", params.stock);
@@ -167,6 +174,7 @@ function decisionExportHref(params: {
   lifetimeWeight?: string;
   q?: string;
   recentFloor?: string;
+  round10?: string;
   sellingWeight?: string;
   status?: string;
   stock?: string | string[];
@@ -180,6 +188,7 @@ function decisionExportHref(params: {
   appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
   appendParam(nextParams, "q", params.q);
   appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "round10", params.round10);
   appendParam(nextParams, "sellingWeight", params.sellingWeight);
   appendParam(nextParams, "status", params.status);
   appendParam(nextParams, "stock", params.stock);
@@ -193,21 +202,34 @@ function decisionExportHref(params: {
 }
 
 function decisionExportAllHref() {
-  return "/api/purchasing-decision/export?visibility=all";
+  return "/api/purchasing-decision/export?visibility=all&round10=all";
 }
 
 function decisionOverstockReportHref(params: {
+  alert?: string | string[];
   capSelling?: string;
   lifetimeWeight?: string;
+  q?: string;
   recentFloor?: string;
+  round10?: string;
   sellingWeight?: string;
+  status?: string;
+  supplier?: string;
+  tag?: string;
+  visibility?: string;
 }) {
   const nextParams = new URLSearchParams();
+  appendParam(nextParams, "alert", params.alert);
   appendParam(nextParams, "capSelling", params.capSelling);
   appendParam(nextParams, "lifetimeWeight", params.lifetimeWeight);
+  appendParam(nextParams, "q", params.q);
   appendParam(nextParams, "recentFloor", params.recentFloor);
+  appendParam(nextParams, "round10", params.round10);
   appendParam(nextParams, "sellingWeight", params.sellingWeight);
-  nextParams.set("visibility", "all");
+  appendParam(nextParams, "status", params.status);
+  appendParam(nextParams, "supplier", params.supplier);
+  appendParam(nextParams, "tag", params.tag);
+  appendParam(nextParams, "visibility", params.visibility);
   const query = nextParams.toString();
 
   return query
@@ -225,6 +247,7 @@ export default async function PurchasingDecisionPage({
     q?: string;
     poError?: string;
     recentFloor?: string;
+    round10?: string;
     saved?: string;
     savedRows?: string;
     sellingWeight?: string;
@@ -235,6 +258,10 @@ export default async function PurchasingDecisionPage({
     visibility?: string;
   }>;
 }) {
+  const currentUser = await requireUser("/purchasing-decision");
+  if (!canAccessAdminControlTower(currentUser)) {
+    redirect(`/access-denied?from=${encodeURIComponent("/purchasing-decision")}&next=${encodeURIComponent(defaultLandingForRole(currentUser.role))}`);
+  }
   const params = await searchParams;
   const q = params.q ?? "";
   const supplier = params.supplier ?? "all";
@@ -243,6 +270,7 @@ export default async function PurchasingDecisionPage({
   const stock = normalizeSelectedStock(params.stock);
   const alert = normalizeSelectedAlerts(params.alert);
   const visibility = params.visibility ?? "active";
+  const round10 = params.round10 ?? "positive";
   const poError = params.poError ?? "";
   const savedRows = Number(params.savedRows ?? 0);
   const savedMessage =
@@ -253,6 +281,7 @@ export default async function PurchasingDecisionPage({
   const exportHref = decisionExportHref(params);
   const exportAllHref = decisionExportAllHref();
   const overstockReportHref = decisionOverstockReportHref(params);
+  const createPoFormId = "decision-create-po-form";
   const data = await getPurchasingDecisionData({
     alert,
     capSelling: params.capSelling,
@@ -260,6 +289,7 @@ export default async function PurchasingDecisionPage({
     lifetimeWeight: params.lifetimeWeight,
     q,
     recentFloor: params.recentFloor,
+    round10,
     sellingWeight: params.sellingWeight,
     stock,
     supplier,
@@ -268,7 +298,9 @@ export default async function PurchasingDecisionPage({
   });
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026]">
+    <main className="min-h-screen overflow-x-hidden bg-[#f6f7f9] text-[#172026] lg:grid lg:grid-cols-[200px_minmax(0,1fr)]">
+      <PoSidebarNav active="reorder" />
+      <div className="min-w-0 max-w-full overflow-x-hidden">
       <header className="border-b border-[#d9dde3] bg-white">
         <div className="flex w-full flex-col gap-5 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -361,7 +393,7 @@ export default async function PurchasingDecisionPage({
                   then save all visible rows in one submit.
                 </p>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_240px_170px_170px_150px_150px_170px_auto]">
+              <form className="grid gap-3 md:grid-cols-[1fr_240px_170px_170px_150px_150px_170px_150px_auto]">
                 <input name="lifetimeWeight" type="hidden" value={data.demandFormula.lifetimeWeight} />
                 <input name="sellingWeight" type="hidden" value={data.demandFormula.sellingDayWeight} />
                 <input name="recentFloor" type="hidden" value={data.demandFormula.recentFloorPercent} />
@@ -428,6 +460,16 @@ export default async function PurchasingDecisionPage({
                 </label>
                 <AlertFilterSelect options={alertOptions} selectedAlerts={alert} />
                 <StockFilterSelect options={stockOptions} selectedStock={stock} />
+                <label className="grid gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+                    Round 10
+                  </span>
+                  <select className={inputClass} defaultValue={round10} name="round10">
+                    <option value="positive">&gt; 0 only</option>
+                    <option value="zero">= 0 only</option>
+                    <option value="all">All</option>
+                  </select>
+                </label>
                 <PendingSubmitButton
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-4 text-sm font-semibold text-[#364252]"
                   loadingText="Filtering..."
@@ -460,6 +502,13 @@ export default async function PurchasingDecisionPage({
               {savedMessage}
             </div>
           ) : null}
+          <form
+            action={createPoFromDecisionAction}
+            className="hidden"
+            id={createPoFormId}
+          >
+            <input name="returnTo" type="hidden" value={returnTo} />
+          </form>
           <form action={savePurchasingDecisionAction}>
             <input name="returnTo" type="hidden" value={returnTo} />
             <div className="flex flex-col gap-3 border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
@@ -497,8 +546,24 @@ export default async function PurchasingDecisionPage({
                   <Save size={14} />
                   One save for visible rows
                 </span>
+                <BulkPlanningControls
+                  canBulkEdit={currentUser.role === "super_admin"}
+                  filterSummary={[
+                    supplier !== "all" ? `Supplier = ${supplier}` : "Supplier = all",
+                    tag !== "all" ? `Tag = ${tag}` : "",
+                    status !== "all" ? `Status = ${status}` : "",
+                    visibility !== "active" ? `Visibility = ${visibility}` : "Visibility = active only",
+                    `Round 10 = ${
+                      round10 === "positive" ? "> 0 only" : round10 === "zero" ? "= 0 only" : "all"
+                    }`,
+                    stock.includes("all") ? "" : `Stock = ${stock.join(", ")}`,
+                    alert.includes("all") ? "" : `Alert = ${alert.join(", ")}`,
+                    q ? `Search = ${q}` : "",
+                  ].filter(Boolean).join(", ")}
+                  rowCount={data.lines.length}
+                />
                 <DecisionSaveButton />
-                <DecisionCreatePoButton formAction={createPoFromDecisionAction} />
+                <DecisionCreatePoButton formId={createPoFormId} />
               </div>
             </div>
 
@@ -564,27 +629,32 @@ export default async function PurchasingDecisionPage({
                           className="size-4 accent-[#172026]"
                           data-decision-select="sku"
                           defaultChecked={false}
+                          form={createPoFormId}
                           name="selectedSku"
                           type="checkbox"
                           value={line.sku}
                         />
-                        <input name="poSku" type="hidden" value={line.sku} />
+                        <input form={createPoFormId} name="poSku" type="hidden" value={line.sku} />
                         <input
+                          form={createPoFormId}
                           name="poProductName"
                           type="hidden"
                           value={line.productName}
                         />
                         <input
+                          form={createPoFormId}
                           name="poMainName"
                           type="hidden"
                           value={line.mainName}
                         />
                         <input
+                          form={createPoFormId}
                           name="poSupplier"
                           type="hidden"
                           value={line.supplier}
                         />
                         <input
+                          form={createPoFormId}
                           name="poUnitPrice"
                           type="hidden"
                           value={qtyValue(line.unitPrice)}
@@ -706,17 +776,21 @@ export default async function PurchasingDecisionPage({
                       <DecisionPlanningCells
                         calculatedDemandIndexHm={line.calculatedDemandIndexHm}
                         comingQty={line.coming}
+                        createPoFormId={createPoFormId}
                         demandIndexOverride={line.demandIndexOverride}
                         firstSaleDate={line.firstSaleDate}
                         leadTimeDays={line.leadTimeDays}
+                        leadTimeIsManual={line.leadTimeIsManual}
                         leadTimeSource={line.leadTimeSource}
                         lifetimeDailyAverage={line.lifetimeDailyAverage}
                         lastSaleDate={line.lastSaleDate}
                         orderCycleDays={line.orderCycleDays}
+                        orderCycleIsManual={line.orderCycleIsManual}
                         orderQtyMode={line.orderQtyMode}
                         manualRopUnits={line.manualRopUnits}
                         reorderPointUnits={line.reorderPointUnits}
                         safetyDays={line.safetyDays}
+                        safetyIsManual={line.safetyIsManual}
                         safetySource={line.safetySource}
                         sellingDayAverage={line.sellingDayAverage}
                         sellingDays={line.sellingDays}
@@ -761,6 +835,7 @@ export default async function PurchasingDecisionPage({
             </div>
           </form>
         </section>
+      </div>
       </div>
     </main>
   );

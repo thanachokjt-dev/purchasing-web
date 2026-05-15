@@ -3,11 +3,12 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
-import { LoadingLabel, type FormServerAction } from "@/app/loading-controls";
+import { LoadingLabel } from "@/app/loading-controls";
 
 const compactInputClass =
   "h-9 w-20 rounded-md border border-[#cfd6df] bg-white px-2 text-right font-mono text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const fillDemandEvent = "purchasing-decision:fill-demand-calc";
+const bulkPlanningEvent = "purchasing-decision:bulk-planning";
 const qtyModeEvent = "purchasing-decision:set-qty-mode";
 
 function formatNumber(value: number) {
@@ -175,20 +176,89 @@ export function DecisionSaveButton() {
 }
 
 export function DecisionCreatePoButton({
-  formAction,
+  formId,
 }: {
-  formAction: FormServerAction;
+  formId: string;
 }) {
-  const { pending } = useFormStatus();
+  const [creating, setCreating] = useState(false);
+
+  function validateAndConfirm(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+
+    if (creating) {
+      return;
+    }
+
+    const form = document.getElementById(formId);
+    if (!(form instanceof HTMLFormElement)) {
+      window.alert("Create PO form is not ready. Please refresh and try again.");
+      return;
+    }
+
+    const formData = new FormData(form);
+    const selectedSkus = Array.from(
+      new Set(
+        formData
+          .getAll("selectedSku")
+          .map((value) => String(value).trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!selectedSkus.length) {
+      window.alert("No valid rows selected for PO creation.");
+      return;
+    }
+
+    const skus = formData.getAll("poSku").map((value) => String(value).trim());
+    const rawQtyBySku = new Map<string, number>();
+    const roundedQtyBySku = new Map<string, number>();
+    formData.getAll("poRawQty").forEach((value, index) => {
+      rawQtyBySku.set(skus[index] ?? "", numberOrZero(String(value)));
+    });
+    formData.getAll("poRoundedQty").forEach((value, index) => {
+      roundedQtyBySku.set(skus[index] ?? "", numberOrZero(String(value)));
+    });
+
+    const validRows = selectedSkus.filter((sku) => {
+      const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
+      const qty = qtyChoice === "raw" ? rawQtyBySku.get(sku) : roundedQtyBySku.get(sku);
+      return (qty ?? 0) > 0;
+    });
+    if (!validRows.length) {
+      window.alert("No valid rows selected for PO creation.");
+      return;
+    }
+
+    const skippedRows = selectedSkus.length - validRows.length;
+    const message =
+      skippedRows > 0
+        ? `Create PO for ${validRows.length} selected SKU(s)? ${skippedRows} selected row(s) with qty 0 will be skipped.`
+        : `Create PO for ${validRows.length} selected SKU(s)?`;
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    setCreating(true);
+    try {
+      form.requestSubmit();
+    } catch (error) {
+      setCreating(false);
+      window.alert(
+        error instanceof Error
+          ? `Could not submit Create PO: ${error.message}`
+          : "Could not submit Create PO.",
+      );
+    }
+  }
 
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      disabled={pending}
-      formAction={formAction}
-      type="submit"
+      disabled={creating}
+      onClick={validateAndConfirm}
+      type="button"
     >
-      <LoadingLabel loading={pending} loadingText="Creating...">
+      <LoadingLabel loading={creating} loadingText="Creating...">
         Create PO
       </LoadingLabel>
     </button>
@@ -577,6 +647,118 @@ export function OrderQtyModeHeaderButtons() {
   );
 }
 
+export function BulkPlanningControls({
+  canBulkEdit,
+  filterSummary,
+  rowCount,
+}: {
+  canBulkEdit: boolean;
+  filterSummary: string;
+  rowCount: number;
+}) {
+  const [safety, setSafety] = useState("");
+  const [lead, setLead] = useState("");
+  const [cycle, setCycle] = useState("");
+
+  // TODO: add a reset override action once per-field reset semantics are settled.
+  if (!canBulkEdit) {
+    return null;
+  }
+
+  function valueOrNull(value: string) {
+    const parsed = Number(value);
+    return value.trim() && Number.isFinite(parsed) && parsed >= 0
+      ? Math.round(parsed)
+      : null;
+  }
+
+  function applyBulkPlanning() {
+    const nextSafety = valueOrNull(safety);
+    const nextLead = valueOrNull(lead);
+    const nextCycle = valueOrNull(cycle);
+    const values = [
+      nextSafety !== null ? `Safety ${nextSafety}` : "",
+      nextLead !== null ? `Lead ${nextLead}` : "",
+      nextCycle !== null ? `Cycle ${nextCycle}` : "",
+    ].filter(Boolean);
+
+    if (!values.length) {
+      window.alert("Enter at least one Safety, Lead, or Cycle value.");
+      return;
+    }
+    if (rowCount <= 0) {
+      window.alert("No visible filtered rows to update.");
+      return;
+    }
+
+    const message = [
+      `Apply ${values.join(", ")} to ${rowCount} visible filtered row(s)?`,
+      `Filters: ${filterSummary || "current visible result"}`,
+      "This updates the table first. Click Save visible rows to persist the overrides.",
+    ].join("\n");
+
+    if (!window.confirm(message)) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent(bulkPlanningEvent, {
+        detail: {
+          cycle: nextCycle,
+          lead: nextLead,
+          safety: nextSafety,
+        },
+      }),
+    );
+  }
+
+  return (
+    <div className="grid gap-2 rounded-md border border-[#cfd6df] bg-white p-2 text-xs text-[#52606d]">
+      <p className="font-semibold text-[#172026]">Bulk update visible filtered rows</p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="grid gap-1">
+          <span className="font-semibold uppercase tracking-[0.08em]">Safety</span>
+          <input
+            className="h-8 w-20 rounded-md border border-[#cfd6df] px-2 text-right font-mono"
+            min="0"
+            onChange={(event) => setSafety(event.target.value)}
+            type="number"
+            value={safety}
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="font-semibold uppercase tracking-[0.08em]">Lead</span>
+          <input
+            className="h-8 w-20 rounded-md border border-[#cfd6df] px-2 text-right font-mono"
+            min="0"
+            onChange={(event) => setLead(event.target.value)}
+            type="number"
+            value={lead}
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="font-semibold uppercase tracking-[0.08em]">Cycle</span>
+          <input
+            className="h-8 w-20 rounded-md border border-[#cfd6df] px-2 text-right font-mono"
+            min="0"
+            onChange={(event) => setCycle(event.target.value)}
+            type="number"
+            value={cycle}
+          />
+        </label>
+        <button
+          className="h-8 rounded-md bg-[#172026] px-3 text-xs font-semibold text-white"
+          onClick={applyBulkPlanning}
+          type="button"
+        >
+          Apply
+        </button>
+      </div>
+      <p>Scope: {rowCount} visible filtered row(s).</p>
+    </div>
+  );
+}
+
 export function AlertFilterSelect({
   options,
   selectedAlerts,
@@ -734,19 +916,23 @@ export function StockFilterSelect({
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
+  createPoFormId,
   demandIndexOverride,
   firstSaleDate,
   leadTimeDays,
+  leadTimeIsManual,
   leadTimeSource,
   lifetimeDailyAverage,
   lastSaleDate,
   orderCycleDays,
+  orderCycleIsManual,
   orderQtyMode,
   manualRopUnits,
   onHandUnits,
   reorderPointUnits,
   ropAlert,
   safetyDays,
+  safetyIsManual,
   safetySource,
   sellingDayAverage,
   sellingDays,
@@ -756,19 +942,23 @@ export function DecisionPlanningCells({
 }: {
   calculatedDemandIndexHm: number;
   comingQty: number;
+  createPoFormId: string;
   demandIndexOverride: number | null;
   firstSaleDate: string | null;
   leadTimeDays: number;
+  leadTimeIsManual: boolean;
   leadTimeSource: "sku" | "supplier" | "default";
   lifetimeDailyAverage: number;
   lastSaleDate: string | null;
   orderCycleDays: number;
+  orderCycleIsManual: boolean;
   orderQtyMode: "raw" | "rounded";
   manualRopUnits: number | null;
   onHandUnits: number;
   reorderPointUnits: number;
   ropAlert: "order_now" | "watch" | "healthy" | "hidden";
   safetyDays: number;
+  safetyIsManual: boolean;
   safetySource: "sku" | "supplier" | "default";
   sellingDayAverage: number;
   sellingDays: number;
@@ -785,6 +975,9 @@ export function DecisionPlanningCells({
   const [safety, setSafety] = useState(String(safetyDays));
   const [lead, setLead] = useState(String(leadTimeDays));
   const [cycle, setCycle] = useState(String(orderCycleDays));
+  const [manualSafety, setManualSafety] = useState(safetyIsManual);
+  const [manualLead, setManualLead] = useState(leadTimeIsManual);
+  const [manualCycle, setManualCycle] = useState(orderCycleIsManual);
   useEffect(() => {
     function fillCalculatedDemand() {
       setDemand(formatDecimal(calculatedDemandIndexHm, 4));
@@ -794,6 +987,31 @@ export function DecisionPlanningCells({
     window.addEventListener(fillDemandEvent, fillCalculatedDemand);
     return () => window.removeEventListener(fillDemandEvent, fillCalculatedDemand);
   }, [calculatedDemandIndexHm]);
+  useEffect(() => {
+    function applyBulkPlanning(event: Event) {
+      const detail = (event as CustomEvent<{
+        cycle?: number | null;
+        lead?: number | null;
+        safety?: number | null;
+      }>).detail;
+
+      if (typeof detail?.safety === "number") {
+        setSafety(String(detail.safety));
+        setManualSafety(true);
+      }
+      if (typeof detail?.lead === "number") {
+        setLead(String(detail.lead));
+        setManualLead(true);
+      }
+      if (typeof detail?.cycle === "number") {
+        setCycle(String(detail.cycle));
+        setManualCycle(true);
+      }
+    }
+
+    window.addEventListener(bulkPlanningEvent, applyBulkPlanning);
+    return () => window.removeEventListener(bulkPlanningEvent, applyBulkPlanning);
+  }, []);
   const liveDemand = demand ? numberOrZero(demand) : calculatedDemandIndexHm;
   const liveReorderPoint = useMemo(() => {
     const nextValue = Math.ceil(liveDemand * (numberOrZero(safety) + numberOrZero(lead)));
@@ -909,10 +1127,18 @@ export function DecisionPlanningCells({
           className={compactInputClass}
           min="0"
           name="safetyDays"
-          onChange={(event) => setSafety(event.target.value)}
+          onChange={(event) => {
+            setSafety(event.target.value);
+            setManualSafety(true);
+          }}
           type="number"
           value={safety}
         />
+        {manualSafety ? (
+          <p className="mt-1 text-right text-[10px] font-semibold text-[#255f85]">
+            manual
+          </p>
+        ) : null}
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
           {safetySource === "sku" && supplierSafetyDays !== null
             ? `sku / sup ${supplierSafetyDays}`
@@ -933,10 +1159,18 @@ export function DecisionPlanningCells({
           className={compactInputClass}
           min="0"
           name="leadTimeDays"
-          onChange={(event) => setLead(event.target.value)}
+          onChange={(event) => {
+            setLead(event.target.value);
+            setManualLead(true);
+          }}
           type="number"
           value={lead}
         />
+        {manualLead ? (
+          <p className="mt-1 text-right text-[10px] font-semibold text-[#255f85]">
+            manual
+          </p>
+        ) : null}
         <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
           {leadTimeSource === "sku" && supplierLeadTimeDays !== null
             ? `sku / sup ${supplierLeadTimeDays}`
@@ -950,10 +1184,18 @@ export function DecisionPlanningCells({
           className={compactInputClass}
           min="0"
           name="orderCycleDays"
-          onChange={(event) => setCycle(event.target.value)}
+          onChange={(event) => {
+            setCycle(event.target.value);
+            setManualCycle(true);
+          }}
           type="number"
           value={cycle}
         />
+        {manualCycle ? (
+          <p className="mt-1 text-right text-[10px] font-semibold text-[#255f85]">
+            manual
+          </p>
+        ) : null}
       </td>
       <td className="px-3 py-3 text-right align-top font-mono text-sm font-semibold text-[#172026]">
         <p>{formatNumber(liveReorderPoint)}</p>
@@ -1004,11 +1246,13 @@ export function DecisionPlanningCells({
       <td className="px-3 py-3 align-top">
         <input name="orderQtyMode" type="hidden" value={selectedMode} />
         <input
+          form={createPoFormId}
           name="poRawQty"
           type="hidden"
           value={orderQtyRaw}
         />
         <input
+          form={createPoFormId}
           name="poRoundedQty"
           type="hidden"
           value={orderQty}
@@ -1017,6 +1261,7 @@ export function DecisionPlanningCells({
           <label className="flex items-center gap-2">
             <input
               checked={selectedMode === "raw"}
+              form={createPoFormId}
               name={`qtyChoice:${sku}`}
               onClick={() => chooseMode("raw")}
               onChange={() => chooseMode("raw")}
@@ -1028,6 +1273,7 @@ export function DecisionPlanningCells({
           <label className="flex items-center gap-2">
             <input
               checked={selectedMode === "rounded"}
+              form={createPoFormId}
               name={`qtyChoice:${sku}`}
               onClick={() => chooseMode("rounded")}
               onChange={() => chooseMode("rounded")}

@@ -82,19 +82,27 @@ function isModifiedClick(event: MouseEvent) {
   return event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
 }
 
-function isInternalUrl(href: string) {
+function shouldShowNavigationLoading(href: string) {
   if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
     return false;
   }
 
   const url = new URL(href, window.location.href);
-  return url.origin === window.location.origin && url.href !== window.location.href;
+  if (url.origin !== window.location.origin || url.href === window.location.href) {
+    return false;
+  }
+
+  // Hash-only sidebar jumps do not produce an App Router pathname/search change,
+  // so showing the global overlay for them can leave it waiting for a route event
+  // that will never arrive.
+  return url.pathname !== window.location.pathname || url.search !== window.location.search;
 }
 
 export function GlobalLoadingOverlay() {
   const [visible, setVisible] = useState(false);
   const pathname = usePathname();
   const timerRef = useRef<number | null>(null);
+  const safetyTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("app-loading-stop"));
@@ -105,7 +113,18 @@ export function GlobalLoadingOverlay() {
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current);
       }
-      timerRef.current = window.setTimeout(() => setVisible(true), 120);
+      if (safetyTimerRef.current !== null) {
+        window.clearTimeout(safetyTimerRef.current);
+      }
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        setVisible(true);
+      }, 120);
+      safetyTimerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        safetyTimerRef.current = null;
+        setVisible(false);
+      }, 10_000);
     };
 
     const hide = () => {
@@ -113,12 +132,25 @@ export function GlobalLoadingOverlay() {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
       }
+      if (safetyTimerRef.current !== null) {
+        window.clearTimeout(safetyTimerRef.current);
+        safetyTimerRef.current = null;
+      }
       setVisible(false);
     };
 
     const handleAppLoadingStart = () => showSoon();
     const handleAppLoadingStop = () => hide();
     const handleSubmit = () => showSoon();
+    const handleUrlChange = () => hide();
+    const urlChangeTimers = new Set<number>();
+    const dispatchUrlChangeSoon = () => {
+      const timer = window.setTimeout(() => {
+        urlChangeTimers.delete(timer);
+        window.dispatchEvent(new Event("app-url-change"));
+      }, 0);
+      urlChangeTimers.add(timer);
+    };
     const handleClick = (event: MouseEvent) => {
       if (isModifiedClick(event) || event.defaultPrevented) {
         return;
@@ -126,15 +158,30 @@ export function GlobalLoadingOverlay() {
 
       const target = event.target instanceof Element ? event.target : null;
       const link = target?.closest("a[href]");
-      if (link instanceof HTMLAnchorElement && isInternalUrl(link.href)) {
+      if (link instanceof HTMLAnchorElement && shouldShowNavigationLoading(link.href)) {
         showSoon();
       }
+    };
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+
+    window.history.pushState = function pushStateWithLoadingReset(...args) {
+      const result = originalPushState.apply(this, args);
+      dispatchUrlChangeSoon();
+      return result;
+    };
+    window.history.replaceState = function replaceStateWithLoadingReset(...args) {
+      const result = originalReplaceState.apply(this, args);
+      dispatchUrlChangeSoon();
+      return result;
     };
 
     document.addEventListener("click", handleClick, true);
     document.addEventListener("submit", handleSubmit, true);
     window.addEventListener("app-loading-start", handleAppLoadingStart);
     window.addEventListener("app-loading-stop", handleAppLoadingStop);
+    window.addEventListener("app-url-change", handleUrlChange);
+    window.addEventListener("hashchange", hide);
     window.addEventListener("pageshow", hide);
     window.addEventListener("popstate", hide);
 
@@ -143,8 +190,16 @@ export function GlobalLoadingOverlay() {
       document.removeEventListener("submit", handleSubmit, true);
       window.removeEventListener("app-loading-start", handleAppLoadingStart);
       window.removeEventListener("app-loading-stop", handleAppLoadingStop);
+      window.removeEventListener("app-url-change", handleUrlChange);
+      window.removeEventListener("hashchange", hide);
       window.removeEventListener("pageshow", hide);
       window.removeEventListener("popstate", hide);
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
+      for (const timer of urlChangeTimers) {
+        window.clearTimeout(timer);
+      }
+      urlChangeTimers.clear();
       hide();
     };
   }, []);

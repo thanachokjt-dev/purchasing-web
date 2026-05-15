@@ -26,3 +26,10 @@ export function todayAndYesterdayWindow(now = new Date()) {
     untilAt: now.toISOString(),
   };
 }
+
+export function rollingLookbackWindow(days = 7, now = new Date()) {
+  return {
+    sinceAt: new Date(now.getTime() - days * ONE_DAY_MS).toISOString(),
+    untilAt: now.toISOString(),
+  };
+}

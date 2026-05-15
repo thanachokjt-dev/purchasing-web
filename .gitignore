@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local dev logs
+.codex-*.log
+.codex-*.err.log
+.codex-logs/
+supabase/.temp/

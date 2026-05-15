@@ -4,11 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:clean": "npm run kill:3000 && next dev",
+    "kill:3000": "node scripts/kill-port-3000.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "backfill:sales-demand": "node scripts/backfill-sales-summary-demand.mjs",
     "backfill:sales-lines": "node scripts/backfill-sales-lines.mjs",
-    "import:po-portal": "node scripts/import-po-portal.mjs"
+    "import:po-portal": "node scripts/import-po-portal.mjs",
+    "seed:users": "node scripts/seed-initial-users.mjs",
+    "repair:profiles": "node scripts/seed-initial-users.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",

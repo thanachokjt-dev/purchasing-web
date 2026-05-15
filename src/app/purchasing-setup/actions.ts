@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { requireUser } from "@/lib/auth";
+import { canEditPo } from "@/lib/access-control";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 function text(formData: FormData, name: string) {
@@ -56,6 +58,13 @@ function refreshSetup() {
   revalidatePath("/po");
 }
 
+async function requireSetupMutationPermission() {
+  const profile = await requireUser("/purchasing-setup");
+  if (profile.role !== "super_admin" || !canEditPo(profile.email)) {
+    throw new Error("You do not have permission to update purchasing setup.");
+  }
+}
+
 function supplierCodePrefix(supplierName: string) {
   const ignored = new Set(["AND", "CO", "COMPANY", "LTD", "LIMITED", "THE"]);
   const tokens =
@@ -91,6 +100,7 @@ async function generatedSupplierCode(supplierName: string) {
 }
 
 export async function saveSupplierSetupAction(formData: FormData) {
+  await requireSetupMutationPermission();
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;
@@ -134,6 +144,7 @@ export async function saveSupplierSetupAction(formData: FormData) {
 }
 
 export async function addSupplierContactAction(formData: FormData) {
+  await requireSetupMutationPermission();
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;
@@ -164,6 +175,7 @@ export async function addSupplierContactAction(formData: FormData) {
 }
 
 export async function savePurchasingTagAction(formData: FormData) {
+  await requireSetupMutationPermission();
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;

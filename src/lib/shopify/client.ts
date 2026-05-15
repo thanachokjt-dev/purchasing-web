@@ -32,6 +32,10 @@ export type ShopifyVariantNode = {
     id: string;
     tracked: boolean;
     inventoryLevels: {
+      pageInfo: {
+        hasNextPage: boolean;
+        endCursor: string | null;
+      };
       nodes: Array<{
         location: {
           id: string;
@@ -68,6 +72,10 @@ export type ShopifyVariantNode = {
   }>;
 };
 
+export type ShopifyInventoryLevelNode = NonNullable<
+  ShopifyVariantNode["inventoryItem"]
+>["inventoryLevels"]["nodes"][number];
+
 export type ProductVariantsPayload = {
   productVariants: {
     pageInfo: {
@@ -78,10 +86,23 @@ export type ProductVariantsPayload = {
   };
 };
 
+export type InventoryLevelsPayload = {
+  inventoryItem: {
+    inventoryLevels: {
+      pageInfo: {
+        hasNextPage: boolean;
+        endCursor: string | null;
+      };
+      nodes: ShopifyInventoryLevelNode[];
+    };
+  } | null;
+};
+
 export type ShopifyOrderNode = {
   id: string;
   name: string;
   createdAt: string;
+  updatedAt: string;
   processedAt: string | null;
   cancelledAt: string | null;
   displayFinancialStatus: string | null;
@@ -97,6 +118,7 @@ export type ShopifyOrderNode = {
       title: string;
       sku: string | null;
       quantity: number;
+      currentQuantity: number | null;
       variantTitle: string | null;
       originalUnitPriceSet: {
         shopMoney: {
@@ -187,6 +209,10 @@ export const PRODUCT_VARIANTS_QUERY = `
           id
           tracked
           inventoryLevels(first: 20) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
             nodes {
               location {
                 id
@@ -226,9 +252,32 @@ export const PRODUCT_VARIANTS_QUERY = `
   }
 `;
 
+export const INVENTORY_LEVELS_QUERY = `
+  query InventoryLevels($id: ID!, $cursor: String) {
+    inventoryItem(id: $id) {
+      inventoryLevels(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          location {
+            id
+            name
+          }
+          quantities(names: ["available", "on_hand", "committed", "incoming", "reserved", "safety_stock"]) {
+            name
+            quantity
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const ORDERS_QUERY = `
-  query Orders($cursor: String, $query: String!) {
-    orders(first: 100, after: $cursor, query: $query, sortKey: CREATED_AT) {
+  query Orders($cursor: String, $query: String!, $sortKey: OrderSortKeys!) {
+    orders(first: 100, after: $cursor, query: $query, sortKey: $sortKey) {
       pageInfo {
         hasNextPage
         endCursor
@@ -237,6 +286,7 @@ export const ORDERS_QUERY = `
         id
         name
         createdAt
+        updatedAt
         processedAt
         cancelledAt
         displayFinancialStatus
@@ -252,6 +302,7 @@ export const ORDERS_QUERY = `
             title
             sku
             quantity
+            currentQuantity
             variantTitle
             originalUnitPriceSet {
               shopMoney {

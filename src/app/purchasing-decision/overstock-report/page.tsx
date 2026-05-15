@@ -2,10 +2,13 @@ import { ArrowLeft } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { PrintOverstockReportButton } from "@/app/purchasing-decision/overstock-report/print-button";
+import { requireUser } from "@/lib/auth";
+import { canAccessAdminControlTower, defaultLandingForRole } from "@/lib/role-nav";
 import {
   getPurchasingDecisionData,
   type PurchasingDecisionLine,
 } from "@/lib/purchasing-decision-data";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 const MIN_REPORT_OVERSTOCK_DAYS = 60;
@@ -15,6 +18,7 @@ type ReportParams = {
   lifetimeWeight?: string;
   q?: string;
   recentFloor?: string;
+  round10?: string;
   sellingWeight?: string;
   status?: string;
   supplier?: string;
@@ -239,6 +243,10 @@ export default async function OverstockReportPage({
 }: {
   searchParams: Promise<ReportParams>;
 }) {
+  const currentUser = await requireUser("/purchasing-decision/overstock-report");
+  if (!canAccessAdminControlTower(currentUser)) {
+    redirect(`/access-denied?from=${encodeURIComponent("/purchasing-decision/overstock-report")}&next=${encodeURIComponent(defaultLandingForRole(currentUser.role))}`);
+  }
   const params = await searchParams;
   const data = await getPurchasingDecisionData({
     capSelling: params.capSelling,
@@ -247,6 +255,7 @@ export default async function OverstockReportPage({
     limit: null,
     q: params.q ?? "",
     recentFloor: params.recentFloor,
+    round10: params.round10 ?? "positive",
     sellingWeight: params.sellingWeight,
     stock: "any_overstock",
     supplier: params.supplier ?? "all",

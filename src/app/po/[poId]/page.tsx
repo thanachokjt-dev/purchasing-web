@@ -1,9 +1,8 @@
 import Link from "next/link";
 import Image from "next/image";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
 import {
-  AddPoItemForm,
   BatchReceiveFormBar,
   BatchReceiveLineFields,
   DraftApprovalEmailButton,
@@ -12,12 +11,38 @@ import {
   PoDraftLinesForm,
   PaymentScheduleForm,
   PrintDocumentButton,
+  PrintIntentContent,
   RemovePoReceiptForm,
   SmartAddPoItemForm,
   StatusActionForm,
 } from "@/app/po/po-forms";
+import { SubmitPaymentRequestForm } from "@/app/payment-requests/forms";
+import { PaymentRequestCard } from "@/app/payment-requests/request-card";
 import { formatNumber } from "@/lib/baseline-data";
+import { requireUser } from "@/lib/auth";
+import {
+  canEditPo,
+  canManagePayments,
+  canOpenPoDetail,
+  canReceivePo,
+  readonlyAccessLabel,
+} from "@/lib/access-control";
+import {
+  getApprovalUserOptions,
+  getPaymentRequestsForPo,
+  canViewPaymentRequest,
+} from "@/lib/payment-approvals";
+import {
+  matrixItemFamily,
+  matrixItemSize,
+  matrixProductName,
+  matrixSectionLabel,
+  matrixSectionName,
+  sortMatrixSizes,
+  type MatrixFamily,
+} from "@/lib/po-size-matrix";
 import { getPoPortalDetailData } from "@/lib/po-portal";
+import { canAccessAdminControlTower, defaultLandingForRole, defaultLandingForUser } from "@/lib/role-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +82,23 @@ const formatDate = (value: string | null) => {
   }).format(new Date(`${value}T00:00:00`));
 };
 
+const receiptActualDate = (
+  receipt: { actual_received_date?: string | null; received_at?: string | null },
+  headerDate: string,
+) => receipt.actual_received_date || headerDate || receipt.received_at?.slice(0, 10) || "";
+
+function bangkokDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 function addDays(dateValue: string, days: number) {
   const date = new Date(`${dateValue.slice(0, 10)}T00:00:00`);
   date.setDate(date.getDate() + days);
@@ -73,6 +115,137 @@ const companyLines = [
 const nonProductPaymentTypes = new Set(["freight", "shipping", "fine", "penalty", "other", "other_cost"]);
 const isProductPayment = (type: string | null | undefined) =>
   !nonProductPaymentTypes.has(String(type ?? "").trim().toLowerCase());
+const activePaymentRequestStatuses = new Set([
+  "approved",
+  "paid",
+  "pending_approval",
+  "pending_review",
+]);
+
+type PoDetailData = NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>;
+
+function RoleScopedPoDetail({
+  currentUser,
+  data,
+  paymentRequests,
+}: {
+  currentUser: Awaited<ReturnType<typeof requireUser>>;
+  data: PoDetailData;
+  paymentRequests: Awaited<ReturnType<typeof getPaymentRequestsForPo>>;
+}) {
+  const order = data.order;
+
+  return (
+    <main className="min-h-screen bg-[#f6f7f9] px-5 py-8 text-[#172026]">
+      <div className="mx-auto grid max-w-6xl gap-5">
+        <header className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">
+            PO payment context
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-normal">{order.poId}</h1>
+          <p className="mt-2 text-sm leading-6 text-[#52606d]">
+            {order.supplierName} / {order.poDate ? formatDate(order.poDate) : "No date"} /{" "}
+            {formatCurrency(order.poAmountForeign, order.currency)}
+          </p>
+          <Link
+            className="mt-4 inline-flex rounded-md border border-[#cfd6df] bg-white px-3 py-2 text-sm font-semibold text-[#364252]"
+            href={defaultLandingForRole(currentUser.role)}
+          >
+            Back to My Workbench
+          </Link>
+        </header>
+
+        <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">PO Summary</h2>
+          <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+            {[
+              ["Supplier", `${order.supplierName} (${order.supplierCode})`],
+              ["Requester", order.requester || "-"],
+              ["Owner", order.owner || "-"],
+              ["Status", order.workStatus || "-"],
+              ["Purpose / tag", order.headerPurpose || "-"],
+              ["Quotation", order.quotationReference || "-"],
+              ["Supplier invoice", order.supplierInvoiceNo || "-"],
+              ["PO total", formatCurrency(order.poAmountForeign, order.currency)],
+              ["THB total", formatCurrency(order.poAmountThb, "THB")],
+            ].map(([label, value]) => (
+              <div className="grid grid-cols-[140px_1fr] gap-3" key={label}>
+                <p className="font-semibold text-[#667380]">{label}</p>
+                <p>{value}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">Payment History</h2>
+          {data.payments.length > 0 ? (
+            <div className="mt-3 grid gap-2">
+              {data.payments.map((payment, index) => (
+                <div className="rounded-md border border-[#edf1f5] bg-[#fbfcfd] p-3 text-sm" key={payment.id}>
+                  <p className="font-semibold">
+                    Payment {index + 1}: {readablePaymentType(payment.payment_type)}
+                  </p>
+                  <p className="mt-1 text-[#667380]">
+                    {formatCurrency(Number(payment.amount ?? 0), payment.currency ?? order.currency)}
+                    {" | "}
+                    {payment.payment_status ?? "paid"}
+                    {" | due "}
+                    {payment.due_date || payment.payment_date || "-"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-[#667380]">No payment rows found.</p>
+          )}
+        </section>
+
+        <section className="grid gap-3">
+          <h2 className="text-lg font-semibold">Payment Approval Requests</h2>
+          {paymentRequests.length > 0 ? (
+            paymentRequests.map((request) => (
+              <PaymentRequestCard
+                currentUser={currentUser}
+                key={request.id}
+                request={request}
+              />
+            ))
+          ) : (
+            <p className="rounded-lg border border-[#dfe4ea] bg-white p-4 text-sm text-[#667380]">
+              No payment approval requests visible for this PO.
+            </p>
+          )}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function readablePaymentType(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  const compact = raw.toLowerCase().replace(/[^a-z0-9%]+/g, "");
+  const labels: Record<string, string> = {
+    afterreceived25: "After Received 25%",
+    "afterreceived25%": "After Received 25%",
+    afterreceived251month: "After Received 25% - 1 Month",
+    afterrecived25: "After Received 25%",
+    "afterrecived25%": "After Received 25%",
+    afterrecived251month: "After Received 25% - 1 Month",
+    aftersale251month: "After Sale 25% - 1 Month",
+    beforeshipments25: "Before Shipment 25%",
+    "beforeshipments25%": "Before Shipment 25%",
+    beforeshipments50: "Before Shipment 50%",
+    "beforeshipments50%": "Before Shipment 50%",
+    deposit50: "Deposit 50%",
+    "deposit50%": "Deposit 50%",
+    freight: "Freight",
+    other: "Other",
+    shipping: "Shipping",
+  };
+
+  return labels[compact] ?? (raw || "Payment");
+}
 
 const statusClass = (status: string) => {
   const normalized = status.toLowerCase();
@@ -89,31 +262,28 @@ const statusClass = (status: string) => {
 };
 
 type DetailItem = NonNullable<Awaited<ReturnType<typeof getPoPortalDetailData>>>["items"][number];
-const SIZE_PATTERN = "3XL|2XL|XXS|XS|XL|L|M|S";
-const CORE_SIZE_COLUMNS = ["XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL"];
 
 function itemSize(item: DetailItem) {
-  const source = [item.variantTitle, item.fullName, item.productTitle].join(" ");
-  const match = source.match(new RegExp(`(?:^|[\\s/-])(${SIZE_PATTERN})(?:$|[\\s/-])`, "i"));
-  return match?.[1].toUpperCase() ?? "OS";
+  return matrixItemSize(item);
 }
 
-function matrixProductName(item: DetailItem) {
-  return item.productTitle
-    .replace(new RegExp(`\\s*[/|-]\\s*(${SIZE_PATTERN})\\s*$`, "i"), "")
-    .trim();
+function itemProductName(item: DetailItem) {
+  return matrixProductName(item);
 }
 
 function itemTagGroup(item: DetailItem) {
-  const taggedItem = item as DetailItem & { tags?: string[] };
-  const tags = Array.isArray(taggedItem.tags) ? taggedItem.tags : [];
-  return tags.find((tag) => tag.trim())?.trim() ?? "Untagged";
+  return matrixSectionName(item);
+}
+
+function itemFamily(item: DetailItem): MatrixFamily {
+  return matrixItemFamily(item);
 }
 
 function quoteMatrixRows(items: DetailItem[]) {
   const rows = new Map<
     string,
     {
+      family: MatrixFamily;
       groupTag: string;
       imageUrl: string | null;
       items: Map<
@@ -130,12 +300,14 @@ function quoteMatrixRows(items: DetailItem[]) {
   >();
 
   for (const item of items) {
-    const productName = matrixProductName(item);
+    const productName = itemProductName(item);
     const groupTag = itemTagGroup(item);
-    const key = `${groupTag.toLowerCase()}::${productName.toLowerCase()}`;
+    const family = itemFamily(item);
+    const key = `${groupTag.toLowerCase()}::${family}::${productName.toLowerCase()}`;
     const row =
       rows.get(key) ??
       {
+        family,
         groupTag,
         imageUrl: item.imageUrl ?? null,
         items: new Map(),
@@ -157,34 +329,23 @@ function quoteMatrixRows(items: DetailItem[]) {
     rows.set(key, row);
   }
 
-  const extraSizes = Array.from(
-    new Set(
-      Array.from(rows.values()).flatMap((row) =>
-        Array.from(row.items.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
-      ),
-    ),
-  ).sort();
-
   const rowValues = Array.from(rows.values());
   const groups = Array.from(
     rowValues
       .reduce((groupMap, row) => {
-        groupMap.set(row.groupTag, [...(groupMap.get(row.groupTag) ?? []), row]);
+        const groupKey = `${row.groupTag}::${row.family}`;
+        groupMap.set(groupKey, [...(groupMap.get(groupKey) ?? []), row]);
         return groupMap;
       }, new Map<string, typeof rowValues>())
       .entries(),
   )
-    .map(([groupTag, groupRows]) => {
-      const groupSizes = [
-        ...CORE_SIZE_COLUMNS,
-        ...Array.from(
-          new Set(
-            groupRows.flatMap((row) =>
-              Array.from(row.items.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
-            ),
-          ),
-        ).sort(),
-      ];
+    .map(([, groupRows]) => {
+      const family = groupRows[0]?.family ?? "unknown";
+      const groupTag = groupRows[0]?.groupTag ?? "Untagged";
+      const groupSizes = sortMatrixSizes(
+        groupRows.flatMap((row) => Array.from(row.items.keys())),
+        family,
+      );
       const groupMaxQty = Math.max(
         0,
         ...groupRows.flatMap((row) =>
@@ -193,13 +354,15 @@ function quoteMatrixRows(items: DetailItem[]) {
       );
 
       return {
+        family,
         groupTag,
+        label: matrixSectionLabel(groupTag, family),
         maxQty: groupMaxQty,
         rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
         sizes: groupSizes,
       };
     })
-    .sort((a, b) => a.groupTag.localeCompare(b.groupTag));
+    .sort((a, b) => a.groupTag.localeCompare(b.groupTag) || a.label.localeCompare(b.label));
   const maxQty = Math.max(
     0,
     ...rowValues.flatMap((row) =>
@@ -211,7 +374,7 @@ function quoteMatrixRows(items: DetailItem[]) {
     groups,
     maxQty,
     rows: rowValues.sort((a, b) => a.productName.localeCompare(b.productName)),
-    sizes: [...CORE_SIZE_COLUMNS, ...extraSizes],
+    sizes: sortMatrixSizes(rowValues.flatMap((row) => Array.from(row.items.keys())), "unknown"),
   };
 }
 
@@ -222,6 +385,7 @@ function receivingMatrixRows(
   const rows = new Map<
     string,
     {
+      family: MatrixFamily;
       groupTag: string;
       imageUrl: string | null;
       items: DetailItem[];
@@ -241,12 +405,14 @@ function receivingMatrixRows(
   }
 
   for (const item of items) {
-    const productName = matrixProductName(item);
+    const productName = itemProductName(item);
     const groupTag = itemTagGroup(item);
-    const key = `${groupTag.toLowerCase()}::${productName.toLowerCase()}`;
+    const family = itemFamily(item);
+    const key = `${groupTag.toLowerCase()}::${family}::${productName.toLowerCase()}`;
     const row =
       rows.get(key) ??
       {
+        family,
         groupTag,
         imageUrl: item.imageUrl ?? null,
         items: [],
@@ -259,32 +425,35 @@ function receivingMatrixRows(
     }
     rows.set(key, row);
   }
+  const maxExistingRound = items.reduce((maxRound, item) => {
+    const lineReceipts = item.itemUuid ? receiptByItemId.get(item.itemUuid) ?? [] : [];
+    return Math.max(maxRound, lineReceipts.length);
+  }, 0);
+  const nextRoundNo = maxExistingRound + 1;
 
   const receiptRows = Array.from(rows.values()).map((row) => {
     const orderedBySize = new Map<string, number>();
-    const outstandingBySize = new Map<string, number>();
     const receivedRoundMap = new Map<string, { label: string; values: Map<string, number> }>();
-    let hasReceipts = false;
 
     for (const item of row.items) {
       const size = itemSize(item);
       orderedBySize.set(size, (orderedBySize.get(size) ?? 0) + item.qty);
-      outstandingBySize.set(size, (outstandingBySize.get(size) ?? 0) + item.outstandingQty);
 
       const lineReceipts = item.itemUuid
         ? [...(receiptByItemId.get(item.itemUuid) ?? [])].sort((a, b) =>
-            String(a.received_at ?? "").localeCompare(String(b.received_at ?? "")),
+            String(a.actual_received_date ?? a.received_at ?? "").localeCompare(
+              String(b.actual_received_date ?? b.received_at ?? ""),
+            ),
           )
         : [];
 
       lineReceipts.forEach((receipt, index) => {
-        hasReceipts = true;
         const roundNo = index + 1;
         const key = `round-${roundNo}`;
         const current =
           receivedRoundMap.get(key) ??
           {
-            label: `Received round ${roundNo}`,
+            label: `Receive round ${roundNo}`,
             values: new Map<string, number>(),
           };
         current.values.set(
@@ -296,23 +465,23 @@ function receivingMatrixRows(
     }
 
     const lines = [
-      { label: "Ordered", values: orderedBySize },
-      ...(hasReceipts
-        ? Array.from(receivedRoundMap.values())
-        : [{ label: "Receive round 1", values: orderedBySize }]),
+      { isManual: false, label: "Ordered", values: orderedBySize },
+      ...Array.from({ length: maxExistingRound }, (_, index) => {
+        const roundNo = index + 1;
+        return (
+          receivedRoundMap.get(`round-${roundNo}`) ?? {
+            label: `Receive round ${roundNo}`,
+            values: new Map<string, number>(),
+          }
+        );
+      }).map((line) => ({ ...line, isManual: false })),
+      // Goods Receiving Note is a physical counting worksheet. The newest
+      // receiving round stays blank so warehouse staff can write counted qty.
+      { isManual: true, label: `Receive round ${nextRoundNo}`, values: new Map<string, number>() },
     ];
 
-    if (hasReceipts) {
-      const outstandingTotal = Array.from(outstandingBySize.values()).reduce(
-        (sum, qty) => sum + qty,
-        0,
-      );
-      if (outstandingTotal > 0) {
-        lines.push({ label: "Receive next round", values: outstandingBySize });
-      }
-    }
-
     return {
+      family: row.family,
       groupTag: row.groupTag,
       imageUrl: row.imageUrl,
       lines,
@@ -320,16 +489,10 @@ function receivingMatrixRows(
     };
   });
 
-  const extraSizes = Array.from(
-    new Set(
-      receiptRows.flatMap((row) =>
-        row.lines.flatMap((line) =>
-          Array.from(line.values.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
-        ),
-      ),
-    ),
-  ).sort();
-  const sizes = [...CORE_SIZE_COLUMNS, ...extraSizes];
+  const sizes = sortMatrixSizes(
+    receiptRows.flatMap((row) => row.lines.flatMap((line) => Array.from(line.values.keys()))),
+    "unknown",
+  );
   const maxQty = Math.max(
     0,
     ...receiptRows.flatMap((row) =>
@@ -339,24 +502,19 @@ function receivingMatrixRows(
   const groups = Array.from(
     receiptRows
       .reduce((groupMap, row) => {
-        groupMap.set(row.groupTag, [...(groupMap.get(row.groupTag) ?? []), row]);
+        const groupKey = `${row.groupTag}::${row.family}`;
+        groupMap.set(groupKey, [...(groupMap.get(groupKey) ?? []), row]);
         return groupMap;
       }, new Map<string, typeof receiptRows>())
       .entries(),
   )
-    .map(([groupTag, groupRows]) => {
-      const groupSizes = [
-        ...CORE_SIZE_COLUMNS,
-        ...Array.from(
-          new Set(
-            groupRows.flatMap((row) =>
-              row.lines.flatMap((line) =>
-                Array.from(line.values.keys()).filter((size) => !CORE_SIZE_COLUMNS.includes(size)),
-              ),
-            ),
-          ),
-        ).sort(),
-      ];
+    .map(([, groupRows]) => {
+      const family = groupRows[0]?.family ?? "unknown";
+      const groupTag = groupRows[0]?.groupTag ?? "Untagged";
+      const groupSizes = sortMatrixSizes(
+        groupRows.flatMap((row) => row.lines.flatMap((line) => Array.from(line.values.keys()))),
+        family,
+      );
       const groupMaxQty = Math.max(
         0,
         ...groupRows.flatMap((row) =>
@@ -365,13 +523,15 @@ function receivingMatrixRows(
       );
 
       return {
+        family,
         groupTag,
+        label: matrixSectionLabel(groupTag, family),
         maxQty: groupMaxQty,
         rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
         sizes: groupSizes,
       };
     })
-    .sort((a, b) => a.groupTag.localeCompare(b.groupTag));
+    .sort((a, b) => a.groupTag.localeCompare(b.groupTag) || a.label.localeCompare(b.label));
 
   return {
     groups,
@@ -446,6 +606,17 @@ export default async function PoDetailPage({
   params: Promise<{ poId: string }>;
 }) {
   const { poId } = await params;
+  const currentUser = await requireUser(`/po/${encodeURIComponent(poId)}`);
+  const allowOpenPoDetail = canOpenPoDetail(currentUser.email);
+  const allowEditPo = canEditPo(currentUser.email) && currentUser.role === "super_admin";
+  const allowReceivePo = canReceivePo(currentUser.email) && currentUser.role === "super_admin";
+  const allowManagePayments = canManagePayments(currentUser.email) && currentUser.role === "super_admin";
+  const accessNote = readonlyAccessLabel(currentUser);
+
+  if (!allowOpenPoDetail) {
+    redirect(defaultLandingForUser(currentUser));
+  }
+
   const data = await getPoPortalDetailData(decodeURIComponent(poId));
 
   if (!data) {
@@ -453,7 +624,41 @@ export default async function PoDetailPage({
   }
 
   const order = data.order;
+  const [approvalUsers, paymentRequests] = await Promise.all([
+    getApprovalUserOptions(),
+    getPaymentRequestsForPo(order.poId),
+  ]);
+  const requestsByPaymentLine = paymentRequests.reduce((map, request) => {
+    if (!request.paymentLineId) {
+      return map;
+    }
+    const current = map.get(request.paymentLineId) ?? [];
+    current.push(request);
+    map.set(request.paymentLineId, current);
+    return map;
+  }, new Map<string, typeof paymentRequests>());
+
+  if (!canAccessAdminControlTower(currentUser)) {
+    const scopedRequests =
+      currentUser.role === "accounting"
+        ? paymentRequests
+        : paymentRequests.filter((request) => canViewPaymentRequest(currentUser, request));
+
+    if (currentUser.role !== "accounting" && scopedRequests.length === 0) {
+      redirect(defaultLandingForRole(currentUser.role));
+    }
+
+    return (
+      <RoleScopedPoDetail
+        currentUser={currentUser}
+        data={data}
+        paymentRequests={scopedRequests}
+      />
+    );
+  }
+
   const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const defaultReceiptDate = order.actualReceivedDate || bangkokDateString();
   const matrix = quoteMatrixRows(data.items);
   const receivingMatrix = receivingMatrixRows(data.items, data.receipts);
   const maxLeadTimeDays = Math.max(
@@ -466,11 +671,6 @@ export default async function PoDetailPage({
     order.poDate && maxLeadTimeDays > 0
       ? `Expected receiving target: approximately ${addDays(order.poDate, maxLeadTimeDays)} (PO date + ${maxLeadTimeDays} days, using the longest SKU lead time set in the system). Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.`
       : "Expected receiving target: SKU lead time is not set in the system. Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.";
-  const detailCatalogItems = data.catalogItems.filter(
-    (item) =>
-      item.supplierCode === order.supplierCode ||
-      item.supplierName.toLowerCase() === order.supplierName.toLowerCase(),
-  );
   const paidTotal = data.payments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce(
@@ -535,6 +735,11 @@ export default async function PoDetailPage({
               <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(order.workStatus)}`}>
                 {order.workStatus || "No status"}
               </span>
+              {accessNote ? (
+                <span className="rounded-md bg-[#fff4e5] px-2 py-1 text-xs font-semibold text-[#946200]">
+                  {accessNote}
+                </span>
+              ) : null}
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-[#52606d]">
               {order.poTitle || order.supplierName} / {order.supplierName} /{" "}
@@ -555,7 +760,12 @@ export default async function PoDetailPage({
             >
               Dashboard
             </Link>
-            <PrintDocumentButton label="Print Quote" mode="quote" />
+            <PrintDocumentButton
+              label="Print Quote"
+              mode="quote"
+              poId={order.poId}
+              supplierName={order.supplierName}
+            />
           </div>
         </div>
       </header>
@@ -622,6 +832,7 @@ export default async function PoDetailPage({
                 ["Requester", order.requester || "-"],
                 ["Payment", order.paymentTerms || "-"],
                 ["Currency", order.currency || "-"],
+                ["PO Purpose / Header Tag", order.headerPurpose || "-"],
                 ["Quotation", order.quotationReference || "-"],
                 ["Supplier INV", order.supplierInvoiceNo || "-"],
                 ["Est. delivery", order.estimatedDeliveryDate ? formatDate(order.estimatedDeliveryDate) : "-"],
@@ -639,12 +850,13 @@ export default async function PoDetailPage({
                   <p className="whitespace-pre-wrap">{order.supplierDiscussionNote}</p>
                 </div>
               ) : null}
-              {data.source === "supabase" ? (
+              {data.source === "supabase" && allowEditPo ? (
                 <div className="grid gap-4 border-t border-[#e2e7ed] pt-4">
                   <PoHeaderRefsForm
                     actualReceivedDate={order.actualReceivedDate}
                     estimatedArrivedDate={order.estimatedArrivedDate}
                     estimatedDeliveryDate={order.estimatedDeliveryDate}
+                    headerPurpose={order.headerPurpose}
                     poId={order.poId}
                     quotationReference={order.quotationReference}
                     supplierDiscussionNote={order.supplierDiscussionNote}
@@ -661,6 +873,10 @@ export default async function PoDetailPage({
                     </p>
                   ) : null}
                 </div>
+              ) : accessNote ? (
+                <p className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-3 py-2 text-xs font-semibold text-[#667380]">
+                  {accessNote}: header/status changes are disabled.
+                </p>
               ) : null}
             </div>
           </div>
@@ -674,21 +890,16 @@ export default async function PoDetailPage({
               </p>
             </div>
             <div className="p-5">
-              {data.source === "supabase" ? (
-                detailCatalogItems.length > 0 ? (
-                  <SmartAddPoItemForm
-                    catalogItems={detailCatalogItems}
-                    currency={order.currency}
-                    poId={order.poId}
-                    supplierCode={order.supplierCode}
-                    supplierName={order.supplierName}
-                  />
-                ) : (
-                  <AddPoItemForm poId={order.poId} />
-                )
+              {data.source === "supabase" && allowEditPo ? (
+                <SmartAddPoItemForm
+                  currency={order.currency}
+                  poId={order.poId}
+                  supplierCode={order.supplierCode}
+                  supplierName={order.supplierName}
+                />
               ) : (
                 <p className="rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-medium text-[#946200]">
-                  Live edits require Supabase PO data.
+                  {data.source === "supabase" ? "Read-only access: adding lines is disabled." : "Live edits require Supabase PO data."}
                 </p>
               )}
             </div>
@@ -705,13 +916,94 @@ export default async function PoDetailPage({
               </p>
             </div>
             <div className="p-5">
-              <PaymentScheduleForm
-                currency={order.currency}
-                payments={data.payments}
-                paymentTerms={order.paymentTerms}
-                poAmount={order.poAmountForeign}
-                poId={order.poId}
-              />
+              {allowManagePayments ? (
+                <PaymentScheduleForm
+                  currency={order.currency}
+                  payments={data.payments}
+                  paymentTerms={order.paymentTerms}
+                  poAmount={order.poAmountForeign}
+                  poId={order.poId}
+                />
+              ) : (
+                <p className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-3 py-2 text-sm font-semibold text-[#667380]">
+                  Read-only access: payment edits are disabled.
+                </p>
+              )}
+              <div className="mt-5 rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-4">
+                <div className="mb-3">
+                  <h3 className="text-base font-semibold">Payment Approval Requests</h3>
+                  <p className="mt-1 text-sm text-[#667380]">
+                    Submit a saved payment row for review without marking it paid
+                    or changing payment history.
+                  </p>
+                </div>
+                {data.payments.length > 0 ? (
+                  <div className="grid gap-3">
+                    {data.payments.map((payment, index) => {
+                      const relatedRequests = requestsByPaymentLine.get(payment.id) ?? [];
+                      const hasActiveRequest = relatedRequests.some((request) =>
+                        activePaymentRequestStatuses.has(request.requestStatus),
+                      );
+                      const canSubmitAfterVoid =
+                        relatedRequests.length === 0 ||
+                        currentUser.role === "super_admin" ||
+                        relatedRequests.some((request) => request.requestedBy === currentUser.authUserId);
+
+                      return (
+                        <div
+                          className="rounded-md border border-[#dfe4ea] bg-white p-3"
+                          key={payment.id}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-[#172026]">
+                                Payment {index + 1}: {readablePaymentType(payment.payment_type)}
+                              </p>
+                              <p className="mt-1 text-xs text-[#667380]">
+                                {formatCurrency(Number(payment.amount ?? 0), payment.currency ?? order.currency)}
+                                {" | "}
+                                {payment.payment_status ?? "paid"}
+                                {" | due "}
+                                {payment.due_date || payment.payment_date || "-"}
+                              </p>
+                            </div>
+                            {hasActiveRequest ? (
+                              <span className="rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
+                                Approval Request Created
+                              </span>
+                            ) : canSubmitAfterVoid && allowManagePayments ? (
+                              <SubmitPaymentRequestForm
+                                approvalUsers={approvalUsers}
+                                paymentLineId={payment.id}
+                                poId={order.poId}
+                              />
+                            ) : (
+                              <span className="rounded-md bg-[#fff4e5] px-2 py-1 text-xs font-semibold text-[#946200]">
+                                Voided history exists
+                              </span>
+                            )}
+                          </div>
+                          {relatedRequests.length > 0 ? (
+                            <div className="mt-3 grid gap-3">
+                              {relatedRequests.map((request) => (
+                                <PaymentRequestCard
+                                  currentUser={currentUser}
+                                  key={request.id}
+                                  request={request}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="rounded-md bg-white px-3 py-2 text-sm text-[#667380]">
+                    Save a payment row before submitting an approval request.
+                  </p>
+                )}
+              </div>
               <div className="mt-4 rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-4">
                 <div className="mb-3 grid gap-1 text-sm text-[#52606d]">
                   <p className="font-semibold text-[#172026]">Approval e-mail draft</p>
@@ -726,7 +1018,7 @@ export default async function PoDetailPage({
           </section>
         ) : null}
 
-        {data.source === "supabase" ? (
+        {data.source === "supabase" && allowEditPo ? (
           <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm" id="draft-lines">
             <div className="border-b border-[#e2e7ed] p-5">
               <h2 className="text-lg font-semibold">Draft Line Details</h2>
@@ -740,7 +1032,7 @@ export default async function PoDetailPage({
           </section>
         ) : null}
 
-        {data.source === "supabase" ? (
+        {data.source === "supabase" && allowEditPo ? (
           <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
             <div className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
               <div className="border-b border-[#e2e7ed] p-5">
@@ -788,10 +1080,10 @@ export default async function PoDetailPage({
           </div>
           <div className="grid gap-5 p-5">
             {matrix.groups.map((group) => (
-              <div className="overflow-x-auto rounded-lg border border-[#e2e7ed]" key={group.groupTag}>
+              <div className="overflow-x-auto rounded-lg border border-[#e2e7ed]" key={group.label}>
                 <div className="border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3">
                   <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[#364252]">
-                    {group.groupTag}
+                    {group.label}
                   </h3>
                 </div>
                 <table className="min-w-full border-collapse text-left text-sm">
@@ -871,10 +1163,19 @@ export default async function PoDetailPage({
                 Receive against active lines and keep status changes line-level.
               </p>
             </div>
-            <PrintDocumentButton label="Goods Receipt" mode="receiving" />
+            <PrintDocumentButton
+              label="Goods Receipt"
+              mode="receiving"
+              poId={order.poId}
+              supplierName={order.supplierName}
+            />
           </div>
-          {data.source === "supabase" ? (
-            <BatchReceiveFormBar formId={batchReceiveFormId} poId={order.poId} />
+          {data.source === "supabase" && allowReceivePo ? (
+            <BatchReceiveFormBar
+              defaultReceiptDate={defaultReceiptDate}
+              formId={batchReceiveFormId}
+              poId={order.poId}
+            />
           ) : null}
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -947,14 +1248,16 @@ export default async function PoDetailPage({
                       {formatNumber(item.outstandingQty)}
                     </td>
                     <td className="px-4 py-3 align-top">
-                      {data.source === "supabase" ? (
+                      {data.source === "supabase" && allowReceivePo ? (
                         <BatchReceiveLineFields
                           formId={batchReceiveFormId}
                           itemUuid={item.itemUuid}
                           outstandingQty={item.outstandingQty}
                         />
                       ) : (
-                        <span className="text-xs text-[#8a96a3]">Fallback only</span>
+                        <span className="text-xs text-[#8a96a3]">
+                          {data.source === "supabase" ? "Read-only" : "Fallback only"}
+                        </span>
                       )}
                     </td>
                     <td className="min-w-[240px] px-4 py-3 align-top">
@@ -970,13 +1273,16 @@ export default async function PoDetailPage({
                                 {formatNumber(Number(receipt.received_qty ?? 0))} units
                               </p>
                               <p className="mt-1 text-[#667380]">
-                                {formatDateTime(receipt.received_at)} /{" "}
+                                Received {formatDate(receiptActualDate(receipt, order.actualReceivedDate))} /{" "}
                                 {receipt.received_by || "No receiver"}
+                              </p>
+                              <p className="mt-1 text-[#8a96a3]">
+                                Saved {formatDateTime(receipt.received_at)}
                               </p>
                               {receipt.note ? (
                                 <p className="mt-1 text-[#52606d]">{receipt.note}</p>
                               ) : null}
-                              {data.source === "supabase" ? (
+                              {data.source === "supabase" && allowReceivePo ? (
                                 <RemovePoReceiptForm
                                   poId={order.poId}
                                   receiptId={receipt.id}
@@ -1018,10 +1324,16 @@ export default async function PoDetailPage({
                       )}
                     </p>
                     <p className="text-[#667380]">
-                      {formatDate(payment.payment_date)} / {payment.payment_type || "payment"}
+                      {formatDate(payment.payment_date)} / {readablePaymentType(payment.payment_type)}
                       {` / FX ${formatDecimal(Number(payment.exchange_rate ?? 1), 4)}`}
                       {payment.paid_by ? ` / ${payment.paid_by}` : ""}
                     </p>
+                    {String(payment.currency ?? order.currency ?? "THB").toUpperCase() !== "THB" &&
+                    Number(payment.exchange_rate ?? 1) <= 1 ? (
+                      <p className="font-semibold text-[#b42318]">
+                        FX rate missing or invalid for foreign-currency payment.
+                      </p>
+                    ) : null}
                     {payment.reference ? <p>Ref: {payment.reference}</p> : null}
                     {payment.note ? <p>{payment.note}</p> : null}
                   </div>
@@ -1042,7 +1354,11 @@ export default async function PoDetailPage({
                   <div className="grid gap-1 p-5 text-sm" key={receipt.id}>
                     <p className="font-mono font-semibold">{formatNumber(Number(receipt.received_qty ?? 0))} units</p>
                     <p className="text-[#667380]">
-                      {formatDateTime(receipt.received_at)} / {receipt.received_by || "No receiver"}
+                      Received {formatDate(receiptActualDate(receipt, order.actualReceivedDate))} /{" "}
+                      {receipt.received_by || "No receiver"}
+                    </p>
+                    <p className="text-xs text-[#8a96a3]">
+                      Saved {formatDateTime(receipt.received_at)}
                     </p>
                     {receipt.note ? <p>{receipt.note}</p> : null}
                   </div>
@@ -1079,21 +1395,23 @@ export default async function PoDetailPage({
         </section>
       </div>
       </div>
-      <PrintMatrixDocument
-        expectedReceivingNote={expectedReceivingNote}
-        matrix={matrix}
-        order={order}
-        title="Supplier Quote"
-        type="quote"
-      />
-      <PrintMatrixDocument
-        expectedReceivingNote={expectedReceivingNote}
-        matrix={matrix}
-        order={order}
-        receivingMatrix={receivingMatrix}
-        title="Goods Receiving Note"
-        type="receiving"
-      />
+      <PrintIntentContent>
+        <PrintMatrixDocument
+          expectedReceivingNote={expectedReceivingNote}
+          matrix={matrix}
+          order={order}
+          title="Supplier Quote"
+          type="quote"
+        />
+        <PrintMatrixDocument
+          expectedReceivingNote={expectedReceivingNote}
+          matrix={matrix}
+          order={order}
+          receivingMatrix={receivingMatrix}
+          title="Goods Receiving Note"
+          type="receiving"
+        />
+      </PrintIntentContent>
     </main>
   );
 }
@@ -1136,70 +1454,76 @@ function PrintMatrixDocument({
       <div className="print-matrix-stack">
         {type === "receiving" && printMatrix
           ? printMatrix.groups.map((group) => (
-              <table className="print-matrix" key={group.groupTag}>
-                <caption>{group.groupTag}</caption>
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Image</th>
-                    <th>Round</th>
-                    {group.sizes.map((size) => (
-                      <th key={size}>{size}</th>
-                    ))}
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.rows.flatMap((row) =>
-                    row.lines.map((line, lineIndex) => {
-                      const rowSpan = row.lines.length;
-                      const lineTotal = Array.from(line.values.values()).reduce(
-                        (sum, qty) => sum + qty,
-                        0,
-                      );
+              <section className="print-matrix-section" key={group.label}>
+                <h2 className="print-matrix-heading">{group.label}</h2>
+                <table className="print-matrix print-receipt-matrix">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Image</th>
+                      <th>Round</th>
+                      {group.sizes.map((size) => (
+                        <th key={size}>{size}</th>
+                      ))}
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  {group.rows.map((row) => (
+                    <tbody className="print-product-row-group" key={`${group.label}-${row.productName}`}>
+                      {row.lines.map((line, lineIndex) => {
+                        const rowSpan = row.lines.length;
+                        const lineTotal = Array.from(line.values.values()).reduce(
+                          (sum, qty) => sum + qty,
+                          0,
+                        );
 
-                      return (
-                        <tr key={`${group.groupTag}-${row.productName}-${line.label}`}>
-                          {lineIndex === 0 ? (
-                            <>
-                              <td rowSpan={rowSpan}>{row.productName}</td>
-                              <td rowSpan={rowSpan}>
-                                {row.imageUrl ? (
-                                  <Image
-                                    alt={row.productName}
-                                    className="print-product-image"
-                                    height={96}
-                                    loading="eager"
-                                    src={row.imageUrl}
-                                    unoptimized
-                                    width={96}
-                                  />
-                                ) : (
-                                  ""
-                                )}
-                              </td>
-                            </>
-                          ) : null}
-                          <td className="print-round-label">{line.label}</td>
-                          {group.sizes.map((size) => {
-                            const qty = line.values.get(size) ?? 0;
-                            return (
-                              <td key={size} style={qtyHeatStyle(qty, group.maxQty)}>
-                                {qty || ""}
-                              </td>
-                            );
-                          })}
-                          <td>{lineTotal || ""}</td>
-                        </tr>
-                      );
-                    }),
-                  )}
-                </tbody>
-              </table>
+                        return (
+                          <tr key={`${group.label}-${row.productName}-${line.label}`}>
+                            {lineIndex === 0 ? (
+                              <>
+                                <td rowSpan={rowSpan}>{row.productName}</td>
+                                <td rowSpan={rowSpan}>
+                                  {row.imageUrl ? (
+                                    <Image
+                                      alt={row.productName}
+                                      className="print-product-image"
+                                      height={96}
+                                      loading="eager"
+                                      src={row.imageUrl}
+                                      unoptimized
+                                      width={96}
+                                    />
+                                  ) : (
+                                    ""
+                                  )}
+                                </td>
+                              </>
+                            ) : null}
+                            <td className="print-round-label">{line.label}</td>
+                            {group.sizes.map((size) => {
+                              const qty = line.values.get(size) ?? 0;
+                              const styleQty = line.label !== "Ordered"
+                                ? row.lines[0]?.values.get(size) ?? 0
+                                : qty;
+                              return (
+                                <td key={size} style={qtyHeatStyle(styleQty, group.maxQty)}>
+                                  {line.isManual ? "" : qty || ""}
+                                </td>
+                              );
+                            })}
+                            <td>{line.isManual ? "" : lineTotal || ""}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  ))}
+                </table>
+              </section>
             ))
           : matrix.groups.map((group) => (
-              <table className="print-matrix" key={group.groupTag}>
-                <caption>{group.groupTag}</caption>
+              <section className="print-matrix-section" key={group.label}>
+                <h2 className="print-matrix-heading">{group.label}</h2>
+              <table className="print-matrix">
                 <thead>
                   <tr>
                     <th>Product</th>
@@ -1212,7 +1536,7 @@ function PrintMatrixDocument({
                 </thead>
                 <tbody>
                   {group.rows.map((row) => (
-                    <tr key={`${group.groupTag}-${row.productName}`}>
+                    <tr key={`${group.label}-${row.productName}`}>
                       <td>{row.productName}</td>
                       <td>
                         {row.imageUrl ? (
@@ -1242,6 +1566,7 @@ function PrintMatrixDocument({
                   ))}
                 </tbody>
               </table>
+              </section>
             ))}
       </div>
       {type === "receiving" ? (

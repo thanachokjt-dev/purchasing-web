@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { envStatus } from "@/lib/env";
-import { todayAndYesterdayWindow } from "@/lib/sync/window";
+import { rollingLookbackWindow } from "@/lib/sync/window";
 import { syncShopifyOrdersSalesLines } from "@/lib/sync/shopify-orders";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -72,6 +72,13 @@ export async function POST(request: NextRequest) {
   const cursor = url.searchParams.get("cursor");
   const explicitBackfill =
     url.searchParams.has("since") || url.searchParams.has("until");
+  const requestedWindowField = url.searchParams.get("field");
+  const windowField =
+    requestedWindowField === "created_at" || requestedWindowField === "updated_at"
+      ? requestedWindowField
+      : explicitBackfill
+        ? "created_at"
+        : "updated_at";
 
   if (maxPages !== undefined && (!Number.isInteger(maxPages) || maxPages < 1)) {
     return NextResponse.json(
@@ -82,7 +89,7 @@ export async function POST(request: NextRequest) {
 
   let sinceAt: string;
   let untilAt: string;
-  const defaultWindow = todayAndYesterdayWindow();
+  const defaultWindow = rollingLookbackWindow(7);
   try {
     sinceAt = parseDateParam(url.searchParams.get("since"), "since", defaultWindow);
     untilAt = parseDateParam(url.searchParams.get("until"), "until", defaultWindow);
@@ -107,12 +114,13 @@ export async function POST(request: NextRequest) {
       sinceAt,
       untilAt,
       cursor,
+      windowField,
     });
 
     return NextResponse.json({
       ok: true,
       mode: explicitBackfill ? "backfill" : "manual",
-      window: { sinceAt, untilAt },
+      window: { field: windowField, sinceAt, untilAt },
       salesLines,
       note: explicitBackfill
         ? salesLines.capped
@@ -120,13 +128,13 @@ export async function POST(request: NextRequest) {
           : "Shopify sales lines persisted for the requested backfill window."
         : salesLines.capped
           ? "Rolling sales-line refresh stopped at maxPages and has more Shopify pages to fetch."
-          : "Rolling sales-line refresh completed for today and yesterday ICT.",
+          : "Rolling sales-line refresh completed for the last 7 days of Shopify order updates.",
     });
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
-        window: { sinceAt, untilAt },
+        window: { field: windowField, sinceAt, untilAt },
         error:
           error instanceof Error ? error.message : "Unknown sales line sync error",
       },

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDecisionTags } from "@/lib/purchasing-decision-data";
+import { requireUser } from "@/lib/auth";
+import { canCreatePo, canEditPo } from "@/lib/access-control";
 import { getPurchasingSetupData } from "@/lib/purchasing-setup";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
@@ -100,6 +102,11 @@ function textOrExisting(value: string, existing: string | null | undefined) {
 }
 
 export async function savePurchasingDecisionAction(formData: FormData) {
+  const profile = await requireUser("/purchasing-decision");
+  if (profile.role !== "super_admin" || !canEditPo(profile.email)) {
+    throw new Error("Only super_admin can save purchasing planning controls.");
+  }
+
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     return;
@@ -263,6 +270,9 @@ export async function savePurchasingDecisionAction(formData: FormData) {
           textOrExisting(textAt(hideReasons, index), existing?.hide_reason),
         ),
         note: nullableText(textOrExisting(textAt(notes, index), existing?.note)),
+        planning_override_note: "Saved from Purchasing Decision visible rows",
+        planning_override_source: "manual_visible_rows",
+        updated_by: profile.authUserId,
         updated_at: now,
       },
     ];
@@ -276,7 +286,30 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     .from("purchasing_decision_controls")
     .upsert(rows, { onConflict: "sku" });
   if (error) {
-    if (error.message.includes("order_qty_mode")) {
+    if (
+      error.message.includes("updated_by") ||
+      error.message.includes("planning_override_source") ||
+      error.message.includes("planning_override_note")
+    ) {
+      const rowsWithoutMetadata = rows.map((row) => {
+        const {
+          planning_override_note: planningOverrideNote,
+          planning_override_source: planningOverrideSource,
+          updated_by: updatedBy,
+          ...fallbackRow
+        } = row;
+        void planningOverrideNote;
+        void planningOverrideSource;
+        void updatedBy;
+        return fallbackRow;
+      });
+      const retry = await supabase
+        .from("purchasing_decision_controls")
+        .upsert(rowsWithoutMetadata, { onConflict: "sku" });
+      if (retry.error) {
+        throw new Error(retry.error.message);
+      }
+    } else if (error.message.includes("order_qty_mode")) {
       const rowsWithoutQtyMode = rows.map((row) => {
         const { order_qty_mode: orderQtyMode, ...fallbackRow } = row;
         void orderQtyMode;
@@ -370,6 +403,11 @@ function productGroupName(value: string) {
 }
 
 export async function createPoFromDecisionAction(formData: FormData) {
+  const profile = await requireUser("/purchasing-decision");
+  if (profile.role !== "super_admin" || !canCreatePo(profile.email)) {
+    throw new Error("Only super_admin can create POs from purchasing planning controls.");
+  }
+
   const supabase = getSupabaseServiceClient();
   if (!supabase) {
     redirectWithPoError(formData, "Supabase is not configured yet.");
@@ -379,7 +417,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
     new Set(formData.getAll("selectedSku").map((value) => String(value).trim()).filter(Boolean)),
   );
   if (!selectedSkus.length) {
-    redirectWithPoError(formData, "Select at least one SKU before creating a PO.");
+    redirectWithPoError(formData, "No valid rows selected for PO creation.");
   }
 
   const allSkus = formData.getAll("poSku").map((value) => String(value).trim());
@@ -389,9 +427,28 @@ export async function createPoFromDecisionAction(formData: FormData) {
   const unitPriceBySku = textMap(allSkus, formData.getAll("poUnitPrice"));
   const rawQtyBySku = textMap(allSkus, formData.getAll("poRawQty"));
   const roundedQtyBySku = textMap(allSkus, formData.getAll("poRoundedQty"));
+  let selectedSkusWithQty: string[];
+  try {
+    selectedSkusWithQty = selectedSkus.filter((sku) => {
+      const qtyChoice = String(formData.get(`qtyChoice:${sku}`) ?? "rounded");
+      const qtyMap = qtyChoice === "raw" ? rawQtyBySku : roundedQtyBySku;
+      return numberFromMap(qtyMap, sku, "Order qty") > 0;
+    });
+  } catch (error) {
+    redirectWithPoError(
+      formData,
+      error instanceof Error ? error.message : "Could not validate PO quantities.",
+    );
+  }
+  if (!selectedSkusWithQty.length) {
+    redirectWithPoError(
+      formData,
+      "No valid rows selected for PO creation.",
+    );
+  }
 
   const selectedSuppliers = new Set(
-    selectedSkus.map((sku) => supplierBySku.get(sku)).filter(Boolean),
+    selectedSkusWithQty.map((sku) => supplierBySku.get(sku)).filter(Boolean),
   );
   if (selectedSuppliers.size !== 1) {
     redirectWithPoError(formData, "Select SKUs from one supplier before creating a PO.");
@@ -415,7 +472,7 @@ export async function createPoFromDecisionAction(formData: FormData) {
   const poId = generatedPoId();
   const today = new Date().toISOString().slice(0, 10);
   const currency = supplier.currency ?? "THB";
-  const sortedSelectedSkus = [...selectedSkus].sort((a, b) => {
+  const sortedSelectedSkus = [...selectedSkusWithQty].sort((a, b) => {
     const mainA = mainNameBySku.get(a) || productBySku.get(a) || a;
     const mainB = mainNameBySku.get(b) || productBySku.get(b) || b;
     const productA = productBySku.get(a) || a;
@@ -494,11 +551,14 @@ export async function createPoFromDecisionAction(formData: FormData) {
     redirectWithPoError(formData, itemError.message);
   }
 
-  await supabase.from("po_status_events").insert({
+  const { error: statusEventError } = await supabase.from("po_status_events").insert({
     po_id: poId,
     to_status: "draft",
-    note: `Created from Purchasing Decision (${selectedSkus.length} SKUs)`,
+    note: `Created from Purchasing Decision (${sortedSelectedSkus.length} SKUs)`,
   });
+  if (statusEventError) {
+    console.error(`Could not record PO status event for ${poId}: ${statusEventError.message}`);
+  }
 
   revalidatePath("/purchasing-decision");
   revalidatePath("/po");
