@@ -510,7 +510,7 @@ async function fetchControls(supabase: SupabaseClient) {
         supabase
           .from("purchasing_decision_controls")
           .select(
-            "sku,product_name_override,main_name_override,supplier_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+            "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
           )
           .order("sku", { ascending: true })
           .range(from, to),
