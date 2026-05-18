@@ -347,7 +347,6 @@ function QuantityMatrixPrintTable({ sections, total }: { sections: MatrixSection
               <table className="new-product-print-table new-product-print-matrix-table">
                 <colgroup>
                   <col className="new-product-print-col-image" />
-                  <col className="new-product-print-col-image" />
                   <col className="new-product-print-col-name" />
                   <col className="new-product-print-col-style" />
                   {section.sizeColumns.map((size) => (
@@ -357,7 +356,6 @@ function QuantityMatrixPrintTable({ sections, total }: { sections: MatrixSection
                 </colgroup>
                 <thead>
                   <tr>
-                    <th><span className="new-product-print-header-label">Comparable<br />Image</span></th>
                     <th><span className="new-product-print-header-label">Mockup<br />Image</span></th>
                     <th><span className="new-product-print-header-label">Planning Name</span></th>
                     <th><span className="new-product-print-header-label">Color /<br />Style</span></th>
@@ -372,13 +370,6 @@ function QuantityMatrixPrintTable({ sections, total }: { sections: MatrixSection
                     const rowTotal = Array.from(row.linesBySize.values()).reduce((sum, line) => sum + line.finalQty, 0);
                     return (
                       <tr key={row.key}>
-                        <td>
-                          {row.imageUrl ? (
-                            <img alt="" className="new-product-print-image" src={row.imageUrl} />
-                          ) : (
-                            <span className="new-product-print-placeholder">No comparable</span>
-                          )}
-                        </td>
                         <td>
                           {row.mockupImageUrl ? (
                             <img alt="" className="new-product-print-image" src={row.mockupImageUrl} />
@@ -407,7 +398,7 @@ function QuantityMatrixPrintTable({ sections, total }: { sections: MatrixSection
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td className="new-product-print-number" colSpan={section.sizeColumns.length + 5}>Section Total</td>
+                    <td className="new-product-print-number" colSpan={section.sizeColumns.length + 4}>Section Total</td>
                     <td className="new-product-print-number">{formatNumber(sectionTotal)}</td>
                   </tr>
                 </tfoot>

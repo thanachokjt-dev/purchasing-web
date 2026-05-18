@@ -501,13 +501,12 @@ body {
     width: auto;
   }
 
-  .new-product-print-matrix-table td:nth-child(1),
-  .new-product-print-matrix-table td:nth-child(2) {
+  .new-product-print-matrix-table td:nth-child(1) {
     text-align: center;
   }
 
-  .new-product-print-matrix-table td:nth-child(3),
-  .new-product-print-matrix-table td:nth-child(4) {
+  .new-product-print-matrix-table td:nth-child(2),
+  .new-product-print-matrix-table td:nth-child(3) {
     line-height: 1.18;
     overflow-wrap: anywhere;
     white-space: normal;
