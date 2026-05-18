@@ -16,10 +16,6 @@ function nullableText(value: string) {
   return value || null;
 }
 
-function overrideText(value: string, sourceValue: string) {
-  return value && value !== sourceValue ? value : null;
-}
-
 function nullableNumber(value: string) {
   if (!value) {
     return null;
@@ -139,7 +135,6 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const supplierSources = formData.getAll("supplierSource");
   const originalSuppliers = formData.getAll("originalSupplier");
   const itemStatuses = formData.getAll("itemStatus");
-  const shopifyItemStatuses = formData.getAll("shopifyItemStatus");
   const tags = formData.getAll("tags");
   const demandIndexes = formData.getAll("demandIndexHm");
   const demandOverrideAccepted = formData.getAll("demandOverrideAccepted");
@@ -237,13 +232,9 @@ export async function savePurchasingDecisionAction(formData: FormData) {
           textOrExisting(textAt(mainNames, index), existing?.main_name_override),
         ),
         supplier_override: nullableText(nextSupplier),
-        item_status_override:
-          textAt(itemStatuses, index) || existing?.item_status_override
-            ? overrideText(
-                textOrExisting(textAt(itemStatuses, index), existing?.item_status_override),
-                textAt(shopifyItemStatuses, index),
-              )
-            : null,
+        item_status_override: nullableText(
+          textOrExisting(textAt(itemStatuses, index), existing?.item_status_override),
+        ),
         tags_override: tagsToSave,
         demand_index_override: demandToSave,
         safety_days: plannedNumber(
