@@ -5,6 +5,14 @@ import {
   type PoPortalItem,
 } from "@/lib/po-portal-data";
 import { excelSupplierMap } from "@/lib/excel-supplier-map";
+import {
+  matrixItemFamily,
+  matrixItemSize,
+  matrixProductName,
+  matrixSectionLabel,
+  matrixSectionName,
+  type MatrixFamily,
+} from "@/lib/po-size-matrix";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 // final_payment is payment follow-up, not physical inbound stock.
@@ -271,6 +279,25 @@ type LastPoPriceRow = {
   created_at: string | null;
 };
 
+type HistoricalFreightItemRow = {
+  id: string;
+  po_id: string | null;
+  sku: string | null;
+  freight_unit_cost: number | string | null;
+  created_at: string | null;
+};
+
+type HistoricalFreightOrderRow = {
+  po_id: string | null;
+  actual_received_date?: string | null;
+};
+
+type HistoricalFreightReceiptRow = {
+  po_item_id: string | null;
+  actual_received_date?: string | null;
+  received_at: string | null;
+};
+
 type ManualSupplierMappingRow = {
   sku: string | null;
   supplier: string | null;
@@ -323,6 +350,7 @@ type PoStatusEventRow = {
 
 type ProductVariantImageRow = {
   sku: string | null;
+  price?: number | string | null;
   variant_title?: string | null;
   variant_image_url: string | null;
   products:
@@ -395,6 +423,23 @@ type PortalItem = PoPortalItem & {
   onHand?: number;
   sortPosition?: number;
   tags?: string[];
+};
+
+export type PoMarginCheckRow = {
+  avgLandedUnitCost: number;
+  avgUnitCost: number;
+  family: MatrixFamily;
+  imageUrl: string | null;
+  latestFreightSourceDate: string;
+  latestFreightSourcePoId: string;
+  latestFreightUnitAvg: number | null;
+  productTitle: string;
+  sectionLabel: string;
+  size: string;
+  shopifySalePrice: number | null;
+  sku: string;
+  totalQty: number;
+  variantTitle: string;
 };
 
 type PortalOrder = {
@@ -620,6 +665,223 @@ function productImageUrl(row: ProductVariantImageRow) {
 function productTags(row: ProductVariantImageRow) {
   const product = Array.isArray(row.products) ? row.products[0] : row.products;
   return product?.tags ?? [];
+}
+
+function firstAvailableTextDate(values: Array<string | null | undefined>) {
+  return values.map((value) => compactText(value)).find(Boolean) ?? "";
+}
+
+async function latestFreightHistoryBySku(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>,
+  skus: string[],
+  currentPoId: string,
+) {
+  if (!skus.length) {
+    return new Map<string, {
+      freightUnitCost: number;
+      sourceDate: string;
+      sourcePoId: string;
+    }>();
+  }
+
+  const historyResult = await supabase
+    .from("po_items")
+    .select("id,po_id,sku,freight_unit_cost,created_at")
+    .in("sku", skus)
+    .neq("po_id", currentPoId)
+    .gt("freight_unit_cost", 0)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(100, skus.length * 20));
+
+  if (historyResult.error) {
+    logPoPortalQueryError("po_items margin freight history", historyResult.error);
+    return new Map<string, {
+      freightUnitCost: number;
+      sourceDate: string;
+      sourcePoId: string;
+    }>();
+  }
+
+  const historyRows = (historyResult.data ?? []) as HistoricalFreightItemRow[];
+  const itemIds = historyRows.map((row) => row.id).filter(Boolean);
+  const poIds = Array.from(
+    new Set(historyRows.map((row) => compactText(row.po_id)).filter(Boolean)),
+  );
+
+  const receiptResult =
+    itemIds.length > 0
+      ? await supabase
+          .from("po_receipts")
+          .select("po_item_id,actual_received_date,received_at")
+          .in("po_item_id", itemIds)
+      : { data: [], error: null };
+  const receiptFallback =
+    receiptResult.error && schemaColumnMiss(receiptResult.error.message) && itemIds.length > 0
+      ? await supabase
+          .from("po_receipts")
+          .select("po_item_id,received_at")
+          .in("po_item_id", itemIds)
+      : receiptResult;
+  if (receiptFallback.error) {
+    logPoPortalQueryError("po_receipts margin freight history", receiptFallback.error);
+  }
+
+  const orderResult =
+    poIds.length > 0
+      ? await supabase
+          .from("po_orders")
+          .select("po_id,actual_received_date")
+          .in("po_id", poIds)
+      : { data: [], error: null };
+  if (orderResult.error) {
+    logPoPortalQueryError("po_orders margin freight history", orderResult.error);
+  }
+
+  const receiptDatesByItemId = new Map<string, { actual: string; received: string }>();
+  for (const receipt of (receiptFallback.data ?? []) as HistoricalFreightReceiptRow[]) {
+    const itemId = compactText(receipt.po_item_id);
+    if (!itemId) {
+      continue;
+    }
+    const current = receiptDatesByItemId.get(itemId) ?? { actual: "", received: "" };
+    const actualDate = compactText(receipt.actual_received_date);
+    const receivedAt = compactText(receipt.received_at);
+    if (actualDate > current.actual) {
+      current.actual = actualDate;
+    }
+    if (receivedAt > current.received) {
+      current.received = receivedAt;
+    }
+    receiptDatesByItemId.set(itemId, current);
+  }
+
+  const orderDateByPoId = new Map(
+    ((orderResult.data ?? []) as HistoricalFreightOrderRow[])
+      .filter((row) => compactText(row.po_id))
+      .map((row) => [compactText(row.po_id), compactText(row.actual_received_date)]),
+  );
+  const latestBySku = new Map<string, {
+    freightUnitCost: number;
+    rankDate: string;
+    sourceDate: string;
+    sourcePoId: string;
+  }>();
+
+  for (const row of historyRows) {
+    const sku = compactText(row.sku);
+    const freightUnitCost = numeric(row.freight_unit_cost);
+    if (!sku || freightUnitCost <= 0) {
+      continue;
+    }
+    const poId = compactText(row.po_id);
+    const receiptDates = receiptDatesByItemId.get(row.id);
+    const sourceDate = firstAvailableTextDate([
+      receiptDates?.actual,
+      receiptDates?.received,
+      orderDateByPoId.get(poId),
+      row.created_at,
+    ]);
+    const current = latestBySku.get(sku);
+    if (!current || sourceDate > current.rankDate) {
+      latestBySku.set(sku, {
+        freightUnitCost,
+        rankDate: sourceDate,
+        sourceDate,
+        sourcePoId: poId,
+      });
+    }
+  }
+
+  return new Map(
+    Array.from(latestBySku.entries()).map(([sku, value]) => [
+      sku,
+      {
+        freightUnitCost: value.freightUnitCost,
+        sourceDate: value.sourceDate,
+        sourcePoId: value.sourcePoId,
+      },
+    ]),
+  );
+}
+
+function buildPoMarginRows(
+  items: PortalItem[],
+  salePriceBySku: Map<string, number>,
+  freightHistoryBySku: Map<string, {
+    freightUnitCost: number;
+    sourceDate: string;
+    sourcePoId: string;
+  }>,
+): PoMarginCheckRow[] {
+  const grouped = new Map<string, {
+    family: MatrixFamily;
+    imageUrl: string | null;
+    landedWeightedSum: number;
+    productTitle: string;
+    sectionLabel: string;
+    size: string;
+    totalQty: number;
+    unitWeightedSum: number;
+    variantTitle: string;
+  }>();
+
+  for (const item of items) {
+    const sku = compactText(item.sku);
+    if (!sku) {
+      continue;
+    }
+    const family = matrixItemFamily(item);
+    const sectionName = matrixSectionName(item);
+    const qty = Math.max(0, numeric(item.qty));
+    const current = grouped.get(sku) ?? {
+      family,
+      imageUrl: item.imageUrl ?? null,
+      landedWeightedSum: 0,
+      productTitle: matrixProductName(item) || item.productTitle || sku,
+      sectionLabel: matrixSectionLabel(sectionName, family),
+      size: matrixItemSize(item),
+      totalQty: 0,
+      unitWeightedSum: 0,
+      variantTitle: item.variantTitle || "",
+    };
+    const unitCost = numeric(item.unitPrice);
+    const landedUnitCost = numeric(item.landedUnitCost) || unitCost + numeric(item.freightUnitCost);
+    current.totalQty += qty;
+    current.unitWeightedSum += unitCost * qty;
+    current.landedWeightedSum += landedUnitCost * qty;
+    if (!current.productTitle && item.productTitle) {
+      current.productTitle = item.productTitle;
+    }
+    if (!current.variantTitle && item.variantTitle) {
+      current.variantTitle = item.variantTitle;
+    }
+    if (!current.imageUrl && item.imageUrl) {
+      current.imageUrl = item.imageUrl;
+    }
+    grouped.set(sku, current);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([sku, row]) => {
+      const freightHistory = freightHistoryBySku.get(sku);
+      return {
+        avgLandedUnitCost: row.totalQty > 0 ? row.landedWeightedSum / row.totalQty : 0,
+        avgUnitCost: row.totalQty > 0 ? row.unitWeightedSum / row.totalQty : 0,
+        family: row.family,
+        imageUrl: row.imageUrl,
+        latestFreightSourceDate: freightHistory?.sourceDate ?? "",
+        latestFreightSourcePoId: freightHistory?.sourcePoId ?? "",
+        latestFreightUnitAvg: freightHistory?.freightUnitCost ?? null,
+        productTitle: row.productTitle || sku,
+        sectionLabel: row.sectionLabel,
+        size: row.size,
+        shopifySalePrice: salePriceBySku.get(sku) ?? null,
+        sku,
+        totalQty: row.totalQty,
+        variantTitle: row.variantTitle,
+      } satisfies PoMarginCheckRow;
+    })
+    .sort((a, b) => a.productTitle.localeCompare(b.productTitle) || a.sku.localeCompare(b.sku));
 }
 
 function latestOnHandBySku(rows: InventorySnapshotRow[]) {
@@ -2442,6 +2704,7 @@ export async function getPoPortalDetailData(poId: string) {
           landedUnitCost: item.unitPrice,
           onHand: 0,
         })),
+      marginRows: [] as PoMarginCheckRow[],
       payments: [],
       receipts: [],
       statusEvents: [],
@@ -2597,13 +2860,18 @@ export async function getPoPortalDetailData(poId: string) {
     skus.length > 0
       ? await supabase
           .from("product_variants")
-          .select("sku,variant_image_url,products(product_image_url,tags)")
+          .select("sku,price,variant_image_url,products(product_image_url,tags)")
           .in("sku", skus)
       : { data: [] };
 
   const productRows = ((imageRows.data ?? []) as unknown as ProductVariantImageRow[])
     .filter((row) => row.sku);
   const imageBySku = new Map(productRows.map((row) => [row.sku, productImageUrl(row)]));
+  const salePriceBySku = new Map(
+    productRows
+      .filter((row) => row.sku)
+      .map((row) => [row.sku!, numeric(row.price)]),
+  );
   const tagsBySku = new Map(productRows.map((row) => [row.sku, productTags(row)]));
 
   let onHandBySku = new Map<string, number>();
@@ -2676,6 +2944,8 @@ export async function getPoPortalDetailData(poId: string) {
       tags: control?.tags_override?.length ? control.tags_override : tagsBySku.get(sku) ?? [],
     };
   });
+  const freightHistoryBySku = await latestFreightHistoryBySku(supabase, skus, poId);
+  const marginRows = buildPoMarginRows(items, salePriceBySku, freightHistoryBySku);
 
   const receiptsWithActualDate =
     itemIds.length > 0
@@ -2719,6 +2989,7 @@ export async function getPoPortalDetailData(poId: string) {
   return {
     source: "supabase" as const,
     catalogItems: [] as PoCatalogItemOption[],
+    marginRows,
     order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
     items,
     payments: paymentRows as PoPaymentRow[],

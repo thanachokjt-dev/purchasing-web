@@ -18,6 +18,7 @@ import {
 } from "@/app/po/po-forms";
 import { SubmitPaymentRequestForm } from "@/app/payment-requests/forms";
 import { PaymentRequestCard } from "@/app/payment-requests/request-card";
+import { MarginCheckPanel } from "@/app/po/margin-check";
 import { formatNumber } from "@/lib/baseline-data";
 import { requireUser } from "@/lib/auth";
 import {
@@ -766,6 +767,7 @@ export default async function PoDetailPage({
               poId={order.poId}
               supplierName={order.supplierName}
             />
+            <MarginCheckPanel rows={data.marginRows} />
           </div>
         </div>
       </header>

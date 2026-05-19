@@ -593,6 +593,23 @@ function daysBetweenDates(from: string, to: string) {
   return Math.floor((end.getTime() - start.getTime()) / 86_400_000);
 }
 
+function datePositionInBuckets(
+  value: string,
+  buckets: Array<{ bucketEnd: string; bucketStart: string }>,
+) {
+  const bucketIndex = buckets.findIndex(
+    (bucket) => bucket.bucketStart <= value && bucket.bucketEnd >= value,
+  );
+  if (bucketIndex < 0 || buckets.length === 0) {
+    return "";
+  }
+
+  const bucket = buckets[bucketIndex];
+  const bucketDays = Math.max(1, daysBetweenDates(bucket.bucketStart, bucket.bucketEnd) + 1);
+  const dayOffset = Math.max(0, Math.min(bucketDays - 1, daysBetweenDates(bucket.bucketStart, value)));
+  return `${((bucketIndex + (dayOffset + 0.5) / bucketDays) / buckets.length) * 100}%`;
+}
+
 function monthSpansForPaymentBuckets(
   buckets: Array<{
     bucketStart: string;
@@ -1216,8 +1233,8 @@ export default async function PoPortalPage({
     unscheduledItemCount: unscheduledEtaRows.length,
     unscheduledPoCount: new Set(unscheduledEtaRows.map((row) => row.poId).filter(Boolean)).size,
   };
-  const today = new Date().toISOString().slice(0, 10);
-  const incomingToday = bangkokDateString();
+  const today = bangkokDateString();
+  const incomingToday = today;
   const receivedHistoryRows = Array.from(
     (data.incomingEta.receivedHistory ?? [])
       .filter((row) => row.dateReceived && row.receivedQty > 0)
@@ -1526,13 +1543,32 @@ export default async function PoPortalPage({
   const paymentChartBuckets = Array.from(paymentByBucket.values()).sort((a, b) =>
     a.bucketStart.localeCompare(b.bucketStart),
   );
-  const paymentTodayBucketIndex = paymentChartBuckets.findIndex(
-    (bucket) => bucket.bucketStart <= today && bucket.bucketEnd >= today,
-  );
-  const paymentTodayLeft =
-    paymentTodayBucketIndex >= 0 && paymentChartBuckets.length > 0
-      ? `${((paymentTodayBucketIndex + 0.5) / paymentChartBuckets.length) * 100}%`
-      : "";
+  if (
+    paymentView === "daily" &&
+    !paymentChartBuckets.some((bucket) => bucket.bucketStart === today)
+  ) {
+    const todayIsInsideAllRange =
+      paymentChartBuckets.length > 0 &&
+      paymentChartBuckets[0].bucketStart <= today &&
+      paymentChartBuckets[paymentChartBuckets.length - 1].bucketEnd >= today;
+    const shouldAddTodayBucket = paymentRange === "all" ? todayIsInsideAllRange : true;
+
+    if (shouldAddTodayBucket) {
+      paymentChartBuckets.push({
+        bucketEnd: today,
+        bucketLabel: formatDate(today),
+        bucketStart: today,
+        overdueAmountThb: 0,
+        overdueEvents: [],
+        paidAmountThb: 0,
+        paidEvents: [],
+        plannedAmountThb: 0,
+        plannedEvents: [],
+      });
+      paymentChartBuckets.sort((a, b) => a.bucketStart.localeCompare(b.bucketStart));
+    }
+  }
+  const paymentTodayLeft = datePositionInBuckets(today, paymentChartBuckets);
   const maxPaymentSeriesAmount = Math.max(
     1,
     ...paymentChartBuckets.flatMap((row) => [
