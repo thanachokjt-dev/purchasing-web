@@ -1030,7 +1030,12 @@ export default async function PoDetailPage({
                 even when supplier details arrive in pieces.
               </p>
             </div>
-            <PoDraftLinesForm items={data.items} poId={order.poId} />
+            <PoDraftLinesForm
+              items={data.items}
+              poId={order.poId}
+              poReference={order.quotationReference || order.poId}
+              supplierName={order.supplierName}
+            />
           </section>
         ) : null}
 

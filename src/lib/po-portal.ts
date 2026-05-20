@@ -326,6 +326,7 @@ type PoPaymentRow = {
   payment_date: string | null;
   payment_type: string | null;
   payment_status?: string | null;
+  xero_status?: string | null;
   due_date?: string | null;
   amount: number | string | null;
   exchange_rate?: number | string | null;
@@ -2972,7 +2973,7 @@ export async function getPoPortalDetailData(poId: string) {
 
   const paymentQuery = await supabase
     .from("po_payments")
-    .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
+    .select("id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
     .eq("po_id", poId)
     .order("payment_date", { ascending: false });
 

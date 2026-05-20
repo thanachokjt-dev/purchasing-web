@@ -1985,14 +1985,21 @@ export function PaymentScheduleForm({
                 <td className="px-3 py-3">
                   <select
                     className={`${inputClass} ${
-                      (payment?.xero_status ?? "pending") === "uploaded"
+                      payment?.xero_status === "uploaded"
                         ? "border-[#9ac7a8] bg-[#edf8f1] text-[#1f6b3d]"
-                        : "border-[#ead49a] bg-[#fffaf0] text-[#73510d]"
+                        : payment?.xero_status === "draft"
+                          ? "border-[#a9c6f5] bg-[#eff6ff] text-[#1d4ed8]"
+                          : "border-[#ead49a] bg-[#fffaf0] text-[#73510d]"
                     }`}
-                    defaultValue={payment?.xero_status === "uploaded" ? "uploaded" : "pending"}
+                    defaultValue={
+                      payment?.xero_status === "draft" || payment?.xero_status === "uploaded"
+                        ? payment.xero_status
+                        : "pending"
+                    }
                     name={`xeroStatus:${rowKey}`}
                   >
                     <option value="pending">pending</option>
+                    <option value="draft">draft</option>
                     <option value="uploaded">uploaded</option>
                   </select>
                 </td>

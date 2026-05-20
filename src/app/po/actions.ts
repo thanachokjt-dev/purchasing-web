@@ -206,7 +206,7 @@ function formText(formData: FormData, name: string) {
 }
 
 function xeroStatus(value: string) {
-  return value === "uploaded" ? "uploaded" : "pending";
+  return value === "draft" || value === "uploaded" ? value : "pending";
 }
 
 function normalizedCurrency(value: string | null | undefined) {
