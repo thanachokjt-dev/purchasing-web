@@ -54,6 +54,8 @@ type DraftLineItem = {
   lineNo: string;
   sku: string;
   productTitle: string;
+  variantTitle?: string;
+  fullName?: string;
   qty: number;
   unitPrice: number;
   freightUnitCost?: number;
@@ -69,6 +71,7 @@ type PaymentRowItem = {
   payment_date: string | null;
   payment_type: string | null;
   payment_status?: string | null;
+  xero_status?: string | null;
   due_date?: string | null;
   amount: number | string | null;
   exchange_rate?: number | string | null;
@@ -269,6 +272,114 @@ const inputClass =
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
 const buttonClass =
   "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
+
+const xeroBillHeaders = [
+  "*ContactName",
+  "EmailAddress",
+  "POAddressLine1",
+  "POAddressLine2",
+  "POAddressLine3",
+  "POAddressLine4",
+  "POCity",
+  "PORegion",
+  "POPostalCode",
+  "POCountry",
+  "*InvoiceNumber",
+  "*InvoiceDate",
+  "*DueDate",
+  "Total",
+  "InventoryItemCode",
+  "Description",
+  "*Quantity",
+  "*UnitAmount",
+  "*AccountCode",
+  "*TaxType",
+  "TaxAmount",
+  "TrackingName1",
+  "TrackingOption1",
+  "TrackingName2",
+  "TrackingOption2",
+  "Currency",
+] as const;
+
+function csvCell(value: string | number) {
+  const text = String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function xeroDescription(line: DraftLineItem) {
+  const productTitle = line.productTitle.trim();
+  const variantTitle = line.variantTitle?.trim() ?? "";
+  const fullName = line.fullName?.trim() ?? "";
+
+  if (productTitle && variantTitle && !productTitle.toLowerCase().includes(variantTitle.toLowerCase())) {
+    return `${productTitle} / ${variantTitle}`;
+  }
+
+  return productTitle || fullName || line.sku;
+}
+
+function safeCsvFileToken(value: string) {
+  return value
+    .trim()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "po";
+}
+
+function downloadXeroBillCsv({
+  lines,
+  poReference,
+  supplierName,
+}: {
+  lines: DraftLineItem[];
+  poReference: string;
+  supplierName: string;
+}) {
+  const exportCurrency = "THB";
+  const rows = lines
+    .filter((line) => line.sku.trim() || line.productTitle.trim() || line.qty > 0)
+    .map((line) => [
+      supplierName,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      line.sku,
+      xeroDescription(line),
+      line.qty,
+      line.unitPrice,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      exportCurrency,
+    ]);
+  const csv = [xeroBillHeaders, ...rows]
+    .map((row) => row.map((value) => csvCell(value)).join(","))
+    .join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `xero_bill_${safeCsvFileToken(poReference)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 function useCatalogSearch({
   limit,
@@ -1061,9 +1172,13 @@ export function SmartAddPoItemForm({
 export function PoDraftLinesForm({
   items,
   poId,
+  poReference,
+  supplierName,
 }: {
   items: DraftLineItem[];
   poId: string;
+  poReference: string;
+  supplierName: string;
 }) {
   const [state, formAction, pending] = useActionState(
     updatePoDraftLinesAction,
@@ -1371,6 +1486,19 @@ export function PoDraftLinesForm({
             FX mode: {exchangeMode === "thai" ? "Thai supplier" : "average applied"}
           </span>
         ) : null}
+        <button
+          className="h-10 rounded-md border border-[#2563eb] bg-[#2563eb] px-4 text-xs font-semibold text-white shadow-sm transition hover:border-[#1d4ed8] hover:bg-[#1d4ed8]"
+          onClick={() =>
+            downloadXeroBillCsv({
+              lines,
+              poReference,
+              supplierName,
+            })
+          }
+          type="button"
+        >
+          Up_xero
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[1480px] text-left text-sm">
@@ -1595,16 +1723,26 @@ function PaymentAmountFields({
   exchangeRate: number | string | null | undefined;
   exchangeRateName?: string;
 }) {
+  const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
+  const savedExchangeRate = Number(exchangeRate ?? 0);
   const [amountValue, setAmountValue] = useState(amount === null || amount === undefined ? "" : String(amount));
   const [rateValue, setRateValue] = useState(
-    exchangeRate === null || exchangeRate === undefined ? "1" : String(exchangeRate),
+    exchangeRate === null || exchangeRate === undefined || savedExchangeRate <= 0
+      ? normalizedCurrency === "THB"
+        ? "1"
+        : ""
+      : String(exchangeRate),
   );
   const amountNumber = Number(amountValue || 0);
   const rateNumber = Number(rateValue || 0);
   const thbAmount =
     Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
-  const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
   const hasInvalidForeignFx = normalizedCurrency !== "THB" && rateNumber <= 1;
+  const savedFxLabel = normalizedCurrency === "THB"
+    ? "THB uses FX 1"
+    : savedExchangeRate > 0
+      ? `Last saved FX: ${savedExchangeRate}`
+      : "No saved FX yet";
 
   return (
     <>
@@ -1629,6 +1767,7 @@ function PaymentAmountFields({
           type="number"
           value={rateValue}
         />
+        <p className="mt-1 text-xs text-[#667380]">{savedFxLabel}</p>
         {hasInvalidForeignFx ? (
           <p className="mt-1 text-xs font-semibold text-[#b42318]">
             FX rate missing or invalid for {normalizedCurrency}
@@ -1802,11 +1941,12 @@ export function PaymentScheduleForm({
         Add payment line
       </button>
       <div className="overflow-x-auto">
-        <table className="min-w-[1480px] text-left text-sm">
+        <table className="min-w-[1560px] text-left text-sm">
           <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
             <tr>
               <th className="px-3 py-3 font-semibold">Payment</th>
               <th className="px-3 py-3 font-semibold">Status</th>
+              <th className="px-3 py-3 font-semibold">Xero</th>
               <th className="px-3 py-3 font-semibold">Paid date</th>
               <th className="px-3 py-3 font-semibold">Due reminder</th>
               <th className="px-3 py-3 font-semibold">Type</th>
@@ -1837,6 +1977,20 @@ export function PaymentScheduleForm({
                   >
                     <option value="paid">Paid</option>
                     <option value="planned">Planned</option>
+                  </select>
+                </td>
+                <td className="px-3 py-3">
+                  <select
+                    className={`${inputClass} ${
+                      (payment?.xero_status ?? "pending") === "uploaded"
+                        ? "border-[#9ac7a8] bg-[#edf8f1] text-[#1f6b3d]"
+                        : "border-[#ead49a] bg-[#fffaf0] text-[#73510d]"
+                    }`}
+                    defaultValue={payment?.xero_status === "uploaded" ? "uploaded" : "pending"}
+                    name={`xeroStatus:${rowKey}`}
+                  >
+                    <option value="pending">pending</option>
+                    <option value="uploaded">uploaded</option>
                   </select>
                 </td>
                 <td className="px-3 py-3">
@@ -1872,7 +2026,10 @@ export function PaymentScheduleForm({
                   amount={payment?.amount ?? ""}
                   amountName={`amount:${rowKey}`}
                   currency={payment?.currency ?? currency}
-                  exchangeRate={payment?.exchange_rate ?? 1}
+                  exchangeRate={
+                    payment?.exchange_rate ??
+                    (String(payment?.currency ?? currency).trim().toUpperCase() === "THB" ? 1 : null)
+                  }
                   exchangeRateName={`exchangeRate:${rowKey}`}
                 />
                 <td className="px-3 py-3">

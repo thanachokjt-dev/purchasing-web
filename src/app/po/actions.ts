@@ -205,6 +205,14 @@ function formText(formData: FormData, name: string) {
   return String(formData.get(name) ?? "").trim();
 }
 
+function xeroStatus(value: string) {
+  return value === "uploaded" ? "uploaded" : "pending";
+}
+
+function normalizedCurrency(value: string | null | undefined) {
+  return String(value || "THB").trim().toUpperCase();
+}
+
 function normalizeStatus(value: string) {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -1603,6 +1611,7 @@ export async function addPoPaymentAction(
       paid_by: optionalText(formData, "paidBy"),
       reference: optionalText(formData, "reference"),
       note: optionalText(formData, "note"),
+      xero_status: "pending",
     });
 
     if (error) {
@@ -1628,6 +1637,7 @@ export async function updatePoPaymentsAction(
     const rowKeys = formData.getAll("paymentRowKey").map((value) => String(value).trim());
     const legacyIds = formData.getAll("paymentId").map((value) => String(value).trim());
     const legacyStatuses = formData.getAll("paymentStatus").map((value) => String(value).trim());
+    const legacyXeroStatuses = formData.getAll("xeroStatus").map((value) => String(value).trim());
     const legacyTypes = formData.getAll("paymentType").map((value) => String(value).trim());
     const legacyAmountValues = formData.getAll("amount").map((value) => String(value).trim());
     const legacyExchangeRateValues = formData
@@ -1654,6 +1664,30 @@ export async function updatePoPaymentsAction(
       }
     }
 
+    const existingIds = rowKeys.length > 0
+      ? rowKeys.map((rowKey) => formText(formData, `paymentId:${rowKey}`)).filter(Boolean)
+      : legacyIds.filter(Boolean);
+    const existingPaymentRows = existingIds.length > 0
+      ? await supabase
+          .from("po_payments")
+          .select("id,exchange_rate,amount_thb,currency")
+          .eq("po_id", poId)
+          .in("id", existingIds)
+      : { data: [], error: null };
+    if (existingPaymentRows.error) {
+      throw new Error(existingPaymentRows.error.message);
+    }
+    const existingPaymentById = new Map(
+      (existingPaymentRows.data ?? []).map((payment) => [
+        String(payment.id),
+        {
+          amountThb: Number(payment.amount_thb ?? 0),
+          currency: String(payment.currency ?? "THB"),
+          exchangeRate: Number(payment.exchange_rate ?? 0),
+        },
+      ]),
+    );
+
     const today = new Date().toISOString().slice(0, 10);
     let savedCount = 0;
     const rows =
@@ -1671,6 +1705,7 @@ export async function updatePoPaymentsAction(
             note: formText(formData, `note:${rowKey}`),
             status: formText(formData, `paymentStatus:${rowKey}`),
             type: formText(formData, `paymentType:${rowKey}`),
+            xeroStatus: formText(formData, `xeroStatus:${rowKey}`),
           }))
         : legacyIds.map((rawId, index) => ({
             amountValue: legacyAmountValues[index] ?? "",
@@ -1685,6 +1720,7 @@ export async function updatePoPaymentsAction(
             note: legacyNotes[index] ?? "",
             status: legacyStatuses[index] ?? "",
             type: legacyTypes[index] ?? "",
+            xeroStatus: legacyXeroStatuses[index] ?? "",
           }));
 
     for (const rowInput of rows) {
@@ -1695,10 +1731,20 @@ export async function updatePoPaymentsAction(
 
       const status = rowInput.status === "planned" ? "planned" : "paid";
       const amount = nonNegativeTextNumber(rowInput.amountValue, `Payment ${index + 1} amount`);
-      const exchangeRate = nonNegativeTextNumber(
-        rowInput.exchangeRateValue || "1",
-        `Payment ${index + 1} exchange rate`,
-      ) || 1;
+      const rowCurrency = rowInput.currency || "THB";
+      const currencyCode = normalizedCurrency(rowCurrency);
+      const existingPayment = rawId ? existingPaymentById.get(rawId) : undefined;
+      const exchangeRateInput = rowInput.exchangeRateValue.trim();
+      const exchangeRate = exchangeRateInput
+        ? nonNegativeTextNumber(exchangeRateInput, `Payment ${index + 1} exchange rate`)
+        : existingPayment?.exchangeRate && existingPayment.exchangeRate > 0
+          ? existingPayment.exchangeRate
+          : currencyCode === "THB"
+            ? 1
+            : 0;
+      if (currencyCode !== "THB" && exchangeRate <= 1) {
+        throw new Error(`Payment ${index + 1} needs a real FX rate for ${currencyCode}`);
+      }
       const paymentDate = rowInput.paymentDate || (status === "paid" ? today : null);
       const dueDate = rowInput.dueDate || null;
       const hasContent =
@@ -1716,12 +1762,13 @@ export async function updatePoPaymentsAction(
         payment_status: status,
         due_date: dueDate,
         amount,
-        currency: rowInput.currency || "THB",
+        currency: rowCurrency,
         exchange_rate: exchangeRate,
         amount_thb: amount * exchangeRate,
         paid_by: rowInput.paidBy || null,
         reference: rowInput.reference || null,
         note: rowInput.note || null,
+        xero_status: xeroStatus(rowInput.xeroStatus),
       };
 
       const { error } = rawId
