@@ -213,6 +213,31 @@ function normalizedCurrency(value: string | null | undefined) {
   return String(value || "THB").trim().toUpperCase();
 }
 
+function isBlankPaymentDraftRow(row: {
+  amountValue: string;
+  dueDate: string;
+  note: string;
+  paidBy: string;
+  paymentDate: string;
+  rawId: string;
+  reference: string;
+  type: string;
+}) {
+  if (row.rawId) {
+    return false;
+  }
+
+  return (
+    !row.amountValue.trim() &&
+    !row.type.trim() &&
+    !row.paymentDate.trim() &&
+    !row.dueDate.trim() &&
+    !row.paidBy.trim() &&
+    !row.reference.trim() &&
+    !row.note.trim()
+  );
+}
+
 function normalizeStatus(value: string) {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -1726,6 +1751,9 @@ export async function updatePoPaymentsAction(
     for (const rowInput of rows) {
       const { index, rawId } = rowInput;
       if (rawId && deleteIds.has(rawId)) {
+        continue;
+      }
+      if (isBlankPaymentDraftRow(rowInput)) {
         continue;
       }
 

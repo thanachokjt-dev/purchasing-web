@@ -1716,12 +1716,14 @@ function PaymentAmountFields({
   currency,
   exchangeRate,
   exchangeRateName = "exchangeRate",
+  isDraftRow = false,
 }: {
   amount: number | string | null | undefined;
   amountName?: string;
   currency: string | null | undefined;
   exchangeRate: number | string | null | undefined;
   exchangeRateName?: string;
+  isDraftRow?: boolean;
 }) {
   const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
   const savedExchangeRate = Number(exchangeRate ?? 0);
@@ -1735,9 +1737,10 @@ function PaymentAmountFields({
   );
   const amountNumber = Number(amountValue || 0);
   const rateNumber = Number(rateValue || 0);
+  const shouldValidateFx = !isDraftRow || amountNumber > 0;
   const thbAmount =
     Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
-  const hasInvalidForeignFx = normalizedCurrency !== "THB" && rateNumber <= 1;
+  const hasInvalidForeignFx = shouldValidateFx && normalizedCurrency !== "THB" && rateNumber <= 1;
   const savedFxLabel = normalizedCurrency === "THB"
     ? "THB uses FX 1"
     : savedExchangeRate > 0
@@ -1972,7 +1975,7 @@ export function PaymentScheduleForm({
                   <input name={`paymentId:${rowKey}`} type="hidden" value={payment?.id ?? ""} />
                   <select
                     className={inputClass}
-                    defaultValue={payment?.payment_status ?? "paid"}
+                    defaultValue={payment?.payment_status ?? "planned"}
                     name={`paymentStatus:${rowKey}`}
                   >
                     <option value="paid">Paid</option>
@@ -2031,6 +2034,7 @@ export function PaymentScheduleForm({
                     (String(payment?.currency ?? currency).trim().toUpperCase() === "THB" ? 1 : null)
                   }
                   exchangeRateName={`exchangeRate:${rowKey}`}
+                  isDraftRow={!payment?.id}
                 />
                 <td className="px-3 py-3">
                   <input
