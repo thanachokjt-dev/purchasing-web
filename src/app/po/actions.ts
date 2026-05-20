@@ -40,6 +40,14 @@ const VALID_STATUSES = new Set([
 const initialError = (message: string): PoActionState => ({ ok: false, message });
 const success = (message: string): PoActionState => ({ ok: true, message });
 
+function isNextRedirectError(error: unknown) {
+  return (
+    error instanceof Error &&
+    ("digest" in error || error.message.includes("NEXT_REDIRECT")) &&
+    String((error as Error & { digest?: string }).digest ?? error.message).includes("NEXT_REDIRECT")
+  );
+}
+
 async function requirePoPermission(
   nextPath: string,
   allowed: (email: string) => boolean,
@@ -1256,6 +1264,13 @@ export async function batchReceivePoItemsAction(
       if (!qtyText) {
         return [];
       }
+      const parsedQty = Number(qtyText);
+      if (!Number.isFinite(parsedQty) || parsedQty < 0) {
+        throw new Error(`Line ${index + 1} receive quantity must be 0 or greater`);
+      }
+      if (parsedQty === 0) {
+        return [];
+      }
 
       if (!itemUuid) {
         throw new Error(`Line ${index + 1} is missing an item id`);
@@ -1266,7 +1281,7 @@ export async function batchReceivePoItemsAction(
     });
 
     if (requestedReceipts.length === 0) {
-      throw new Error("Enter at least one receive quantity");
+      throw new Error("Please enter at least one receive quantity.");
     }
 
     const uniqueItemUuids = Array.from(
@@ -1379,6 +1394,9 @@ export async function batchReceivePoItemsAction(
       `Received ${totalQty} units across ${requestedReceipts.length} lines`,
     );
   } catch (error) {
+    if (isNextRedirectError(error)) {
+      throw error;
+    }
     return initialError(error instanceof Error ? error.message : "Batch receive failed");
   }
 }

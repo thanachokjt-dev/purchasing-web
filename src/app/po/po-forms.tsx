@@ -84,6 +84,7 @@ type PaymentRowItem = {
 
 const initialState: PoActionState = { ok: false, message: "" };
 const printIntentEvent = "po-detail:print-intent";
+const fillAllReceivingEvent = "po-detail:fill-all-receiving";
 const statusOptions = [
   "draft",
   "waiting_for_approve",
@@ -272,6 +273,49 @@ const inputClass =
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
 const buttonClass =
   "inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
+
+function getPaymentStatusSelectClass(status: string) {
+  if (status === "paid") {
+    return "!border-green-700 !bg-green-600 !font-semibold !text-white";
+  }
+  if (status === "planned") {
+    return "!border-blue-300 !bg-blue-100 !font-semibold !text-blue-900";
+  }
+  return "!border-red-300 !bg-red-100 !font-semibold !text-red-900";
+}
+
+function getXeroStatusSelectClass(status: string) {
+  if (status === "uploaded") {
+    return "!border-green-700 !bg-green-600 !font-semibold !text-white";
+  }
+  if (status === "draft") {
+    return "!border-orange-500 !bg-orange-400 !font-semibold !text-black";
+  }
+  return "!border-amber-300 !bg-amber-100 !font-semibold !text-amber-900";
+}
+
+function getPaymentTypeSelectClass(type: string) {
+  const compact = type.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!compact) {
+    return "!border-slate-300 !bg-slate-100 !text-slate-600";
+  }
+  if (compact.includes("deposit")) {
+    return "!border-indigo-300 !bg-indigo-100 !font-semibold !text-indigo-900";
+  }
+  if (compact.includes("before") || compact.includes("shipment")) {
+    return "!border-blue-300 !bg-blue-100 !font-semibold !text-blue-900";
+  }
+  if (compact.includes("freight") || compact.includes("shipping")) {
+    return "!border-orange-300 !bg-orange-100 !font-semibold !text-orange-900";
+  }
+  if (compact.includes("afterreceived") || compact.includes("aftersale") || compact.includes("balance")) {
+    return "!border-green-300 !bg-green-100 !font-semibold !text-green-900";
+  }
+  if (compact.includes("fine") || compact.includes("penalty")) {
+    return "!border-red-300 !bg-red-100 !font-semibold !text-red-900";
+  }
+  return "!border-slate-300 !bg-white !text-slate-800";
+}
 
 const xeroBillHeaders = [
   "*ContactName",
@@ -1788,6 +1832,35 @@ function PaymentAmountFields({
   );
 }
 
+function StyledPaymentSelect({
+  classForValue,
+  defaultValue,
+  name,
+  options,
+}: {
+  classForValue: (value: string) => string;
+  defaultValue: string;
+  name: string;
+  options: Array<{ label: string; value: string }>;
+}) {
+  const [value, setValue] = useState(defaultValue);
+
+  return (
+    <select
+      className={`${inputClass} appearance-none pr-8 shadow-sm transition ${classForValue(value)}`}
+      name={name}
+      onChange={(event) => setValue(event.target.value)}
+      value={value}
+    >
+      {options.map((option) => (
+        <option key={`${name}-${option.value || "blank"}`} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function AddPaymentForm({
   currency,
   poId,
@@ -1973,35 +2046,31 @@ export function PaymentScheduleForm({
                 <td className="px-3 py-3">
                   <input name="paymentRowKey" type="hidden" value={rowKey} />
                   <input name={`paymentId:${rowKey}`} type="hidden" value={payment?.id ?? ""} />
-                  <select
-                    className={inputClass}
+                  <StyledPaymentSelect
+                    classForValue={getPaymentStatusSelectClass}
                     defaultValue={payment?.payment_status ?? "planned"}
                     name={`paymentStatus:${rowKey}`}
-                  >
-                    <option value="paid">Paid</option>
-                    <option value="planned">Planned</option>
-                  </select>
+                    options={[
+                      { label: "Paid", value: "paid" },
+                      { label: "Planned", value: "planned" },
+                    ]}
+                  />
                 </td>
                 <td className="px-3 py-3">
-                  <select
-                    className={`${inputClass} ${
-                      payment?.xero_status === "uploaded"
-                        ? "border-[#9ac7a8] bg-[#edf8f1] text-[#1f6b3d]"
-                        : payment?.xero_status === "draft"
-                          ? "border-[#a9c6f5] bg-[#eff6ff] text-[#1d4ed8]"
-                          : "border-[#ead49a] bg-[#fffaf0] text-[#73510d]"
-                    }`}
+                  <StyledPaymentSelect
+                    classForValue={getXeroStatusSelectClass}
                     defaultValue={
                       payment?.xero_status === "draft" || payment?.xero_status === "uploaded"
                         ? payment.xero_status
                         : "pending"
                     }
                     name={`xeroStatus:${rowKey}`}
-                  >
-                    <option value="pending">pending</option>
-                    <option value="draft">draft</option>
-                    <option value="uploaded">uploaded</option>
-                  </select>
+                    options={[
+                      { label: "pending", value: "pending" },
+                      { label: "draft", value: "draft" },
+                      { label: "uploaded", value: "uploaded" },
+                    ]}
+                  />
                 </td>
                 <td className="px-3 py-3">
                   <input
@@ -2020,17 +2089,12 @@ export function PaymentScheduleForm({
                   />
                 </td>
                 <td className="px-3 py-3">
-                  <select
-                    className={inputClass}
+                  <StyledPaymentSelect
+                    classForValue={getPaymentTypeSelectClass}
                     defaultValue={payment?.payment_type ?? ""}
                     name={`paymentType:${rowKey}`}
-                  >
-                    {rowOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    options={rowOptions}
+                  />
                 </td>
                 <PaymentAmountFields
                   amount={payment?.amount ?? ""}
@@ -2295,6 +2359,17 @@ export function BatchReceiveFormBar({
           </LoadingLabel>
         </button>
       </form>
+      <button
+        className="h-10 justify-self-start rounded-md border border-[#2563eb] bg-[#2563eb] px-4 text-sm font-semibold text-white shadow-sm transition hover:border-[#1d4ed8] hover:bg-[#1d4ed8]"
+        onClick={() => {
+          window.dispatchEvent(
+            new CustomEvent(fillAllReceivingEvent, { detail: { formId } }),
+          );
+        }}
+        type="button"
+      >
+        Fill All Outstanding
+      </button>
       <ActionMessage state={state} />
     </div>
   );
@@ -2310,6 +2385,18 @@ export function BatchReceiveLineFields({
   outstandingQty: number;
 }) {
   const [receivedQty, setReceivedQty] = useState("");
+  useEffect(() => {
+    function fillOutstanding(event: Event) {
+      const detail = (event as CustomEvent<{ formId?: string }>).detail;
+      if (detail?.formId !== formId) {
+        return;
+      }
+      setReceivedQty(outstandingQty > 0 ? String(outstandingQty) : "");
+    }
+
+    window.addEventListener(fillAllReceivingEvent, fillOutstanding);
+    return () => window.removeEventListener(fillAllReceivingEvent, fillOutstanding);
+  }, [formId, outstandingQty]);
 
   if (!itemUuid) {
     return <span className="text-xs text-[#8a96a3]">Import-only line</span>;
