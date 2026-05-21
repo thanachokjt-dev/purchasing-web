@@ -37,7 +37,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
     { href: "/payment-requests?view=history", key: "review-history", label: "Review History" },
   ],
   super_admin: [
-    { href: "/", key: "dashboard", label: "Dashboard" },
+    { href: "/dashboard", key: "dashboard", label: "Dashboard" },
     { href: "/po", key: "po", label: "PO Portal" },
     { href: "/purchasing-decision", key: "reorder", label: "Reorder Planning" },
     {
@@ -88,7 +88,7 @@ export function defaultLandingForRole(role: UserRole) {
     preliminary_approver: "/payment-requests?view=my-approvals",
     retail_manager: "/payment-requests?view=retail-review",
     reviewer: "/payment-requests?view=my-reviews",
-    super_admin: "/po",
+    super_admin: "/dashboard",
     viewer: "/inactive",
   };
 
@@ -100,7 +100,7 @@ export function defaultLandingForUser(profile: CurrentUserProfile) {
     return "/po#eta-schedule";
   }
   if (getProfileAccessRole(profile) === "executive_readonly") {
-    return "/po";
+    return "/dashboard";
   }
 
   return defaultLandingForRole(profile.role);

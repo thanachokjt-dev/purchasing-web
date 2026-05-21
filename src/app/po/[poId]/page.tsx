@@ -1491,14 +1491,11 @@ function PrintMatrixDocument({
                                 <td rowSpan={rowSpan}>{row.productName}</td>
                                 <td rowSpan={rowSpan}>
                                   {row.imageUrl ? (
-                                    <Image
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
                                       alt={row.productName}
                                       className="print-product-image"
-                                      height={96}
-                                      loading="eager"
                                       src={row.imageUrl}
-                                      unoptimized
-                                      width={96}
                                     />
                                   ) : (
                                     ""
@@ -1547,14 +1544,11 @@ function PrintMatrixDocument({
                       <td>{row.productName}</td>
                       <td>
                         {row.imageUrl ? (
-                          <Image
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
                             alt={row.productName}
                             className="print-product-image"
-                            height={96}
-                            loading="eager"
                             src={row.imageUrl}
-                            unoptimized
-                            width={96}
                           />
                         ) : (
                           ""

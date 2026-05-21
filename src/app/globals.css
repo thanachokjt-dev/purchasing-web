@@ -660,6 +660,9 @@ body {
 
   .print-matrix td:not(:first-child) {
     font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.15;
     text-align: center;
   }
 
@@ -667,6 +670,11 @@ body {
     font-weight: 600;
     overflow-wrap: anywhere;
     width: 42mm;
+  }
+
+  .print-matrix td:last-child {
+    font-size: 16px;
+    font-weight: 800;
   }
 
   .print-receipt-matrix td:nth-child(2),

@@ -2451,7 +2451,7 @@ export function PrintDocumentButton({
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
-      onClick={() => {
+      onClick={async () => {
         const originalTitle = document.title;
         const printTitle = buildPrintFilename(mode, supplierName, poId);
         let cleanedUp = false;
@@ -2476,10 +2476,9 @@ export function PrintDocumentButton({
         window.dispatchEvent(new CustomEvent(printIntentEvent));
         window.addEventListener("afterprint", cleanupPrintState, { once: true });
         fallbackTimer = window.setTimeout(cleanupPrintState, 8000);
-        window.requestAnimationFrame(() => {
-          window.print();
-          window.setTimeout(cleanupPrintState, 500);
-        });
+        await waitForPrintImages(mode);
+        window.print();
+        window.setTimeout(cleanupPrintState, 500);
       }}
       type="button"
     >
@@ -2488,6 +2487,34 @@ export function PrintDocumentButton({
       </LoadingLabel>
     </button>
   );
+}
+
+async function waitForPrintImages(mode: "quote" | "receiving") {
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+  });
+
+  const selector = `.print-${mode} img`;
+  const images = Array.from(document.querySelectorAll<HTMLImageElement>(selector));
+  if (images.length === 0) {
+    return;
+  }
+
+  await Promise.race([
+    Promise.all(
+      images.map((image) => {
+        if (image.complete && image.naturalWidth > 0) {
+          return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+          const done = () => resolve();
+          image.addEventListener("load", done, { once: true });
+          image.addEventListener("error", done, { once: true });
+        });
+      }),
+    ),
+    new Promise<void>((resolve) => window.setTimeout(resolve, 2000)),
+  ]);
 }
 
 export function PrintIntentContent({ children }: { children: ReactNode }) {
