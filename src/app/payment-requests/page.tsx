@@ -4,7 +4,7 @@ import { PaymentRequestCard } from "@/app/payment-requests/request-card";
 import { requireUser } from "@/lib/auth";
 import { getProfileAccessRole } from "@/lib/access-control";
 import { getVisiblePaymentRequests } from "@/lib/payment-approvals";
-import { canAccessPaymentWorkbench, defaultLandingForRole, roleLabel } from "@/lib/role-nav";
+import { canAccessPaymentWorkbench, defaultLandingForUser, roleLabel } from "@/lib/role-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +56,7 @@ export default async function PaymentRequestsPage({
   const params = await searchParams;
   const currentUser = await requireUser("/payment-requests");
   if (!canAccessPaymentWorkbench(currentUser)) {
-    redirect(defaultLandingForRole(currentUser.role));
+    redirect(defaultLandingForUser(currentUser));
   }
   const { requests } = await getVisiblePaymentRequests();
   const view = params.view ?? "";
@@ -139,7 +139,7 @@ export default async function PaymentRequestsPage({
           </div>
           <Link
             className="rounded-md border border-[#cfd6df] bg-white px-3 py-2 text-sm font-semibold text-[#364252]"
-            href={defaultLandingForRole(currentUser.role)}
+            href={defaultLandingForUser(currentUser)}
           >
             My Workbench
           </Link>

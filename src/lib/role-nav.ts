@@ -73,7 +73,7 @@ export function navItemsForRole(role: UserRole) {
 
 export function navItemsForUser(profile: CurrentUserProfile) {
   if (canViewIncomingEtaOnly(profile.email)) {
-    return [{ href: "/po#eta-schedule", key: "po", label: "PO Portal" }];
+    return [{ href: "/po", key: "po", label: "PO Portal" }];
   }
   if (getProfileAccessRole(profile) === "dashboard_only") {
     return [{ href: "/dashboard", key: "dashboard", label: "Dashboard" }];
@@ -101,7 +101,7 @@ export function defaultLandingForRole(role: UserRole) {
 
 export function defaultLandingForUser(profile: CurrentUserProfile) {
   if (canViewIncomingEtaOnly(profile.email)) {
-    return "/po#eta-schedule";
+    return "/po";
   }
   if (getUserAccessRole(profile.email) === "dashboard_only") {
     return "/dashboard";
@@ -127,6 +127,9 @@ export function canAccessDashboard(profile: CurrentUserProfile) {
 }
 
 export function canAccessPaymentWorkbench(profile: CurrentUserProfile) {
+  if (canViewIncomingEtaOnly(profile.email)) {
+    return false;
+  }
   if (getProfileAccessRole(profile) === "executive_readonly") {
     return true;
   }

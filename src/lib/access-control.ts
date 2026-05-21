@@ -13,6 +13,7 @@ const incomingEtaViewerEmails = new Set([
   "sam@bangtaomuaythai.com",
   "lewis@bangtaomuaythai.com",
   "saytarn.a@bangtaomuaythai.com",
+  "chonlasit.c@bangtaomuaythai.com",
 ]);
 
 const executiveReadonlyEmails = new Set([
@@ -20,9 +21,7 @@ const executiveReadonlyEmails = new Set([
   "will@bangtaomuaythai.com",
 ]);
 
-const dashboardOnlyEmails = new Set([
-  "chonlasit.c@bangtaomuaythai.com",
-]);
+const dashboardOnlyEmails = new Set<string>();
 
 export function normalizeAccessEmail(email: string | null | undefined) {
   return String(email ?? "").trim().toLowerCase();
