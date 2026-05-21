@@ -187,6 +187,46 @@ function incomingEtaStatusClass(status: string) {
   return "bg-[#eaf6ef] text-[#1f6b3d]";
 }
 
+function incomingTimingLabel(row: {
+  etaDate: string;
+  status: string;
+}, today: string) {
+  if (row.status === "Received" || row.status === "Closed") {
+    return "Received";
+  }
+  if (!row.etaDate) {
+    return "No ETA";
+  }
+
+  const daysUntil = daysBetweenDates(today, row.etaDate);
+  if (daysUntil < 0) {
+    return "Overdue";
+  }
+  if (daysUntil === 0) {
+    return "Due today";
+  }
+  if (daysUntil === 1) {
+    return "In 1 day";
+  }
+  return `In ${daysUntil} days`;
+}
+
+function incomingTimingClass(label: string) {
+  if (label === "Received") {
+    return "bg-[#eaf6ef] text-[#1f6b3d]";
+  }
+  if (label === "Overdue") {
+    return "bg-[#fff0f0] text-[#b42318]";
+  }
+  if (label === "Due today") {
+    return "bg-[#fff4e5] text-[#946200]";
+  }
+  if (label === "No ETA") {
+    return "bg-[#f3f5f7] text-[#52606d]";
+  }
+  return "bg-[#e8f1ff] text-[#255f85]";
+}
+
 function incomingTimelineBandClass(status: string) {
   if (status === "Received") {
     return "bg-[#eef0f2] text-[#52606d]";
@@ -653,29 +693,22 @@ function monthSpansForPaymentBuckets(
 
 const SUPPLIER_COLOR_PALETTE = [
   "#2563eb",
-  "#059669",
-  "#d97706",
+  "#ea580c",
+  "#16a34a",
   "#7c3aed",
-  "#0891b2",
-  "#be123c",
-  "#4f46e5",
   "#0f766e",
-];
-
-const SUPPLIER_COLOR_HINTS: Array<[string, string]> = [
-  ["csd", "#2563eb"],
-  ["weyes", "#2563eb"],
-  ["engage", "#059669"],
-  ["thai tshirt", "#d97706"],
-  ["dude sport", "#7c3aed"],
+  "#be123c",
+  "#d97706",
+  "#4f46e5",
+  "#0891b2",
+  "#65a30d",
+  "#db2777",
+  "#475569",
+  "#9333ea",
 ];
 
 function supplierColor(supplierName: string) {
   const normalized = supplierName.trim().toLowerCase();
-  const hinted = SUPPLIER_COLOR_HINTS.find(([hint]) => normalized.includes(hint));
-  if (hinted) {
-    return hinted[1];
-  }
 
   let hash = 0;
   for (const char of normalized) {
@@ -683,6 +716,44 @@ function supplierColor(supplierName: string) {
   }
 
   return SUPPLIER_COLOR_PALETTE[hash] ?? "#2563eb";
+}
+
+function normalizedSupplierLegendKey(supplierName: string) {
+  return supplierName.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function generatedSupplierColor(supplierName: string) {
+  let hash = 0;
+  for (const char of normalizedSupplierLegendKey(supplierName)) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 360;
+  }
+
+  return `hsl(${hash} 68% 42%)`;
+}
+
+function buildSupplierColorMap(supplierNames: string[]) {
+  const colorMap = new Map<string, string>();
+  const uniqueNames = Array.from(
+    new Map(
+      supplierNames
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .map((name) => [normalizedSupplierLegendKey(name), name]),
+    ).values(),
+  ).sort((a, b) => a.localeCompare(b));
+
+  uniqueNames.forEach((name, index) => {
+    colorMap.set(
+      normalizedSupplierLegendKey(name),
+      SUPPLIER_COLOR_PALETTE[index] ?? generatedSupplierColor(name),
+    );
+  });
+
+  return colorMap;
+}
+
+function colorForSupplier(supplierName: string, colorMap?: Map<string, string>) {
+  return colorMap?.get(normalizedSupplierLegendKey(supplierName)) ?? supplierColor(supplierName);
 }
 
 type IncomingEtaTooltipItem = {
@@ -718,7 +789,7 @@ type IncomingEtaSupplierRow = {
   totalIncomingQty: number;
 };
 
-function topIncomingSupplier(rows: IncomingEtaSupplierRow[]) {
+function topIncomingSupplier(rows: IncomingEtaSupplierRow[], colorMap?: Map<string, string>) {
   const sorted = [...rows]
     .filter((row) => row.totalIncomingQty > 0)
     .sort((a, b) => b.totalIncomingQty - a.totalIncomingQty);
@@ -731,10 +802,22 @@ function topIncomingSupplier(rows: IncomingEtaSupplierRow[]) {
   const isClearTop = sorted.length === 1 || top.totalIncomingQty >= secondQty * 1.2;
 
   return {
-    color: supplierColor(top.supplierName),
+    color: colorForSupplier(top.supplierName, colorMap),
     isClearTop,
     row: top,
   };
+}
+
+function supplierBreakdownForRows(rows: IncomingEtaSupplierRow[], colorMap?: Map<string, string>) {
+  return rows
+    .map((row) => ({
+      color: colorForSupplier(row.supplierName, colorMap),
+      poCount: row.poCount,
+      supplierName: row.supplierName || "Unknown supplier",
+      totalIncomingQty: row.totalIncomingQty,
+    }))
+    .filter((row) => row.totalIncomingQty > 0)
+    .sort((a, b) => b.totalIncomingQty - a.totalIncomingQty || a.supplierName.localeCompare(b.supplierName));
 }
 
 function purposeText(value: string) {
@@ -1332,6 +1415,22 @@ export default async function PoPortalPage({
     totals.set(key, (totals.get(key) ?? 0) + day.totalChartQty);
     return totals;
   }, new Map<string, number>());
+  const incomingSupplierColorMap = buildSupplierColorMap(
+    scheduledEtaRows.map((row) => row.supplierName),
+  );
+  const incomingSupplierLegend = Array.from(
+    new Map(
+      supplierBreakdownForRows(scheduledEtaRows, incomingSupplierColorMap).map((supplier) => [
+        normalizedSupplierLegendKey(supplier.supplierName),
+        supplier,
+      ]),
+    ).values(),
+  ).slice(0, 8);
+  const defaultSelectedIncomingDay =
+    incomingChartDays.find((day) => day.totalIncomingQty > 0 && day.etaDate >= incomingToday) ??
+    incomingChartDays.find((day) => day.totalIncomingQty > 0) ??
+    incomingChartDays[0] ??
+    null;
   const maxIncomingDayQty = Math.max(
     1,
     ...incomingChartDays.map((row) => row.totalChartQty),
@@ -1764,6 +1863,186 @@ export default async function PoPortalPage({
 
     return `/po?${nextParams.toString()}#eta-schedule`;
   };
+  const renderSelectedDateDetail = (
+    day: (typeof incomingChartDays)[number],
+    mode: "default" | "selected",
+  ) => {
+    const supplierBreakdown = supplierBreakdownForRows(day.rows, incomingSupplierColorMap);
+    const poGroups = groupedIncomingPos(day.rows);
+    const productGroups = groupedIncomingProducts(day.rows);
+    const productSectionGroups = productSections(productGroups);
+
+    return (
+      <section
+        className="min-w-0 max-w-full overflow-hidden rounded-lg border border-[#dfe4ea] bg-white p-4 shadow-sm"
+        data-selected-date={mode === "selected" ? day.etaDate : undefined}
+        data-selected-date-default={mode === "default" ? true : undefined}
+        data-selected-date-detail={mode === "selected" ? true : undefined}
+        hidden={mode === "selected"}
+        key={`${mode}-selected-date-${day.etaDate}`}
+      >
+        <div className="border-b border-[#edf1f5] pb-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+            Selected Date Detail
+          </p>
+          <h3 className="mt-1 text-base font-semibold text-[#172026]">
+            {formatLongDate(day.etaDate)}
+          </h3>
+          <p className="mt-1 text-sm text-[#667380]">
+            {mode === "default" ? "Nearest incoming date" : "Selected chart date"}
+          </p>
+        </div>
+        {day.totalIncomingQty > 0 ? (
+          <div className="mt-3 grid min-w-0 gap-3">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-2 py-2">
+                <p className="text-[10px] font-semibold uppercase text-[#667380]">Qty</p>
+                <p className="font-mono text-base font-bold text-[#255f85]">
+                  {formatNumber(day.totalIncomingQty)}
+                </p>
+              </div>
+              <div className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-2 py-2">
+                <p className="text-[10px] font-semibold uppercase text-[#667380]">POs</p>
+                <p className="font-mono text-base font-bold">{formatNumber(day.totalPoCount)}</p>
+              </div>
+              <div className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-2 py-2">
+                <p className="text-[10px] font-semibold uppercase text-[#667380]">Suppliers</p>
+                <p className="font-mono text-base font-bold">
+                  {formatNumber(supplierBreakdown.length)}
+                </p>
+              </div>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+                Supplier breakdown
+              </p>
+              <div className="mt-2 grid min-w-0 gap-1.5">
+                {supplierBreakdown.map((supplier) => (
+                  <div
+                    className="grid min-w-0 max-w-full grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-md border border-[#edf1f5] bg-[#fbfcfd] px-2 py-1.5 text-xs"
+                    key={`${day.etaDate}-${supplier.supplierName}`}
+                  >
+                    <span
+                      className="size-2.5 rounded-full"
+                      style={{ backgroundColor: supplier.color }}
+                    />
+                    <span className="min-w-0 truncate font-semibold text-[#172026]">
+                      {supplier.supplierName}
+                    </span>
+                    <span className="font-mono font-bold text-[#255f85]">
+                      {formatNumber(supplier.totalIncomingQty)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-[#dfe4ea] bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+                Product Summary
+              </p>
+              {productSectionGroups.length > 0 ? (
+                <div className="mt-3 grid max-h-[360px] min-w-0 gap-3 overflow-auto pr-1">
+                  {productSectionGroups.map(([sectionLabel, products]) => (
+                    <div className="min-w-0" key={`${day.etaDate}-${sectionLabel}`}>
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[#364252]">
+                          {sectionLabel || "Uncategorized"}
+                        </p>
+                        <p className="font-mono text-[11px] font-semibold text-[#667380]">
+                          {formatNumber(products.reduce((sum, product) => sum + product.totalQty, 0))}
+                        </p>
+                      </div>
+                      <div className="grid min-w-0 gap-1.5">
+                        {products.map((product) => (
+                          <div
+                            className="grid min-w-0 max-w-full grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-md border border-[#edf1f5] bg-[#fbfcfd] px-2 py-1.5"
+                            key={`${day.etaDate}-${sectionLabel}-${product.id}`}
+                          >
+                            {product.imageUrl ? (
+                              <Image
+                                alt=""
+                                className="size-[38px] rounded object-cover"
+                                height={38}
+                                src={product.imageUrl}
+                                unoptimized
+                                width={38}
+                              />
+                            ) : (
+                              <div className="size-[38px] rounded bg-[#eef0f2]" />
+                            )}
+                            <p className="line-clamp-2 min-w-0 text-xs font-semibold text-[#172026]">
+                              {product.mainName}
+                            </p>
+                            <p className="font-mono text-sm font-bold text-[#255f85]">
+                              {formatNumber(product.totalQty)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-[#667380]">No products for selected date</p>
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#64707d]">
+                Related PO / Quote
+              </p>
+              <div className="mt-2 grid max-h-[260px] min-w-0 gap-1.5 overflow-auto">
+                {poGroups.slice(0, 8).map((group) => {
+                  const content = (
+                    <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-[#edf1f5] bg-[#fbfcfd] px-2 py-2 text-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-[#172026]">
+                            {group.supplierName}
+                          </p>
+                          <p className="mt-0.5 truncate font-mono text-[#52606d]">
+                            {poReferenceText(group)}
+                          </p>
+                        </div>
+                        <p className="shrink-0 font-mono font-bold text-[#255f85]">
+                          {formatNumber(group.incomingQty)}
+                        </p>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[#667380]">
+                        {purposeText(group.headerPurpose)}
+                      </p>
+                    </div>
+                  );
+
+                  return allowOpenPoDetail ? (
+                    <Link
+                      className="block min-w-0 max-w-full hover:opacity-90"
+                      href={group.poDetailHref || `/po/${group.poId}`}
+                      key={`${day.etaDate}-${group.poId || group.poReference}`}
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <div className="min-w-0 max-w-full" key={`${day.etaDate}-${group.poId || group.poReference}`}>
+                      {content}
+                    </div>
+                  );
+                })}
+                {poGroups.length > 8 ? (
+                  <p className="text-xs font-semibold text-[#667380]">
+                    +{formatNumber(poGroups.length - 8)} more PO groups
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-md border border-[#edf1f5] bg-[#fbfcfd] p-3 text-sm text-[#667380]">
+            No incoming scheduled for selected date
+          </p>
+        )}
+      </section>
+    );
+  };
   const sortHeader = (key: string, label: string, align: "left" | "right" = "left") => (
     <Link
       className={`inline-flex w-full ${align === "right" ? "justify-end" : ""} underline-offset-2 hover:underline`}
@@ -1785,6 +2064,16 @@ export default async function PoPortalPage({
     >
       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
         {row.etaDate ? formatShortDate(row.etaDate) : "-"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2">
+        {(() => {
+          const timing = incomingTimingLabel(row, incomingToday);
+          return (
+            <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${incomingTimingClass(timing)}`}>
+              {timing}
+            </span>
+          );
+        })()}
       </td>
       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
         {row.dateReceived ? formatShortDate(row.dateReceived) : "-"}
@@ -1959,7 +2248,7 @@ export default async function PoPortalPage({
             ) : null}
             {allowCreatePo ? (
               <a
-                className="inline-flex items-center gap-2 self-start rounded-md bg-[#172026] px-3 py-1.5 text-sm font-semibold text-white"
+                className="inline-flex items-center gap-2 self-start rounded-md bg-[#2563eb] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
                 href="#new-po"
               >
                 Create PO
@@ -2092,7 +2381,7 @@ export default async function PoPortalPage({
               </div>
             </div>
           </div>
-          <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
+          <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]">
             <div className="min-w-0">
               <IncomingEtaSync
                 incomingView={incomingView}
@@ -2100,13 +2389,13 @@ export default async function PoPortalPage({
                 today={incomingToday}
                 unscheduledRows={incomingSyncUnscheduledRows}
               />
-              <div className="mb-4 grid gap-3">
+              <div className="hidden">
                 {incomingChartDays
                   .filter((day) => day.totalIncomingQty > 0)
                   .map((day) => {
                     const productGroups = groupedIncomingProducts(day.rows);
                     const sectionGroups = productSections(productGroups);
-                    const topSupplier = topIncomingSupplier(day.rows);
+                    const topSupplier = topIncomingSupplier(day.rows, incomingSupplierColorMap);
                     const selectedDateKey = safeDomId(day.etaDate);
 
                     return (
@@ -2387,6 +2676,25 @@ export default async function PoPortalPage({
                   </div>
                 </div>
               </div>
+              {incomingSupplierLegend.length > 0 ? (
+                <div
+                  className="mb-3 flex flex-wrap gap-2 text-xs"
+                  data-incoming-supplier-list
+                >
+                  {incomingSupplierLegend.map((supplier) => (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#dfe4ea] bg-white px-2 py-1 font-semibold text-[#52606d]"
+                      key={`incoming-supplier-legend-${normalizedSupplierLegendKey(supplier.supplierName)}`}
+                    >
+                      <span
+                        className="size-2.5 rounded-full"
+                        style={{ backgroundColor: supplier.color }}
+                      />
+                      <span className="max-w-[160px] truncate">{supplier.supplierName}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-[#dfe4ea] bg-[#fbfcfd] p-3">
                 <div className="mb-3 flex min-w-0 gap-2">
                   <div className="w-11 shrink-0" aria-hidden="true" />
@@ -2565,6 +2873,7 @@ export default async function PoPortalPage({
                       day.totalChartQty > 0
                         ? (day.totalReceivedQty / day.totalChartQty) * height
                         : 0;
+                    const supplierSegments = supplierBreakdownForRows(day.rows, incomingSupplierColorMap);
                     const label = incomingEtaStatus(day.etaDate, incomingToday);
                     const supplierSummary = day.rows
                       .map((row) => `${row.supplierName} ${formatNumber(row.totalIncomingQty)}`)
@@ -2580,7 +2889,7 @@ export default async function PoPortalPage({
                       (sum, row) => sum + Math.max(1, row.lineCount || 0),
                       0,
                     );
-                    const topSupplier = topIncomingSupplier(day.rows);
+                    const topSupplier = topIncomingSupplier(day.rows, incomingSupplierColorMap);
                     const poGroups = groupedIncomingPos(day.rows);
                     const productGroups = groupedIncomingProducts(day.rows);
                     const poPurposePreview = poGroups.slice(0, 3).map(
@@ -2644,17 +2953,27 @@ export default async function PoPortalPage({
                           >
                             {day.totalIncomingQty > 0 ? (
                               <span
+                                className="flex w-full flex-col justify-end overflow-hidden"
                                 data-incoming-active-bar
-                                className={`block w-full ${
-                                  day.etaDate < incomingToday
-                                    ? "bg-[#d64545] group-hover:bg-[#b42318]"
-                                    : "bg-[#2f73d9] group-hover:bg-[#174f9f]"
-                                }`}
                                 style={{
                                   height: Math.max(4, incomingHeight),
                                   opacity: "var(--incoming-active-opacity, 1)",
                                 }}
-                              />
+                              >
+                                {supplierSegments.map((segment) => (
+                                  <span
+                                    className="block w-full"
+                                    key={`${day.etaDate}-${segment.supplierName}-segment`}
+                                    style={{
+                                      backgroundColor:
+                                        day.etaDate < incomingToday
+                                          ? "#d64545"
+                                          : segment.color,
+                                      height: `${(segment.totalIncomingQty / day.totalIncomingQty) * 100}%`,
+                                    }}
+                                  />
+                                ))}
+                              </span>
                             ) : null}
                             {day.totalReceivedQty > 0 ? (
                               <span
@@ -2720,6 +3039,28 @@ export default async function PoPortalPage({
                           </div>
                           {poGroups.length > 0 ? (
                             <div className="grid gap-2">
+                              <div className="rounded-md border border-[#dfe4ea] bg-white p-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667380]">
+                                  Supplier breakdown
+                                </p>
+                                <div className="mt-2 grid gap-1">
+                                  {supplierSegments.map((segment) => (
+                                    <div
+                                      className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2 text-xs"
+                                      key={`${day.etaDate}-${segment.supplierName}-tooltip`}
+                                    >
+                                      <span
+                                        className="size-2.5 rounded-full"
+                                        style={{ backgroundColor: segment.color }}
+                                      />
+                                      <span className="truncate font-semibold">{segment.supplierName}</span>
+                                      <span className="font-mono font-bold text-[#255f85]">
+                                        {formatNumber(segment.totalIncomingQty)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
                               <div className="rounded-md bg-[#f7f9fb] px-2 py-2">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667380]">
                                   Product Summary
@@ -3066,9 +3407,10 @@ export default async function PoPortalPage({
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                <table className="w-full min-w-[1220px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[1320px] table-fixed text-left text-sm">
                   <colgroup>
                     <col className="w-[104px]" />
+                    <col className="w-[112px]" />
                     <col className="w-[112px]" />
                     <col className="w-[15%]" />
                     <col className="w-[20%]" />
@@ -3082,6 +3424,7 @@ export default async function PoPortalPage({
                   <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                     <tr>
                       <th className="px-3 py-2 font-semibold">ETA date</th>
+                      <th className="px-3 py-2 font-semibold">Timing</th>
                       <th className="px-3 py-2 font-semibold">Date received</th>
                       <th className="px-3 py-2 font-semibold">Supplier</th>
                       <th className="px-3 py-2 font-semibold">PO / Quote</th>
@@ -3097,13 +3440,13 @@ export default async function PoPortalPage({
                     {primaryIncomingActionRows.map(renderIncomingActionRow)}
                     {incomingActionRows.length === 0 ? (
                       <tr>
-                        <td className="px-3 py-4 text-sm text-[#667380]" colSpan={10}>
+                        <td className="px-3 py-4 text-sm text-[#667380]" colSpan={11}>
                           No scheduled incoming ETA records found.
                         </td>
                       </tr>
                     ) : null}
                     <tr data-incoming-empty-state hidden>
-                      <td className="px-3 py-4 text-sm text-[#667380]" colSpan={10}>
+                      <td className="px-3 py-4 text-sm text-[#667380]" colSpan={11}>
                         No incoming records for the current chart selection.
                       </td>
                     </tr>
@@ -3112,7 +3455,7 @@ export default async function PoPortalPage({
                 </div>
                 {extraIncomingActionRows.length > 0 ? (
                   <details className="group border-t border-[#edf1f5]" data-incoming-extra-details>
-                    <summary className="flex min-w-[1220px] cursor-pointer list-none justify-center bg-white px-3 py-3 text-sm font-semibold text-[#255f85] hover:bg-[#f7f9fb]">
+                    <summary className="flex min-w-[1320px] cursor-pointer list-none justify-center bg-white px-3 py-3 text-sm font-semibold text-[#255f85] hover:bg-[#f7f9fb]">
                       <span className="group-open:hidden">
                         Expand Incoming List ({formatNumber(extraIncomingActionRows.length)} more)
                       </span>
@@ -3121,9 +3464,10 @@ export default async function PoPortalPage({
                       </span>
                     </summary>
                     <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1220px] table-fixed text-left text-sm">
+                    <table className="w-full min-w-[1320px] table-fixed text-left text-sm">
                       <colgroup>
                         <col className="w-[104px]" />
+                        <col className="w-[112px]" />
                         <col className="w-[112px]" />
                         <col className="w-[15%]" />
                         <col className="w-[20%]" />
@@ -3145,7 +3489,27 @@ export default async function PoPortalPage({
             </div>
 
             <div className="min-w-0">
-              <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="mb-3 grid gap-3 xl:sticky xl:top-3 xl:z-10">
+                {defaultSelectedIncomingDay ? renderSelectedDateDetail(defaultSelectedIncomingDay, "default") : (
+                  <section className="rounded-lg border border-[#dfe4ea] bg-white p-4 shadow-sm" data-selected-date-default>
+                    <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
+                      Selected Date Detail
+                    </p>
+                    <p className="mt-3 text-sm text-[#667380]">
+                      No scheduled incoming dates are available.
+                    </p>
+                  </section>
+                )}
+                {incomingChartDays.map((day) => renderSelectedDateDetail(day, "selected"))}
+                <section
+                  className="rounded-lg border border-[#dfe4ea] bg-white p-4 text-sm text-[#667380] shadow-sm"
+                  data-selected-date-empty
+                  hidden
+                >
+                  No incoming scheduled for selected date
+                </section>
+              </div>
+              <div className="hidden">
                 <h3 className="text-sm font-semibold">No ETA incoming</h3>
                 <p className="text-xs text-[#667380]">
                   {formatNumber(etaReconciliation.unscheduledItemCount)} lines |{" "}
@@ -3153,7 +3517,7 @@ export default async function PoPortalPage({
                 </p>
               </div>
               {etaReconciliation.unscheduledEtaQty <= 0 ? (
-                <div className="flex gap-3 rounded-md border border-[#cce7d8] bg-[#f7fbf8] px-3 py-3 text-sm">
+                <div className="hidden">
                   <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#1f6b3d] text-xs font-bold text-white">
                     ✓
                   </span>
@@ -3167,7 +3531,7 @@ export default async function PoPortalPage({
                   </div>
                 </div>
               ) : (
-                <div className="max-h-[220px] divide-y divide-[#edf1f5] overflow-auto rounded-md border border-[#dfe4ea]">
+                <div className="hidden">
                   {unscheduledEtaRows.map((row) => {
                     const content = (
                       <>
@@ -3728,7 +4092,7 @@ export default async function PoPortalPage({
 
         {allowCreatePo ? (
         <section className="rounded-lg border border-[#dfe4ea] bg-white shadow-sm" id="new-po">
-          <details>
+          <details open>
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
               <div>
                 <h2 className="text-base font-semibold">Open New PO</h2>
@@ -3737,7 +4101,7 @@ export default async function PoPortalPage({
                 </p>
               </div>
               <span className="rounded-md border border-[#cfd6df] px-3 py-1.5 text-sm font-semibold text-[#364252]">
-                Expand
+                Ready
               </span>
             </summary>
             <div className="border-t border-[#e2e7ed] p-4">

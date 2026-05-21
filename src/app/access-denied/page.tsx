@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { defaultLandingForRole, roleLabel } from "@/lib/role-nav";
+import { defaultLandingForUser, roleLabel } from "@/lib/role-nav";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccessDeniedPage() {
   const profile = await requireUser("/access-denied");
-  const landing = defaultLandingForRole(profile.role);
+  const landing = defaultLandingForUser(profile);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f6f7f9] px-5 py-10 text-[#172026]">

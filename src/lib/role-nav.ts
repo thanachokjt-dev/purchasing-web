@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CurrentUserProfile, UserRole } from "@/lib/auth";
 import {
+  getUserAccessRole,
   canViewIncomingEtaOnly,
   getProfileAccessRole,
 } from "@/lib/access-control";
@@ -74,6 +75,9 @@ export function navItemsForUser(profile: CurrentUserProfile) {
   if (canViewIncomingEtaOnly(profile.email)) {
     return [{ href: "/po#eta-schedule", key: "po", label: "PO Portal" }];
   }
+  if (getProfileAccessRole(profile) === "dashboard_only") {
+    return [{ href: "/dashboard", key: "dashboard", label: "Dashboard" }];
+  }
   if (getProfileAccessRole(profile) === "executive_readonly") {
     return navByRole.super_admin;
   }
@@ -99,6 +103,9 @@ export function defaultLandingForUser(profile: CurrentUserProfile) {
   if (canViewIncomingEtaOnly(profile.email)) {
     return "/po#eta-schedule";
   }
+  if (getUserAccessRole(profile.email) === "dashboard_only") {
+    return "/dashboard";
+  }
   if (getProfileAccessRole(profile) === "executive_readonly") {
     return "/dashboard";
   }
@@ -108,6 +115,15 @@ export function defaultLandingForUser(profile: CurrentUserProfile) {
 
 export function canAccessAdminControlTower(profile: CurrentUserProfile) {
   return profile.role === "super_admin" || getProfileAccessRole(profile) === "executive_readonly";
+}
+
+export function canAccessDashboard(profile: CurrentUserProfile) {
+  const accessRole = getProfileAccessRole(profile);
+  return (
+    profile.role === "super_admin" ||
+    accessRole === "executive_readonly" ||
+    accessRole === "dashboard_only"
+  );
 }
 
 export function canAccessPaymentWorkbench(profile: CurrentUserProfile) {

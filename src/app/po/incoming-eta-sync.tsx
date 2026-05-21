@@ -327,10 +327,20 @@ export function IncomingEtaSync({
       node.dataset.selected = selection?.date === month ? "true" : "false";
     });
 
+    let selectedDateDetailCount = 0;
     root.querySelectorAll<HTMLElement>("[data-selected-date-detail]").forEach((node) => {
       const date = node.dataset.selectedDate || "";
       const visible = Boolean(selection && selection.date.length === 10 && selection.date === date);
       node.hidden = !visible;
+      if (visible) {
+        selectedDateDetailCount += 1;
+      }
+    });
+    root.querySelectorAll<HTMLElement>("[data-selected-date-default]").forEach((node) => {
+      node.hidden = Boolean(selection);
+    });
+    root.querySelectorAll<HTMLElement>("[data-selected-date-empty]").forEach((node) => {
+      node.hidden = !selection || selection.date.length !== 10 || selectedDateDetailCount > 0;
     });
 
     let visibleNoEtaRows = 0;

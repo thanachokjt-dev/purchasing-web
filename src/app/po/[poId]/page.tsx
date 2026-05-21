@@ -1123,6 +1123,7 @@ export default async function PoDetailPage({
                                   height={64}
                                   loading="lazy"
                                   src={row.imageUrl}
+                                  unoptimized
                                   width={64}
                                 />
                               ) : (
@@ -1218,6 +1219,7 @@ export default async function PoDetailPage({
                               height={56}
                               loading="lazy"
                               src={item.imageUrl}
+                              unoptimized
                               width={56}
                             />
                           ) : (

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { logoutAction } from "@/app/auth/actions";
 import { getCurrentUserProfile } from "@/lib/auth";
-import { defaultLandingForRole, navItemsForRole, roleLabel } from "@/lib/role-nav";
+import { defaultLandingForUser, navItemsForUser, roleLabel } from "@/lib/role-nav";
 
 export async function AccountMenu() {
   const profile = await getCurrentUserProfile();
@@ -30,12 +30,12 @@ export async function AccountMenu() {
           <div className="mt-3 grid gap-2">
             <Link
               className="rounded-md border border-[#cfd6df] px-3 py-2 font-semibold text-[#364252] hover:bg-[#f7f9fb]"
-              href={defaultLandingForRole(profile.role)}
+              href={defaultLandingForUser(profile)}
             >
               My Workbench
             </Link>
             <div className="grid gap-1 border-t border-[#edf1f5] pt-2">
-              {navItemsForRole(profile.role).map((item) => (
+              {navItemsForUser(profile).map((item) => (
                 <Link
                   className="rounded-md px-3 py-1.5 text-sm font-semibold text-[#364252] hover:bg-[#f7f9fb]"
                   href={item.href}

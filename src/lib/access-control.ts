@@ -6,6 +6,7 @@ export type AccessRole =
   | "super_admin"
   | "executive_readonly"
   | "incoming_eta_viewer"
+  | "dashboard_only"
   | "admin";
 
 const incomingEtaViewerEmails = new Set([
@@ -17,6 +18,10 @@ const incomingEtaViewerEmails = new Set([
 const executiveReadonlyEmails = new Set([
   "kevin@bangtaomuaythai.com",
   "will@bangtaomuaythai.com",
+]);
+
+const dashboardOnlyEmails = new Set([
+  "chonlasit.c@bangtaomuaythai.com",
 ]);
 
 export function normalizeAccessEmail(email: string | null | undefined) {
@@ -31,6 +36,9 @@ export function getUserAccessRole(email: string | null | undefined): AccessRole 
   }
   if (executiveReadonlyEmails.has(normalizedEmail)) {
     return "executive_readonly";
+  }
+  if (dashboardOnlyEmails.has(normalizedEmail)) {
+    return "dashboard_only";
   }
 
   return "admin";
@@ -51,7 +59,7 @@ export function canViewIncomingEtaOnly(email: string | null | undefined) {
 
 export function canViewAllPages(email: string | null | undefined) {
   const role = getUserAccessRole(email);
-  return role !== "incoming_eta_viewer";
+  return role !== "incoming_eta_viewer" && role !== "dashboard_only";
 }
 
 export function canOpenPoDetail(email: string | null | undefined) {
@@ -86,6 +94,8 @@ export function readonlyAccessLabel(profile: CurrentUserProfile) {
   if (role === "executive_readonly") {
     return "Read-only access";
   }
+  if (role === "dashboard_only") {
+    return "Dashboard only";
+  }
   return "";
 }
-

@@ -82,6 +82,20 @@ type PaymentRowItem = {
   note: string | null;
 };
 
+type CreatePoDraftLine = {
+  currency: string;
+  freightUnitCost: string;
+  imageUrl: string;
+  productTitle: string;
+  qty: string;
+  remark: string;
+  sku: string;
+  source: "catalog" | "manual";
+  tempId: string;
+  unitPrice: string;
+  variantTitle: string;
+};
+
 const initialState: PoActionState = { ok: false, message: "" };
 const printIntentEvent = "po-detail:print-intent";
 const fillAllReceivingEvent = "po-detail:fill-all-receiving";
@@ -266,6 +280,10 @@ function formatMoney(value: number) {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   }).format(value);
+}
+
+function createDraftLineId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 const inputClass =
@@ -563,13 +581,16 @@ export function CreatePoForm({
   const [state, formAction, pending] = useActionState(createPoAction, initialState);
   const [supplierCode, setSupplierCode] = useState("");
   const [query, setQuery] = useState("");
-  const [sku, setSku] = useState("");
-  const [productTitle, setProductTitle] = useState("");
-  const [variantTitle, setVariantTitle] = useState("");
-  const [orderedQty, setOrderedQty] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [freightUnitCost, setFreightUnitCost] = useState("");
   const [currency, setCurrency] = useState("THB");
+  const [lines, setLines] = useState<CreatePoDraftLine[]>([]);
+  const [manualProductTitle, setManualProductTitle] = useState("");
+  const [manualSku, setManualSku] = useState("");
+  const [manualVariantTitle, setManualVariantTitle] = useState("");
+  const [manualImageUrl, setManualImageUrl] = useState("");
+  const [manualQty, setManualQty] = useState("");
+  const [manualUnitPrice, setManualUnitPrice] = useState("");
+  const [manualFreightUnitCost, setManualFreightUnitCost] = useState("");
+  const [manualRemark, setManualRemark] = useState("");
   const selectedSupplier = suppliers.find(
     (supplier) => supplier.supplierCode === supplierCode,
   );
@@ -580,15 +601,71 @@ export function CreatePoForm({
     supplierName: selectedSupplier?.supplierName ?? "",
   });
 
-  function selectCatalogItem(item: CatalogItemOption) {
-    setQuery(`${item.sku} - ${item.productTitle}`);
-    setSku(item.sku);
-    setProductTitle(item.productTitle);
-    setVariantTitle(item.variantTitle);
-    setOrderedQty(item.recommendedQty ? String(item.recommendedQty) : "");
-    setUnitPrice(String(item.lastUnitPrice || item.shopifyPrice || ""));
-    setFreightUnitCost(item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "");
-    setCurrency(item.currency || selectedSupplier?.currency || "THB");
+  function addCatalogItem(item: CatalogItemOption) {
+    const lineCurrency = item.currency || selectedSupplier?.currency || currency || "THB";
+    setLines((current) => [
+      ...current,
+      {
+        currency: lineCurrency,
+        freightUnitCost: item.lastFreightUnitCost ? String(item.lastFreightUnitCost) : "",
+        imageUrl: item.imageUrl ?? "",
+        productTitle: item.productTitle,
+        qty: item.recommendedQty ? String(item.recommendedQty) : "",
+        remark: "",
+        sku: item.sku,
+        source: "catalog",
+        tempId: createDraftLineId(),
+        unitPrice: String(item.lastUnitPrice || item.shopifyPrice || ""),
+        variantTitle: item.variantTitle,
+      },
+    ]);
+    setCurrency(lineCurrency);
+    setQuery("");
+  }
+
+  function addManualItem() {
+    const productTitle = manualProductTitle.trim();
+    const qty = Number(manualQty);
+    if (!productTitle || !Number.isFinite(qty) || qty <= 0) {
+      return;
+    }
+
+    setLines((current) => [
+      ...current,
+      {
+        currency: selectedSupplier?.currency || currency || "THB",
+        freightUnitCost: manualFreightUnitCost,
+        imageUrl: manualImageUrl.trim(),
+        productTitle,
+        qty: manualQty,
+        remark: manualRemark.trim(),
+        sku: manualSku.trim(),
+        source: "manual",
+        tempId: createDraftLineId(),
+        unitPrice: manualUnitPrice,
+        variantTitle: manualVariantTitle.trim(),
+      },
+    ]);
+    setManualProductTitle("");
+    setManualSku("");
+    setManualVariantTitle("");
+    setManualImageUrl("");
+    setManualQty("");
+    setManualUnitPrice("");
+    setManualFreightUnitCost("");
+    setManualRemark("");
+  }
+
+  function updateLine(index: number, patch: Partial<CreatePoDraftLine>) {
+    setLines((current) =>
+      current.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, ...patch } : line,
+      ),
+    );
+  }
+
+  function removeLine(index: number) {
+    setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
   }
 
   return (
@@ -614,12 +691,7 @@ export function CreatePoForm({
               setSupplierCode(event.target.value);
               setCurrency(nextSupplier?.currency || "THB");
               setQuery("");
-              setSku("");
-              setProductTitle("");
-              setVariantTitle("");
-              setOrderedQty("");
-              setUnitPrice("");
-              setFreightUnitCost("");
+              setLines([]);
             }}
             required
             value={supplierCode}
@@ -638,25 +710,32 @@ export function CreatePoForm({
         </label>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1.2fr_1.1fr_0.55fr_0.65fr_0.65fr_0.55fr]">
+      <div className="grid gap-3 rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-[#172026]">Add Shopify Item</h3>
+            <p className="text-xs text-[#667380]">
+              Search local Shopify/read-model SKUs and add them to this draft PO.
+            </p>
+          </div>
+          <span className="rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
+            {selectedSupplier?.supplierName || "Select supplier first"}
+          </span>
+        </div>
         <div className={`${labelClass} relative`}>
           SKU / Product search
           <input
             className={inputClass}
             onChange={(event) => {
               setQuery(event.target.value);
-              setSku(event.target.value.trim());
             }}
             placeholder={
               supplierCode
                 ? "Search SKU or product name"
                 : "Select supplier first"
             }
-            required
             value={query}
           />
-          <input name="sku" type="hidden" value={sku} />
-          <input name="variantTitle" type="hidden" value={variantTitle} />
           {query.trim().length >= 2 && (filteredCatalogItems.length > 0 || catalogLoading) ? (
             <div className="absolute left-0 right-0 top-[64px] z-20 max-h-72 overflow-auto rounded-md border border-[#cfd6df] bg-white shadow-lg">
               {catalogLoading ? (
@@ -668,7 +747,7 @@ export function CreatePoForm({
                 <button
                   className="grid w-full grid-cols-[48px_1fr] gap-3 border-b border-[#edf1f5] px-3 py-2 text-left text-sm last:border-b-0 hover:bg-[#f3f5f7]"
                   key={`${item.sku}-${item.supplierName}`}
-                  onClick={() => selectCatalogItem(item)}
+                  onClick={() => addCatalogItem(item)}
                   type="button"
                 >
                   <span className="row-span-3 grid size-12 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
@@ -678,6 +757,7 @@ export function CreatePoForm({
                         className="h-full w-full object-cover"
                         height={48}
                         src={item.imageUrl}
+                        unoptimized
                         width={48}
                       />
                     ) : (
@@ -701,107 +781,243 @@ export function CreatePoForm({
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="grid gap-3 rounded-lg border border-[#dfe4ea] bg-white p-3">
+        <div>
+          <h3 className="text-sm font-semibold text-[#172026]">Add Manual Item</h3>
+          <p className="text-xs text-[#667380]">
+            Use this for supplier lines that are not in Shopify yet.
+          </p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[1fr_0.7fr_0.7fr_1fr_0.45fr_0.55fr_0.55fr]">
+          <label className={labelClass}>
+            Product name
+            <input
+              className={inputClass}
+              onChange={(event) => setManualProductTitle(event.target.value)}
+              placeholder="Required"
+              value={manualProductTitle}
+            />
+          </label>
+          <label className={labelClass}>
+            SKU
+            <input
+              className={inputClass}
+              onChange={(event) => setManualSku(event.target.value)}
+              placeholder="Optional"
+              value={manualSku}
+            />
+          </label>
+          <label className={labelClass}>
+            Variant
+            <input
+              className={inputClass}
+              onChange={(event) => setManualVariantTitle(event.target.value)}
+              placeholder="Size / color"
+              value={manualVariantTitle}
+            />
+          </label>
+          <label className={labelClass}>
+            Image URL
+            <input
+              className={inputClass}
+              onChange={(event) => setManualImageUrl(event.target.value)}
+              placeholder="Optional"
+              value={manualImageUrl}
+            />
+          </label>
+          <label className={labelClass}>
+            Qty
+            <input
+              className={inputClass}
+              min="0.0001"
+              onChange={(event) => setManualQty(event.target.value)}
+              step="0.0001"
+              type="number"
+              value={manualQty}
+            />
+          </label>
+          <label className={labelClass}>
+            Unit cost
+            <input
+              className={inputClass}
+              min="0"
+              onChange={(event) => setManualUnitPrice(event.target.value)}
+              step="0.0001"
+              type="number"
+              value={manualUnitPrice}
+            />
+          </label>
+          <label className={labelClass}>
+            Freight/unit
+            <input
+              className={inputClass}
+              min="0"
+              onChange={(event) => setManualFreightUnitCost(event.target.value)}
+              step="0.0001"
+              type="number"
+              value={manualFreightUnitCost}
+            />
+          </label>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+          <label className={labelClass}>
+            Note
+            <input
+              className={inputClass}
+              onChange={(event) => setManualRemark(event.target.value)}
+              placeholder="Optional line note"
+              value={manualRemark}
+            />
+          </label>
+          <button
+            className="h-10 self-end rounded-md border border-[#255f85] bg-[#255f85] px-4 text-sm font-semibold text-white hover:bg-[#1f4f70] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!manualProductTitle.trim() || Number(manualQty) <= 0}
+            onClick={addManualItem}
+            type="button"
+          >
+            Add Manual Item
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-[#dfe4ea]">
+        <table className="min-w-[980px] text-left text-sm">
+          <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.1em] text-[#65717f]">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Item</th>
+              <th className="px-3 py-2 font-semibold">SKU</th>
+              <th className="px-3 py-2 font-semibold">Variant</th>
+              <th className="px-3 py-2 text-right font-semibold">Qty</th>
+              <th className="px-3 py-2 text-right font-semibold">Unit</th>
+              <th className="px-3 py-2 text-right font-semibold">Freight</th>
+              <th className="px-3 py-2 font-semibold">Note</th>
+              <th className="px-3 py-2 font-semibold">Remove</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#edf1f5]">
+            {lines.length ? (
+              lines.map((line, index) => (
+                <tr key={line.tempId}>
+                  <td className="px-3 py-2">
+                    <input name="lineSource" type="hidden" value={line.source} />
+                    <input name="lineCurrency" type="hidden" value={line.currency || currency || "THB"} />
+                    <input name="lineImageUrl" type="hidden" value={line.imageUrl} />
+                    <div className="flex min-w-[260px] items-center gap-2">
+                      <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                        {line.imageUrl ? (
+                          <Image
+                            alt={line.productTitle || line.sku || "PO item"}
+                            className="h-full w-full object-cover"
+                            height={40}
+                            src={line.imageUrl}
+                            unoptimized
+                            width={40}
+                          />
+                        ) : (
+                          <span className="text-[9px] font-semibold text-[#8a96a3]">IMG</span>
+                        )}
+                      </span>
+                      <input
+                        className={inputClass}
+                        name="lineProductTitle"
+                        onChange={(event) => updateLine(index, { productTitle: event.target.value })}
+                        required
+                        value={line.productTitle}
+                      />
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={inputClass}
+                      name="lineSku"
+                      onChange={(event) => updateLine(index, { sku: event.target.value })}
+                      placeholder={line.source === "manual" ? "Optional" : "SKU"}
+                      value={line.sku}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={inputClass}
+                      name="lineVariantTitle"
+                      onChange={(event) => updateLine(index, { variantTitle: event.target.value })}
+                      value={line.variantTitle}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={`${inputClass} text-right font-mono`}
+                      min="0.0001"
+                      name="lineOrderedQty"
+                      onChange={(event) => updateLine(index, { qty: event.target.value })}
+                      required
+                      step="0.0001"
+                      type="number"
+                      value={line.qty}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={`${inputClass} text-right font-mono`}
+                      min="0"
+                      name="lineUnitPrice"
+                      onChange={(event) => updateLine(index, { unitPrice: event.target.value })}
+                      step="0.0001"
+                      type="number"
+                      value={line.unitPrice}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={`${inputClass} text-right font-mono`}
+                      min="0"
+                      name="lineFreightUnitCost"
+                      onChange={(event) => updateLine(index, { freightUnitCost: event.target.value })}
+                      step="0.0001"
+                      type="number"
+                      value={line.freightUnitCost}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className={inputClass}
+                      name="lineRemark"
+                      onChange={(event) => updateLine(index, { remark: event.target.value })}
+                      value={line.remark}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      className="rounded-md border border-[#cfd6df] bg-white px-3 py-1.5 text-xs font-semibold text-[#364252] hover:bg-[#f3f5f7]"
+                      onClick={() => removeLine(index)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="px-3 py-5 text-center text-sm text-[#667380]" colSpan={8}>
+                  Add at least one Shopify or manual item before creating the PO.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <label className={labelClass}>
-          Product
+          PO currency
           <input
-            className={inputClass}
-            name="productTitle"
-            onChange={(event) => setProductTitle(event.target.value)}
-            value={productTitle}
-          />
-        </label>
-        <label className={labelClass}>
-          Qty
-          <input
-            className={inputClass}
-            min="0.0001"
-            name="orderedQty"
-            onChange={(event) => setOrderedQty(event.target.value)}
-            required
-            step="0.0001"
-            type="number"
-            value={orderedQty}
-          />
-        </label>
-        <label className={labelClass}>
-          Price
-          <input
-            className={inputClass}
-            min="0"
-            name="unitPrice"
-            onChange={(event) => setUnitPrice(event.target.value)}
-            step="0.0001"
-            type="number"
-            value={unitPrice}
-          />
-        </label>
-        <label className={labelClass}>
-          Freight / unit
-          <input
-            className={inputClass}
-            min="0"
-            name="freightUnitCost"
-            onChange={(event) => setFreightUnitCost(event.target.value)}
-            placeholder="after landed cost"
-            step="0.0001"
-            type="number"
-            value={freightUnitCost}
-          />
-        </label>
-        <label className={labelClass}>
-          Currency
-          <input
-            className={inputClass}
+            className={`${inputClass} w-32`}
             name="currency"
             onChange={(event) => setCurrency(event.target.value)}
             value={currency}
           />
-        </label>
-      </div>
-
-      <div className="grid gap-3 rounded-md border border-[#e2e7ed] bg-[#fbfcfd] p-3 text-sm md:grid-cols-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
-            Purchasing Decision Round 10
-          </p>
-          <p className="mt-1 font-mono text-[#172026]">
-            {filteredCatalogItems.find((item) => item.sku === sku)?.recommendedQty ||
-              "-"}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
-            Last PO unit price
-          </p>
-          <p className="mt-1 font-mono text-[#172026]">
-            {filteredCatalogItems.find((item) => item.sku === sku)?.lastUnitPrice ||
-              "-"}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
-            Last freight / unit
-          </p>
-          <p className="mt-1 font-mono text-[#172026]">
-            {filteredCatalogItems.find((item) => item.sku === sku)
-              ?.lastFreightUnitCost || "-"}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[#64707d]">
-            Last PO
-          </p>
-          <p className="mt-1 font-mono text-[#172026]">
-            {filteredCatalogItems.find((item) => item.sku === sku)?.lastPoId ||
-              "-"}
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-        <label className={labelClass}>
-          Remark
-          <input className={inputClass} name="remark" />
         </label>
         <button className={buttonClass} disabled={pending} type="submit">
           <LoadingLabel loading={pending} loadingText="Creating...">
@@ -1588,6 +1804,7 @@ export function PoDraftLinesForm({
                         className="h-full w-full object-cover"
                         height={48}
                         src={item.imageUrl}
+                        unoptimized
                         width={48}
                       />
                     ) : (

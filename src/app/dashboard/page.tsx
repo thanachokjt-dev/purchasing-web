@@ -17,7 +17,7 @@ import {
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import { getPoDashboardData, type DashboardCardTone } from "@/lib/po-dashboard";
-import { canAccessAdminControlTower, defaultLandingForRole } from "@/lib/role-nav";
+import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
 
 export const dynamic = "force-dynamic";
 
@@ -135,10 +135,10 @@ function SummaryCard({ detail, icon: Icon, label, tone, value }: SummaryCardProp
 
 export default async function DashboardPage() {
   const currentUser = await requireUser("/dashboard");
-  if (!canAccessAdminControlTower(currentUser)) {
+  if (!canAccessDashboard(currentUser)) {
     redirect(
       `/access-denied?from=${encodeURIComponent("/dashboard")}&next=${encodeURIComponent(
-        defaultLandingForRole(currentUser.role),
+        defaultLandingForUser(currentUser),
       )}`,
     );
   }
@@ -419,6 +419,11 @@ export default async function DashboardPage() {
               {dashboard.sync.errorMessage ? (
                 <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
                   {dashboard.sync.errorMessage}
+                </div>
+              ) : null}
+              {dashboard.sync.dataFreshness === "stale" ? (
+                <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Check Vercel Cron /api/sync/daily and CRON_SECRET.
                 </div>
               ) : null}
               {!dashboard.sync.syncLogFound ? (

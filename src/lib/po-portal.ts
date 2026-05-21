@@ -229,6 +229,7 @@ type PoPortalItemRow = {
   full_name: string | null;
   line_status: string | null;
   sort_position?: number | string | null;
+  source_payload?: unknown;
 };
 
 type PoCatalogVariantRow = {
@@ -652,7 +653,7 @@ function mapSupabaseItem(
     remark: item.remark ?? "",
     poItemId: item.po_item_id ?? item.id,
     fullName: item.full_name ?? "",
-    imageUrl: imageUrl ?? null,
+    imageUrl: imageUrl || payloadText(objectValue(item.source_payload), "imageUrl") || null,
     sortPosition: numeric(item.sort_position),
     status: item.line_status ?? "unknown",
   };
@@ -2810,6 +2811,7 @@ export async function getPoPortalDetailData(poId: string) {
         "full_name",
         "line_status",
         "sort_position",
+        "source_payload",
       ].join(","),
     )
     .eq("po_id", poId)
@@ -2839,6 +2841,7 @@ export async function getPoPortalDetailData(poId: string) {
           "remark",
           "full_name",
           "line_status",
+          "source_payload",
         ].join(","),
       )
       .eq("po_id", poId)

@@ -209,6 +209,116 @@ function nonNegativeTextNumber(value: string, label: string) {
   return parsed;
 }
 
+function positiveTextNumber(value: string, label: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be greater than 0`);
+  }
+  return parsed;
+}
+
+function formTextAt(values: FormDataEntryValue[], index: number) {
+  return String(values[index] ?? "").trim();
+}
+
+function createPoLineRows(formData: FormData, poId: string, defaultCurrency: string) {
+  const lineProducts = formData.getAll("lineProductTitle");
+  const lineSkus = formData.getAll("lineSku");
+  const lineVariants = formData.getAll("lineVariantTitle");
+  const lineQtys = formData.getAll("lineOrderedQty");
+  const linePrices = formData.getAll("lineUnitPrice");
+  const lineFreights = formData.getAll("lineFreightUnitCost");
+  const lineCurrencies = formData.getAll("lineCurrency");
+  const lineRemarks = formData.getAll("lineRemark");
+  const lineImageUrls = formData.getAll("lineImageUrl");
+  const lineSources = formData.getAll("lineSource");
+  const globalRemark = optionalText(formData, "remark");
+
+  if (!lineProducts.length) {
+    const sku = optionalText(formData, "sku") ?? `${poId}-1`;
+    const productTitle = optionalText(formData, "productTitle") ?? sku;
+    const orderedQty = positiveNumber(formData, "orderedQty");
+    const unitPrice = nonNegativeNumber(formData, "unitPrice");
+    const freightUnitCost = nonNegativeNumber(formData, "freightUnitCost");
+    const currency = optionalText(formData, "currency") ?? defaultCurrency;
+    const landedUnitCost = unitPrice + freightUnitCost;
+    return [
+      {
+        po_item_id: `${poId}-1`,
+        po_id: poId,
+        line_no: "1",
+        sort_position: 1,
+        sku,
+        product_title_snapshot: productTitle,
+        variant_title_snapshot: optionalText(formData, "variantTitle"),
+        ordered_qty: orderedQty,
+        unit_price: unitPrice,
+        line_amount: orderedQty * unitPrice,
+        freight_unit_cost: freightUnitCost,
+        landed_unit_cost: landedUnitCost,
+        currency,
+        remark: globalRemark,
+        full_name: productTitle,
+        line_status: "draft",
+        source: "web_app",
+        updated_at: new Date().toISOString(),
+      },
+    ];
+  }
+
+  return lineProducts.flatMap((value, index) => {
+    const productTitle = String(value ?? "").trim();
+    const source = formTextAt(lineSources, index) === "manual" ? "manual" : "web_app";
+    const submittedSku = formTextAt(lineSkus, index);
+    const sku = submittedSku || `MANUAL-${poId}-${index + 1}`;
+    if (!productTitle) {
+      return [];
+    }
+    const orderedQty = positiveTextNumber(formTextAt(lineQtys, index), `${productTitle} qty`);
+    const unitPrice = nonNegativeTextNumber(formTextAt(linePrices, index), `${productTitle} unit cost`);
+    const freightUnitCost = nonNegativeTextNumber(
+      formTextAt(lineFreights, index),
+      `${productTitle} freight`,
+    );
+    const currency = formTextAt(lineCurrencies, index) || defaultCurrency;
+    const variantTitle = formTextAt(lineVariants, index);
+    const imageUrl = formTextAt(lineImageUrls, index);
+    const remark = formTextAt(lineRemarks, index) || globalRemark;
+    const fullName =
+      variantTitle && !productTitle.toLowerCase().includes(variantTitle.toLowerCase())
+        ? `${productTitle} / ${variantTitle}`
+        : productTitle;
+
+    return [
+      {
+        po_item_id: `${poId}-${index + 1}`,
+        po_id: poId,
+        line_no: String(index + 1),
+        sort_position: index + 1,
+        sku,
+        product_title_snapshot: productTitle,
+        variant_title_snapshot: variantTitle || null,
+        ordered_qty: orderedQty,
+        unit_price: unitPrice,
+        line_amount: orderedQty * unitPrice,
+        freight_unit_cost: freightUnitCost,
+        landed_unit_cost: unitPrice + freightUnitCost,
+        currency,
+        remark,
+        full_name: fullName,
+        line_status: "draft",
+        source,
+        source_payload: {
+          imageUrl: imageUrl || null,
+          isManualItem: source === "manual",
+          submittedSku: submittedSku || null,
+        },
+        updated_at: new Date().toISOString(),
+      },
+    ];
+  });
+}
+
 function formText(formData: FormData, name: string) {
   return String(formData.get(name) ?? "").trim();
 }
@@ -486,14 +596,15 @@ export async function createPoAction(
     const supplier = await supplierSnapshot(supplierCode);
     const poId = optionalText(formData, "poId") ?? generatedPoId();
     const poDate = optionalText(formData, "poDate") ?? new Date().toISOString().slice(0, 10);
-    const sku = requiredText(formData, "sku");
-    const orderedQty = positiveNumber(formData, "orderedQty");
-    const unitPrice = nonNegativeNumber(formData, "unitPrice");
-    const freightUnitCost = nonNegativeNumber(formData, "freightUnitCost");
     const currency = optionalText(formData, "currency") ?? supplier.currency ?? "THB";
-    const landedUnitCost = unitPrice + freightUnitCost;
-    const lineAmount = orderedQty * unitPrice;
-    const landedAmount = orderedQty * landedUnitCost;
+    const items = createPoLineRows(formData, poId, currency);
+    if (!items.length) {
+      throw new Error("Add at least one PO line before creating the PO.");
+    }
+    const landedAmount = items.reduce(
+      (sum, item) => sum + numericValue(item.ordered_qty) * numericValue(item.landed_unit_cost),
+      0,
+    );
 
     const { error: orderError } = await supabase.from("po_orders").insert({
       po_id: poId,
@@ -515,26 +626,7 @@ export async function createPoAction(
       throw new Error(orderError.message);
     }
 
-    const { error: itemError } = await supabase.from("po_items").insert({
-      po_item_id: `${poId}-1`,
-      po_id: poId,
-      line_no: "1",
-      sort_position: 1,
-      sku,
-      product_title_snapshot: optionalText(formData, "productTitle") ?? sku,
-      variant_title_snapshot: optionalText(formData, "variantTitle"),
-      ordered_qty: orderedQty,
-      unit_price: unitPrice,
-      line_amount: lineAmount,
-      freight_unit_cost: freightUnitCost,
-      landed_unit_cost: landedUnitCost,
-      currency,
-      remark: optionalText(formData, "remark"),
-      full_name: optionalText(formData, "productTitle") ?? sku,
-      line_status: "draft",
-      source: "web_app",
-      updated_at: new Date().toISOString(),
-    });
+    const { error: itemError } = await supabase.from("po_items").insert(items);
     if (itemError) {
       await supabase.from("po_orders").delete().eq("po_id", poId);
       throw new Error(itemError.message);
