@@ -26,6 +26,8 @@ type SyncOptions = {
   untilAt?: string;
 };
 
+export const SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE = "shopify_products_inventory";
+
 type SyncStats = {
   productsSeen: number;
   variantsSeen: number;
@@ -383,7 +385,7 @@ async function createSyncRun(supabase: SupabaseClient, options: SyncOptions) {
   const { data, error } = await supabase
     .from("sync_runs")
     .insert({
-      source: "shopify_products_inventory",
+      source: SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE,
       mode: options.mode,
       status: "running",
       since_at: options.sinceAt ?? null,

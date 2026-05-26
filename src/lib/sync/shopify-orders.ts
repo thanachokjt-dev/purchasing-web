@@ -9,7 +9,7 @@ import {
 import { extractShopifyNumericId, numericOrNull } from "@/lib/shopify/ids";
 import { refreshSalesBySkuDayForDates } from "@/lib/sync/sales-summary";
 
-const SALES_SYNC_SOURCE = "shopify_orders_sales_lines";
+export const SHOPIFY_ORDERS_SALES_SYNC_SOURCE = "shopify_orders_sales_lines";
 const DEFAULT_LOCK_TTL_SECONDS = 30 * 60;
 
 type SyncMode = "manual" | "cron" | "backfill";
@@ -116,7 +116,7 @@ async function createSyncRun(
   options: SyncOptions & { windowField: SyncWindowField },
 ) {
   const fullInsert = {
-    source: SALES_SYNC_SOURCE,
+    source: SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
     mode: options.mode,
     status: "running",
     since_at: options.sinceAt,
@@ -124,7 +124,7 @@ async function createSyncRun(
     window_start: options.sinceAt,
     window_end: options.untilAt,
     window_field: options.windowField,
-    lock_key: SALES_SYNC_SOURCE,
+    lock_key: SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
   };
   const { data, error } = await supabase
     .from("sync_runs")
@@ -143,7 +143,7 @@ async function createSyncRun(
   const fallback = await supabase
     .from("sync_runs")
     .insert({
-      source: SALES_SYNC_SOURCE,
+      source: SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
       mode: options.mode,
       status: "running",
       since_at: options.sinceAt,
@@ -173,7 +173,7 @@ async function acquireSyncLock(
 ) {
   const { data, error } = await supabase.rpc("try_acquire_sync_lock", {
     lock_run_id: runId,
-    lock_source: SALES_SYNC_SOURCE,
+    lock_source: SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
     lock_ttl_seconds: ttlSeconds,
   });
 
@@ -190,7 +190,7 @@ async function acquireSyncLock(
 async function releaseSyncLock(supabase: SupabaseClient, runId: string) {
   await supabase.rpc("release_sync_lock", {
     lock_run_id: runId,
-    lock_source: SALES_SYNC_SOURCE,
+    lock_source: SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
   });
 }
 

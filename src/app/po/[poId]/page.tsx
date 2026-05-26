@@ -25,7 +25,7 @@ import {
   canEditPo,
   canManagePayments,
   canOpenPoDetail,
-  canReceivePo,
+  canUseReceivingWorkflow,
   readonlyAccessLabel,
 } from "@/lib/access-control";
 import {
@@ -42,6 +42,7 @@ import {
   sortMatrixSizes,
   type MatrixFamily,
 } from "@/lib/po-size-matrix";
+import { sortPoPayments } from "@/lib/po-payments";
 import { getPoPortalDetailData } from "@/lib/po-portal";
 import { canAccessAdminControlTower, defaultLandingForRole, defaultLandingForUser } from "@/lib/role-nav";
 
@@ -135,6 +136,7 @@ function RoleScopedPoDetail({
   paymentRequests: Awaited<ReturnType<typeof getPaymentRequestsForPo>>;
 }) {
   const order = data.order;
+  const sortedPayments = sortPoPayments(data.payments);
 
   return (
     <main className="min-h-screen bg-[#f6f7f9] px-5 py-8 text-[#172026]">
@@ -180,9 +182,9 @@ function RoleScopedPoDetail({
 
         <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold">Payment History</h2>
-          {data.payments.length > 0 ? (
+          {sortedPayments.length > 0 ? (
             <div className="mt-3 grid gap-2">
-              {data.payments.map((payment, index) => (
+              {sortedPayments.map((payment, index) => (
                 <div className="rounded-md border border-[#edf1f5] bg-[#fbfcfd] p-3 text-sm" key={payment.id}>
                   <p className="font-semibold">
                     Payment {index + 1}: {readablePaymentType(payment.payment_type)}
@@ -219,6 +221,266 @@ function RoleScopedPoDetail({
           )}
         </section>
       </div>
+    </main>
+  );
+}
+
+function WarehouseReceivingPoDetail({
+  data,
+}: {
+  data: PoDetailData;
+}) {
+  const order = data.order;
+  const batchReceiveFormId = `batch-receive-${order.poId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const defaultReceiptDate = order.actualReceivedDate || bangkokDateString();
+  const matrix = quoteMatrixRows(data.items);
+  const receivingMatrix = receivingMatrixRows(data.items, data.receipts);
+  const receiptsByItemId = new Map<string, typeof data.receipts>();
+  const maxLeadTimeDays = Math.max(
+    0,
+    ...data.items.map((item) =>
+      Math.round(Number((item as DetailItem & { leadTimeDays?: number }).leadTimeDays ?? 0)),
+    ),
+  );
+  const expectedReceivingNote =
+    order.poDate && maxLeadTimeDays > 0
+      ? `Expected receiving target: approximately ${addDays(order.poDate, maxLeadTimeDays)} (PO date + ${maxLeadTimeDays} days, using the longest SKU lead time set in the system). Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.`
+      : "Expected receiving target: SKU lead time is not set in the system. Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.";
+
+  for (const receipt of data.receipts) {
+    const itemId = receipt.po_item_id;
+    if (!itemId) {
+      continue;
+    }
+    receiptsByItemId.set(itemId, [...(receiptsByItemId.get(itemId) ?? []), receipt]);
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f6f7f9] text-[#172026]">
+      <div className="screen-only">
+        <header className="border-b border-[#d9dde3] bg-white">
+          <div className="mx-auto flex w-full max-w-none flex-col gap-5 px-4 py-5 sm:px-6 2xl:px-8 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">
+                Warehouse receiving
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-normal">{order.poId}</h1>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(order.workStatus)}`}>
+                  {order.workStatus || "No status"}
+                </span>
+                <span className="rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
+                  Warehouse receiving access
+                </span>
+              </div>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#52606d]">
+                {order.poTitle || order.supplierName} / {order.supplierName} /{" "}
+                {order.poDate ? order.poDate.slice(0, 10) : "No date"}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                className="inline-flex items-center gap-2 rounded-md border border-[#cfd6df] bg-[#f9fafb] px-4 py-2 text-sm font-semibold text-[#364252]"
+                href="/po#eta-schedule"
+              >
+                <ArrowLeft size={16} />
+                Incoming ETA
+              </Link>
+              <PrintDocumentButton
+                label="Goods Receipt"
+                mode="receiving"
+                poId={order.poId}
+                supplierName={order.supplierName}
+              />
+            </div>
+          </div>
+        </header>
+
+        <div className="mx-auto grid w-full max-w-none gap-5 px-4 py-5 sm:px-6 2xl:px-8">
+          <section className="grid gap-3 sm:grid-cols-3">
+            {[
+              { detail: `${formatNumber(order.itemCount)} lines`, label: "Ordered", value: formatNumber(order.totalQty) },
+              { detail: "legacy + web receipts", label: "Received", value: formatNumber(order.receivedQty) },
+              { detail: "remaining open qty", label: "Outstanding", value: formatNumber(order.outstandingQty) },
+            ].map((metric) => (
+              <article
+                className="rounded-lg border border-[#dfe4ea] bg-white p-4 shadow-sm"
+                key={metric.label}
+              >
+                <p className="text-sm font-medium text-[#5d6a78]">{metric.label}</p>
+                <p className="mt-2 text-3xl font-semibold">{metric.value}</p>
+                <p className="mt-3 text-sm leading-5 text-[#667380]">{metric.detail}</p>
+              </article>
+            ))}
+          </section>
+
+          <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold">PO Context</h2>
+            <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+              {[
+                ["Supplier", `${order.supplierName} (${order.supplierCode})`],
+                ["Owner", order.owner || "-"],
+                ["Requester", order.requester || "-"],
+                ["Status", order.workStatus || "-"],
+                ["Purpose / tag", order.headerPurpose || "-"],
+                ["Quotation", order.quotationReference || "-"],
+                ["Est. delivery", order.estimatedDeliveryDate ? formatDate(order.estimatedDeliveryDate) : "-"],
+                ["Est. arrived", order.estimatedArrivedDate ? formatDate(order.estimatedArrivedDate) : "-"],
+                ["Date received", order.actualReceivedDate ? formatDate(order.actualReceivedDate) : "-"],
+              ].map(([label, value]) => (
+                <div className="grid grid-cols-[140px_1fr] gap-3" key={label}>
+                  <p className="font-semibold text-[#667380]">{label}</p>
+                  <p>{value}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm" id="receiving">
+            <div className="border-b border-[#e2e7ed] p-5">
+              <h2 className="text-lg font-semibold">Lines &amp; Receiving</h2>
+              <p className="mt-1 text-sm text-[#667380]">
+                Receive against active lines and keep status changes line-level.
+              </p>
+            </div>
+            {data.source === "supabase" ? (
+              <BatchReceiveFormBar
+                defaultReceiptDate={defaultReceiptDate}
+                formId={batchReceiveFormId}
+                poId={order.poId}
+              />
+            ) : null}
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Line</th>
+                    <th className="px-4 py-3 font-semibold">Product</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 text-right font-semibold">Qty</th>
+                    <th className="px-4 py-3 text-right font-semibold">On-hand</th>
+                    <th className="px-4 py-3 text-right font-semibold">Received</th>
+                    <th className="px-4 py-3 text-right font-semibold">Outstanding</th>
+                    <th className="px-4 py-3 font-semibold">Receive Qty</th>
+                    <th className="px-4 py-3 font-semibold">Receipt Rounds</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#edf1f5]">
+                  {data.items.map((item) => {
+                    const lineReceipts = item.itemUuid
+                      ? receiptsByItemId.get(item.itemUuid) ?? []
+                      : [];
+
+                    return (
+                      <tr key={item.poItemId || item.itemUuid || `${item.poId}-${item.lineNo}`}>
+                        <td className="px-4 py-3 font-mono text-xs">{item.lineNo || "-"}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex min-w-[360px] items-center gap-3">
+                            <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                              {item.imageUrl ? (
+                                <Image
+                                  alt={item.productTitle || item.sku}
+                                  className="h-full w-full object-cover"
+                                  height={56}
+                                  loading="lazy"
+                                  src={item.imageUrl}
+                                  unoptimized
+                                  width={56}
+                                />
+                              ) : (
+                                <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-medium">{item.productTitle}</p>
+                              <p className="mt-1 text-xs text-[#6b7785]">{item.variantTitle || item.fullName}</p>
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                <span className="rounded-md bg-[#f3f5f7] px-2 py-1 font-mono text-[#364252]">
+                                  {item.sku}
+                                </span>
+                                <span className="rounded-md bg-[#eef4f8] px-2 py-1 font-semibold text-[#255f85]">
+                                  on-hand {formatNumber(item.onHand ?? 0)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusClass(item.status)}`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">{formatNumber(item.qty)}</td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-[#255f85]">
+                          {formatNumber(item.onHand ?? 0)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">{formatNumber(item.receivedQty)}</td>
+                        <td className="px-4 py-3 text-right font-mono font-semibold text-[#1f6b3d]">
+                          {formatNumber(item.outstandingQty)}
+                        </td>
+                        <td className="px-4 py-3 align-top">
+                          {data.source === "supabase" ? (
+                            <BatchReceiveLineFields
+                              formId={batchReceiveFormId}
+                              itemUuid={item.itemUuid}
+                              outstandingQty={item.outstandingQty}
+                            />
+                          ) : (
+                            <span className="text-xs text-[#8a96a3]">Fallback only</span>
+                          )}
+                        </td>
+                        <td className="min-w-[240px] px-4 py-3 align-top">
+                          {lineReceipts.length > 0 ? (
+                            <div className="grid gap-2">
+                              {lineReceipts.map((receipt, index) => (
+                                <div
+                                  className="rounded-md border border-[#e2e7ed] bg-[#fbfcfd] px-3 py-2 text-xs"
+                                  key={receipt.id}
+                                >
+                                  <p className="font-mono font-semibold text-[#172026]">
+                                    Round {lineReceipts.length - index}:{" "}
+                                    {formatNumber(Number(receipt.received_qty ?? 0))} units
+                                  </p>
+                                  <p className="mt-1 text-[#667380]">
+                                    Received {formatDate(receiptActualDate(receipt, order.actualReceivedDate))} /{" "}
+                                    {receipt.received_by || "No receiver"}
+                                  </p>
+                                  <p className="mt-1 text-[#8a96a3]">
+                                    Saved {formatDateTime(receipt.received_at)}
+                                  </p>
+                                  {receipt.note ? (
+                                    <p className="mt-1 text-[#52606d]">{receipt.note}</p>
+                                  ) : null}
+                                  <RemovePoReceiptForm
+                                    poId={order.poId}
+                                    receiptId={receipt.id}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-[#8a96a3]">No receipts yet</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      <PrintIntentContent>
+        <PrintMatrixDocument
+          expectedReceivingNote={expectedReceivingNote}
+          matrix={matrix}
+          order={order}
+          receivingMatrix={receivingMatrix}
+          title="Goods Receiving Note"
+          type="receiving"
+        />
+      </PrintIntentContent>
     </main>
   );
 }
@@ -610,11 +872,11 @@ export default async function PoDetailPage({
   const currentUser = await requireUser(`/po/${encodeURIComponent(poId)}`);
   const allowOpenPoDetail = canOpenPoDetail(currentUser.email);
   const allowEditPo = canEditPo(currentUser.email) && currentUser.role === "super_admin";
-  const allowReceivePo = canReceivePo(currentUser.email) && currentUser.role === "super_admin";
+  const allowReceivePo = canUseReceivingWorkflow(currentUser);
   const allowManagePayments = canManagePayments(currentUser.email) && currentUser.role === "super_admin";
   const accessNote = readonlyAccessLabel(currentUser);
 
-  if (!allowOpenPoDetail) {
+  if (!allowOpenPoDetail && !allowReceivePo) {
     redirect(defaultLandingForUser(currentUser));
   }
 
@@ -640,6 +902,10 @@ export default async function PoDetailPage({
   }, new Map<string, typeof paymentRequests>());
 
   if (!canAccessAdminControlTower(currentUser)) {
+    if (allowReceivePo) {
+      return <WarehouseReceivingPoDetail data={data} />;
+    }
+
     const scopedRequests =
       currentUser.role === "accounting"
         ? paymentRequests
@@ -672,6 +938,7 @@ export default async function PoDetailPage({
     order.poDate && maxLeadTimeDays > 0
       ? `Expected receiving target: approximately ${addDays(order.poDate, maxLeadTimeDays)} (PO date + ${maxLeadTimeDays} days, using the longest SKU lead time set in the system). Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.`
       : "Expected receiving target: SKU lead time is not set in the system. Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.";
+  const sortedPayments = sortPoPayments(data.payments);
   const paidTotal = data.payments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce(
@@ -919,12 +1186,12 @@ export default async function PoDetailPage({
             </div>
             <div className="p-5">
               {allowManagePayments ? (
-                <PaymentScheduleForm
-                  currency={order.currency}
-                  payments={data.payments}
-                  paymentTerms={order.paymentTerms}
-                  poAmount={order.poAmountForeign}
-                  poId={order.poId}
+                  <PaymentScheduleForm
+                    currency={order.currency}
+                    payments={sortedPayments}
+                    paymentTerms={order.paymentTerms}
+                    poAmount={order.poAmountForeign}
+                    poId={order.poId}
                 />
               ) : (
                 <p className="rounded-md border border-[#dfe4ea] bg-[#fbfcfd] px-3 py-2 text-sm font-semibold text-[#667380]">
@@ -939,9 +1206,9 @@ export default async function PoDetailPage({
                     or changing payment history.
                   </p>
                 </div>
-                {data.payments.length > 0 ? (
+                {sortedPayments.length > 0 ? (
                   <div className="grid gap-3">
-                    {data.payments.map((payment, index) => {
+                    {sortedPayments.map((payment, index) => {
                       const relatedRequests = requestsByPaymentLine.get(payment.id) ?? [];
                       const hasActiveRequest = relatedRequests.some((request) =>
                         activePaymentRequestStatuses.has(request.requestStatus),
@@ -1321,8 +1588,8 @@ export default async function PoDetailPage({
               </p>
             </div>
             <div className="divide-y divide-[#edf1f5]">
-              {data.payments.length > 0 ? (
-                data.payments.map((payment) => (
+              {sortedPayments.length > 0 ? (
+                sortedPayments.map((payment) => (
                   <div className="grid gap-1 p-5 text-sm" key={payment.id}>
                     <p className="font-mono font-semibold">
                       {formatCurrency(Number(payment.amount ?? 0), payment.currency ?? order.currency)}

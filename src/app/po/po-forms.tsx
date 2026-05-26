@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
@@ -20,6 +21,7 @@ import {
   type PoActionState,
 } from "@/app/po/actions";
 import { LoadingLabel } from "@/app/loading-controls";
+import { sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 
 type SupplierOption = {
   supplierCode: string;
@@ -66,21 +68,7 @@ type DraftLineItem = {
   sortPosition?: number;
 };
 
-type PaymentRowItem = {
-  id: string;
-  payment_date: string | null;
-  payment_type: string | null;
-  payment_status?: string | null;
-  xero_status?: string | null;
-  due_date?: string | null;
-  amount: number | string | null;
-  exchange_rate?: number | string | null;
-  amount_thb?: number | string | null;
-  currency: string | null;
-  paid_by: string | null;
-  reference: string | null;
-  note: string | null;
-};
+type PaymentRowItem = PoPaymentDisplayRow;
 
 type CreatePoDraftLine = {
   currency: string;
@@ -286,6 +274,12 @@ function createDraftLineId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+const initialPaymentDraftKey = "draft-initial-0";
+
+function createAddedPaymentDraftKey(index: number) {
+  return `draft-added-${index}`;
+}
+
 const inputClass =
   "h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
@@ -364,6 +358,15 @@ const xeroBillHeaders = [
   "Currency",
 ] as const;
 
+const shopifyPurchaseOrderHeaders = [
+  "SKU",
+  "Barcode",
+  "Supplier SKU",
+  "Quantity",
+  "Cost",
+  "Tax",
+] as const;
+
 function csvCell(value: string | number) {
   const text = String(value);
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
@@ -386,7 +389,7 @@ function safeCsvFileToken(value: string) {
     .trim()
     .replace(/[^a-z0-9_-]+/gi, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "po";
+    .slice(0, 80);
 }
 
 function downloadXeroBillCsv({
@@ -398,11 +401,47 @@ function downloadXeroBillCsv({
   poReference: string;
   supplierName: string;
 }) {
+  const contactName = supplierName.trim();
+  if (!contactName) {
+    throw new Error("Supplier/contact name is required before downloading the Xero CSV.");
+  }
+
   const exportCurrency = "THB";
-  const rows = lines
-    .filter((line) => line.sku.trim() || line.productTitle.trim() || line.qty > 0)
-    .map((line) => [
-      supplierName,
+  const exportRows = lines
+    .map((line) => {
+      const sku = line.sku.trim();
+      const description = xeroDescription(line).trim();
+      const quantity = Number(line.qty);
+      const unitAmount = Number(line.unitPrice);
+
+      return {
+        description,
+        quantity,
+        sku,
+        unitAmount,
+      };
+    })
+    .filter((row) => row.sku || row.description || row.quantity > 0);
+
+  if (exportRows.length === 0) {
+    throw new Error("No valid line rows are available for the Xero CSV.");
+  }
+  if (exportRows.every((row) => !row.sku && !row.description)) {
+    throw new Error("At least one line needs a SKU or description before downloading the Xero CSV.");
+  }
+
+  for (const [index, row] of exportRows.entries()) {
+    if (!Number.isFinite(row.quantity) || row.quantity <= 0) {
+      throw new Error(`Line ${index + 1} needs a quantity greater than 0 before downloading the Xero CSV.`);
+    }
+    if (!Number.isFinite(row.unitAmount) || row.unitAmount < 0) {
+      throw new Error(`Line ${index + 1} needs a unit amount of 0 or greater before downloading the Xero CSV.`);
+    }
+  }
+
+  const rows = exportRows
+    .map((row) => [
+      contactName,
       "",
       "",
       "",
@@ -416,15 +455,15 @@ function downloadXeroBillCsv({
       "",
       "",
       "",
-      line.sku,
-      xeroDescription(line),
-      line.qty,
-      line.unitPrice,
+      row.sku,
+      row.description,
+      row.quantity,
+      row.unitAmount,
       "",
+      "Tax on Purchases (7%)",
       "",
-      "",
-      "",
-      "",
+      "Department",
+      "Online Store",
       "",
       "",
       exportCurrency,
@@ -436,7 +475,65 @@ function downloadXeroBillCsv({
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `xero_bill_${safeCsvFileToken(poReference)}.csv`;
+  const fileToken = safeCsvFileToken(poReference);
+  link.download = fileToken ? `xero_bill_${fileToken}.csv` : "xero_bill_export.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadShopifyPurchaseOrderCsv({
+  lines,
+  poReference,
+}: {
+  lines: DraftLineItem[];
+  poReference: string;
+}) {
+  const exportRows = lines
+    .map((line) => ({
+      quantity: Number(line.qty),
+      sku: line.sku.trim(),
+    }))
+    .filter((row) => row.sku && row.quantity > 0);
+
+  if (exportRows.length === 0) {
+    const hasAnyLineRows = lines.some((line) => line.sku.trim() || Number(line.qty) > 0);
+    const hasAnySku = lines.some((line) => line.sku.trim());
+    const hasAnyPositiveQty = lines.some((line) => Number(line.qty) > 0);
+
+    if (!hasAnyLineRows) {
+      throw new Error("No valid PO line rows are available for the Shopify CSV.");
+    }
+    if (!hasAnySku) {
+      throw new Error("At least one line needs a SKU before downloading the Shopify CSV.");
+    }
+    if (!hasAnyPositiveQty) {
+      throw new Error("At least one line needs a quantity greater than 0 before downloading the Shopify CSV.");
+    }
+
+    throw new Error("No rows have both SKU and quantity greater than 0 for the Shopify CSV.");
+  }
+
+  const rows = exportRows.map((row) => [
+    row.sku,
+    "",
+    "",
+    row.quantity,
+    0,
+    0,
+  ]);
+  const csv = [shopifyPurchaseOrderHeaders, ...rows]
+    .map((row) => row.map((value) => csvCell(value)).join(","))
+    .join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const fileToken = safeCsvFileToken(poReference);
+  link.download = fileToken
+    ? `shopify_purchase_order_${fileToken}_READY.csv`
+    : "shopify_purchase_order_READY.csv";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -1451,6 +1548,12 @@ export function PoDraftLinesForm({
   const [vatMode, setVatMode] = useState<"none" | "include" | "exclude">("none");
   const [exchangeRates, setExchangeRates] = useState(["", "", ""]);
   const [exchangeMode, setExchangeMode] = useState<"none" | "thai" | "foreign">("none");
+  const [xeroCsvError, setXeroCsvError] = useState("");
+  const [xeroCsvMessage, setXeroCsvMessage] = useState("");
+  const [xeroCsvPreparing, setXeroCsvPreparing] = useState(false);
+  const [shopifyCsvError, setShopifyCsvError] = useState("");
+  const [shopifyCsvMessage, setShopifyCsvMessage] = useState("");
+  const [shopifyCsvPreparing, setShopifyCsvPreparing] = useState(false);
   const initialQtyByLine = useMemo(
     () =>
       new Map(
@@ -1646,6 +1749,49 @@ export function PoDraftLinesForm({
     });
   }
 
+  async function handleDownloadXeroCsv() {
+    setXeroCsvPreparing(true);
+    setXeroCsvError("");
+    setXeroCsvMessage("");
+
+    try {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+      downloadXeroBillCsv({
+        lines,
+        poReference,
+        supplierName,
+      });
+      setXeroCsvMessage("Xero CSV downloaded.");
+    } catch (error) {
+      setXeroCsvError(error instanceof Error ? error.message : "Unable to generate Xero CSV.");
+    } finally {
+      setXeroCsvPreparing(false);
+    }
+  }
+
+  async function handleDownloadShopifyCsv() {
+    setShopifyCsvPreparing(true);
+    setShopifyCsvError("");
+    setShopifyCsvMessage("");
+
+    try {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+      downloadShopifyPurchaseOrderCsv({
+        lines,
+        poReference,
+      });
+      setShopifyCsvMessage("Shopify CSV downloaded.");
+    } catch (error) {
+      setShopifyCsvError(error instanceof Error ? error.message : "Unable to generate Shopify CSV.");
+    } finally {
+      setShopifyCsvPreparing(false);
+    }
+  }
+
   return (
     <form action={formAction}>
       <input name="poId" type="hidden" value={poId} />
@@ -1746,19 +1892,55 @@ export function PoDraftLinesForm({
             FX mode: {exchangeMode === "thai" ? "Thai supplier" : "average applied"}
           </span>
         ) : null}
-        <button
-          className="h-10 rounded-md border border-[#2563eb] bg-[#2563eb] px-4 text-xs font-semibold text-white shadow-sm transition hover:border-[#1d4ed8] hover:bg-[#1d4ed8]"
-          onClick={() =>
-            downloadXeroBillCsv({
-              lines,
-              poReference,
-              supplierName,
-            })
-          }
-          type="button"
-        >
-          Up_xero
-        </button>
+        <div className="grid max-w-sm gap-1">
+          <button
+            className="h-10 rounded-md border border-[#2563eb] bg-[#2563eb] px-4 text-xs font-semibold text-white shadow-sm transition hover:border-[#1d4ed8] hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={xeroCsvPreparing}
+            onClick={handleDownloadXeroCsv}
+            type="button"
+          >
+            {xeroCsvPreparing ? "Preparing CSV..." : "Download Xero CSV"}
+          </button>
+          <p className="text-xs normal-case tracking-normal text-[#667380]">
+            This downloads a CSV for manual Xero import. It does not upload directly to Xero.
+          </p>
+          <p className="text-xs normal-case tracking-normal text-[#667380]">
+            CSV includes the current line values shown on this screen.
+          </p>
+          {xeroCsvMessage ? (
+            <p className="text-xs font-semibold normal-case tracking-normal text-[#1f6b3d]">
+              {xeroCsvMessage}
+            </p>
+          ) : null}
+          {xeroCsvError ? (
+            <p className="text-xs font-semibold normal-case tracking-normal text-[#b42318]">
+              {xeroCsvError}
+            </p>
+          ) : null}
+        </div>
+        <div className="grid max-w-sm gap-1">
+          <button
+            className="h-10 rounded-md border border-[#1f6b3d] bg-[#1f6b3d] px-4 text-xs font-semibold text-white shadow-sm transition hover:border-[#18562f] hover:bg-[#18562f] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={shopifyCsvPreparing}
+            onClick={handleDownloadShopifyCsv}
+            type="button"
+          >
+            {shopifyCsvPreparing ? "Preparing Shopify CSV..." : "Download Shopify CSV"}
+          </button>
+          <p className="text-xs normal-case tracking-normal text-[#667380]">
+            Downloads SKU and quantity only. Barcode and Supplier SKU are blank. Cost and tax are exported as 0 for staff-safe Shopify import.
+          </p>
+          {shopifyCsvMessage ? (
+            <p className="text-xs font-semibold normal-case tracking-normal text-[#1f6b3d]">
+              {shopifyCsvMessage}
+            </p>
+          ) : null}
+          {shopifyCsvError ? (
+            <p className="text-xs font-semibold normal-case tracking-normal text-[#b42318]">
+              {shopifyCsvError}
+            </p>
+          ) : null}
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-[1480px] text-left text-sm">
@@ -1988,14 +2170,15 @@ function PaymentAmountFields({
 }) {
   const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
   const savedExchangeRate = Number(exchangeRate ?? 0);
-  const [amountValue, setAmountValue] = useState(amount === null || amount === undefined ? "" : String(amount));
-  const [rateValue, setRateValue] = useState(
+  const nextAmountValue = amount === null || amount === undefined ? "" : String(amount);
+  const nextRateValue =
     exchangeRate === null || exchangeRate === undefined || savedExchangeRate <= 0
       ? normalizedCurrency === "THB"
         ? "1"
         : ""
-      : String(exchangeRate),
-  );
+      : String(exchangeRate);
+  const [amountValue, setAmountValue] = useState(nextAmountValue);
+  const [rateValue, setRateValue] = useState(nextRateValue);
   const amountNumber = Number(amountValue || 0);
   const rateNumber = Number(rateValue || 0);
   const shouldValidateFx = !isDraftRow || amountNumber > 0;
@@ -2075,6 +2258,27 @@ function StyledPaymentSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+function SyncedPaymentInput({
+  className = inputClass,
+  name,
+  type = "text",
+  value,
+}: {
+  className?: string;
+  name: string;
+  type?: string;
+  value: string;
+}) {
+  return (
+    <input
+      className={className}
+      defaultValue={value}
+      name={name}
+      type={type}
+    />
   );
 }
 
@@ -2161,19 +2365,28 @@ export function PaymentScheduleForm({
   poAmount: number;
   poId: string;
 }) {
+  const router = useRouter();
+  const nextDraftKeyIndex = useRef(0);
+  const [localPayments, setLocalPayments] = useState(() => sortPoPayments(payments));
+  const [draftKeys, setDraftKeys] = useState(() => [initialPaymentDraftKey]);
   const [state, formAction, pending] = useActionState(
-    updatePoPaymentsAction,
+    async (previousState: PoActionState, formData: FormData) => {
+      const nextState = await updatePoPaymentsAction(previousState, formData);
+      if (nextState.ok && nextState.payments) {
+        setLocalPayments(sortPoPayments(nextState.payments));
+        nextDraftKeyIndex.current = 0;
+        setDraftKeys([initialPaymentDraftKey]);
+        router.refresh();
+      }
+      return nextState;
+    },
     initialState,
   );
-  const sortedPayments = [...payments].sort((a, b) =>
-    String(a.payment_date ?? a.due_date ?? "").localeCompare(
-      String(b.payment_date ?? b.due_date ?? ""),
-    ),
-  );
-  const [extraRows, setExtraRows] = useState(1);
+
+  const sortedPayments = sortPoPayments(localPayments);
   const rows = [
-    ...sortedPayments,
-    ...Array.from({ length: Math.max(1, extraRows) }, () => null),
+    ...sortedPayments.map((payment) => ({ payment, rowKey: `existing-${payment.id}` })),
+    ...draftKeys.map((draftKey) => ({ payment: null, rowKey: draftKey })),
   ];
   const options = paymentTypeOptions(
     paymentTerms,
@@ -2183,17 +2396,17 @@ export function PaymentScheduleForm({
     paymentTerms,
     sortedPayments.map((payment) => payment.payment_type ?? ""),
   );
-  const paidTotal = payments
+  const paidTotal = localPayments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
-  const paidTotalThb = payments
+  const paidTotalThb = localPayments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce(
       (sum, payment) =>
         sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
       0,
     );
-  const plannedTotalThb = payments
+  const plannedTotalThb = localPayments
     .filter((payment) => (payment.payment_status ?? "paid") === "planned")
     .reduce(
       (sum, payment) =>
@@ -2228,7 +2441,13 @@ export function PaymentScheduleForm({
       </div>
       <button
         className="h-10 justify-self-start rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold text-[#364252]"
-        onClick={() => setExtraRows((current) => current + 1)}
+        onClick={() => {
+          setDraftKeys((current) => {
+            const key = createAddedPaymentDraftKey(nextDraftKeyIndex.current);
+            nextDraftKeyIndex.current += 1;
+            return [...current, key];
+          });
+        }}
         type="button"
       >
         Add payment line
@@ -2253,8 +2472,7 @@ export function PaymentScheduleForm({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#edf1f5]">
-            {rows.map((payment, index) => {
-              const rowKey = payment?.id ? `existing-${payment.id}` : `new-${index}`;
+            {rows.map(({ payment, rowKey }, index) => {
               const rowOptions = payment ? options : optionsForNewRows;
 
               return (
@@ -2266,6 +2484,7 @@ export function PaymentScheduleForm({
                   <StyledPaymentSelect
                     classForValue={getPaymentStatusSelectClass}
                     defaultValue={payment?.payment_status ?? "planned"}
+                    key={`${rowKey}:status:${payment?.payment_status ?? "planned"}`}
                     name={`paymentStatus:${rowKey}`}
                     options={[
                       { label: "Paid", value: "paid" },
@@ -2281,6 +2500,7 @@ export function PaymentScheduleForm({
                         ? payment.xero_status
                         : "pending"
                     }
+                    key={`${rowKey}:xero:${payment?.xero_status ?? "pending"}`}
                     name={`xeroStatus:${rowKey}`}
                     options={[
                       { label: "pending", value: "pending" },
@@ -2290,25 +2510,26 @@ export function PaymentScheduleForm({
                   />
                 </td>
                 <td className="px-3 py-3">
-                  <input
-                    className={inputClass}
-                    defaultValue={payment?.payment_date ?? ""}
+                  <SyncedPaymentInput
+                    key={`${rowKey}:payment-date:${payment?.payment_date ?? ""}`}
                     name={`paymentDate:${rowKey}`}
                     type="date"
+                    value={payment?.payment_date ?? ""}
                   />
                 </td>
                 <td className="px-3 py-3">
-                  <input
-                    className={inputClass}
-                    defaultValue={payment?.due_date ?? ""}
+                  <SyncedPaymentInput
+                    key={`${rowKey}:due-date:${payment?.due_date ?? ""}`}
                     name={`dueDate:${rowKey}`}
                     type="date"
+                    value={payment?.due_date ?? ""}
                   />
                 </td>
                 <td className="px-3 py-3">
                   <StyledPaymentSelect
                     classForValue={getPaymentTypeSelectClass}
                     defaultValue={payment?.payment_type ?? ""}
+                    key={`${rowKey}:type:${payment?.payment_type ?? ""}`}
                     name={`paymentType:${rowKey}`}
                     options={rowOptions}
                   />
@@ -2323,30 +2544,31 @@ export function PaymentScheduleForm({
                   }
                   exchangeRateName={`exchangeRate:${rowKey}`}
                   isDraftRow={!payment?.id}
+                  key={`${rowKey}:amount:${payment?.amount ?? ""}:${payment?.exchange_rate ?? ""}:${payment?.currency ?? currency}`}
                 />
                 <td className="px-3 py-3">
-                  <input
-                    className={inputClass}
-                    defaultValue={payment?.currency ?? currency}
+                  <SyncedPaymentInput
+                    key={`${rowKey}:currency:${payment?.currency ?? currency}`}
                     name={`currency:${rowKey}`}
+                    value={payment?.currency ?? currency}
                   />
                   <p className="mt-1 text-xs text-[#667380]">
                     THB uses FX 1. Foreign currency needs real FX.
                   </p>
                 </td>
                 <td className="px-3 py-3">
-                  <input
-                    className={inputClass}
-                    defaultValue={payment?.reference ?? ""}
+                  <SyncedPaymentInput
+                    key={`${rowKey}:reference:${payment?.reference ?? ""}`}
                     name={`reference:${rowKey}`}
+                    value={payment?.reference ?? ""}
                   />
                   <input name={`paidBy:${rowKey}`} type="hidden" value={payment?.paid_by ?? ""} />
                 </td>
                 <td className="px-3 py-3">
-                  <input
-                    className={inputClass}
-                    defaultValue={payment?.note ?? ""}
+                  <SyncedPaymentInput
+                    key={`${rowKey}:note:${payment?.note ?? ""}`}
                     name={`note:${rowKey}`}
+                    value={payment?.note ?? ""}
                   />
                 </td>
                 <td className="px-3 py-3">

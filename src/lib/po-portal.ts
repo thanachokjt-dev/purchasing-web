@@ -13,6 +13,7 @@ import {
   matrixSectionName,
   type MatrixFamily,
 } from "@/lib/po-size-matrix";
+import { sortPoPayments } from "@/lib/po-payments";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 // final_payment is payment follow-up, not physical inbound stock.
@@ -337,6 +338,7 @@ type PoPaymentRow = {
   reference: string | null;
   note: string | null;
   created_at: string | null;
+  updated_at?: string | null;
 };
 
 type PoStatusEventRow = {
@@ -2976,9 +2978,9 @@ export async function getPoPortalDetailData(poId: string) {
 
   const paymentQuery = await supabase
     .from("po_payments")
-    .select("id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
+    .select("id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at,updated_at")
     .eq("po_id", poId)
-    .order("payment_date", { ascending: false });
+    .order("payment_date", { ascending: true });
 
   let paymentRows: unknown[] = paymentQuery.data ?? [];
   if (paymentQuery.error) {
@@ -3005,7 +3007,7 @@ export async function getPoPortalDetailData(poId: string) {
     marginRows,
     order: mapSupabaseOrder(orderRow as unknown as PoPortalOrderRow, items),
     items,
-    payments: paymentRows as PoPaymentRow[],
+    payments: sortPoPayments(paymentRows as PoPaymentRow[]),
     receipts: (receipts.data ?? []) as PoReceiptRow[],
     statusEvents: (statusEvents ?? []) as PoStatusEventRow[],
   };

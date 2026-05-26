@@ -1,4 +1,6 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { SHOPIFY_ORDERS_SALES_SYNC_SOURCE } from "@/lib/sync/shopify-orders";
+import { SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE } from "@/lib/sync/shopify-products";
 
 const BANGKOK_TIME_ZONE = "Asia/Bangkok";
 
@@ -56,11 +58,29 @@ type EtaDateRow = {
 
 export type DashboardCardTone = "blue" | "green" | "gray" | "red" | "yellow";
 
+export type SyncHealthStatus = "failed" | "fresh" | "unknown" | "warning";
+
 export type DashboardActionItem = {
   detail: string;
   href?: string;
   label: string;
   tone: DashboardCardTone;
+};
+
+export type ShopifySyncSourceSummary = {
+  dataFreshness: Exclude<SyncHealthStatus, "warning"> | "stale";
+  durationSeconds: number | null;
+  errorMessage: string | null;
+  inventoryRowsSynced: number | null;
+  lastStatus: "failed" | "running" | "success" | "unknown";
+  lastSuccessfulSyncTime: string | null;
+  lastSyncTime: string | null;
+  ordersSeen: number | null;
+  productsSynced: number | null;
+  salesLinesSeen: number | null;
+  source: string;
+  syncLogFound: boolean;
+  variantsSynced: number | null;
 };
 
 export type PoDashboardData = {
@@ -99,18 +119,10 @@ export type PoDashboardData = {
     recentlyReceivedCount: number;
   };
   sync: {
-    dataFreshness: "failed" | "fresh" | "stale" | "unknown";
-    durationSeconds: number | null;
-    errorMessage: string | null;
-    inventoryRowsSynced: number | null;
-    lastStatus: "failed" | "running" | "success" | "unknown";
-    lastSuccessfulSyncTime: string | null;
-    lastSyncTime: string | null;
-    ordersSynced: number | null;
-    productsSynced: number | null;
-    source: string | null;
+    catalogInventory: ShopifySyncSourceSummary;
+    dataFreshness: SyncHealthStatus;
+    ordersSales: ShopifySyncSourceSummary;
     syncLogFound: boolean;
-    variantsSynced: number | null;
   };
   attentionItems: DashboardActionItem[];
   warnings: QueryWarning[];
@@ -164,6 +176,68 @@ function freshnessFor(latestRun: SyncRunRow | null, latestSuccess: SyncRunRow | 
   return ageMs <= 24 * 60 * 60 * 1000 ? ("fresh" as const) : ("stale" as const);
 }
 
+function durationFor(latestRun: SyncRunRow | null) {
+  return (
+    nullableNumber(latestRun?.duration_seconds) ??
+    (latestRun?.started_at && latestRun?.finished_at
+      ? Math.round((new Date(latestRun.finished_at).getTime() - new Date(latestRun.started_at).getTime()) / 1000)
+      : null)
+  );
+}
+
+function syncSourceSummary(
+  source: string,
+  latestRun: SyncRunRow | null,
+  latestSuccess: SyncRunRow | null,
+): ShopifySyncSourceSummary {
+  return {
+    dataFreshness: freshnessFor(latestRun, latestSuccess),
+    durationSeconds: durationFor(latestRun),
+    errorMessage: latestRun?.error_message ?? null,
+    inventoryRowsSynced: nullableNumber(latestRun?.inventory_rows_seen),
+    lastStatus: statusFor(latestRun),
+    lastSuccessfulSyncTime: latestSuccess?.finished_at ?? latestSuccess?.started_at ?? null,
+    lastSyncTime: latestRun?.finished_at ?? latestRun?.started_at ?? null,
+    ordersSeen: nullableNumber(latestRun?.orders_seen),
+    productsSynced: nullableNumber(latestRun?.products_seen),
+    salesLinesSeen: nullableNumber(latestRun?.sales_lines_seen),
+    source,
+    syncLogFound: Boolean(latestRun || latestSuccess),
+    variantsSynced: nullableNumber(latestRun?.variants_seen),
+  };
+}
+
+function overallSyncHealth(summaries: ShopifySyncSourceSummary[]): SyncHealthStatus {
+  if (summaries.every((summary) => !summary.syncLogFound)) {
+    return "unknown";
+  }
+  if (summaries.some((summary) => summary.lastStatus === "failed")) {
+    return "failed";
+  }
+  if (summaries.some((summary) => !summary.syncLogFound || summary.dataFreshness !== "fresh")) {
+    return "warning";
+  }
+  return "fresh";
+}
+
+function unavailableSyncSourceSummary(source: string, errorMessage: string): ShopifySyncSourceSummary {
+  return {
+    dataFreshness: "unknown",
+    durationSeconds: null,
+    errorMessage,
+    inventoryRowsSynced: null,
+    lastStatus: "unknown",
+    lastSuccessfulSyncTime: null,
+    lastSyncTime: null,
+    ordersSeen: null,
+    productsSynced: null,
+    salesLinesSeen: null,
+    source,
+    syncLogFound: false,
+    variantsSynced: null,
+  };
+}
+
 function statusFor(latestRun: SyncRunRow | null) {
   if (!latestRun?.status) {
     return "unknown" as const;
@@ -201,6 +275,15 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
   const sevenDaysAgo = addDays(today, -7);
 
   if (!supabase) {
+    const catalogInventory = unavailableSyncSourceSummary(
+      SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE,
+      "Supabase service client is not configured.",
+    );
+    const ordersSales = unavailableSyncSourceSummary(
+      SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
+      "Supabase service client is not configured.",
+    );
+
     return {
       generatedAt,
       incomingEta: { arrivingSoon: 0, lateEta: 0, nextExpectedArrival: null, noEta: 0 },
@@ -232,18 +315,10 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
         recentlyReceivedCount: 0,
       },
       sync: {
+        catalogInventory,
         dataFreshness: "unknown",
-        durationSeconds: null,
-        errorMessage: "Supabase service client is not configured.",
-        inventoryRowsSynced: null,
-        lastStatus: "unknown",
-        lastSuccessfulSyncTime: null,
-        lastSyncTime: null,
-        ordersSynced: null,
-        productsSynced: null,
-        source: null,
+        ordersSales,
         syncLogFound: false,
-        variantsSynced: null,
       },
       attentionItems: [
         {
@@ -257,8 +332,10 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
   }
 
   const [
-    latestSyncResult,
-    latestSuccessResult,
+    latestCatalogSyncResult,
+    latestCatalogSuccessResult,
+    latestOrdersSyncResult,
+    latestOrdersSuccessResult,
     metricsResult,
     openPoCount,
     inProductionCount,
@@ -285,6 +362,7 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
       .select(
         "source,status,started_at,finished_at,products_seen,variants_seen,inventory_rows_seen,orders_seen,sales_lines_seen,rows_upserted,error_message",
       )
+      .eq("source", SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE)
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
@@ -293,6 +371,26 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
       .select(
         "source,status,started_at,finished_at,products_seen,variants_seen,inventory_rows_seen,orders_seen,sales_lines_seen,rows_upserted,error_message",
       )
+      .eq("source", SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE)
+      .eq("status", "completed")
+      .order("finished_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("sync_runs")
+      .select(
+        "source,status,started_at,finished_at,products_seen,variants_seen,inventory_rows_seen,orders_seen,sales_lines_seen,rows_upserted,error_message",
+      )
+      .eq("source", SHOPIFY_ORDERS_SALES_SYNC_SOURCE)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("sync_runs")
+      .select(
+        "source,status,started_at,finished_at,products_seen,variants_seen,inventory_rows_seen,orders_seen,sales_lines_seen,rows_upserted,error_message",
+      )
+      .eq("source", SHOPIFY_ORDERS_SALES_SYNC_SOURCE)
       .eq("status", "completed")
       .order("finished_at", { ascending: false, nullsFirst: false })
       .limit(1)
@@ -457,11 +555,23 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
     noEtaCount,
   ].forEach((result) => collectWarning(result.warning));
 
-  if (latestSyncResult.error) {
-    warnings.push({ label: "Last Shopify Sync", message: latestSyncResult.error.message });
+  if (latestCatalogSyncResult.error) {
+    warnings.push({ label: "Catalog / Inventory Sync", message: latestCatalogSyncResult.error.message });
   }
-  if (latestSuccessResult.error) {
-    warnings.push({ label: "Last Successful Shopify Sync", message: latestSuccessResult.error.message });
+  if (latestCatalogSuccessResult.error) {
+    warnings.push({
+      label: "Last Successful Catalog / Inventory Sync",
+      message: latestCatalogSuccessResult.error.message,
+    });
+  }
+  if (latestOrdersSyncResult.error) {
+    warnings.push({ label: "Orders / Sales Lines Sync", message: latestOrdersSyncResult.error.message });
+  }
+  if (latestOrdersSuccessResult.error) {
+    warnings.push({
+      label: "Last Successful Orders / Sales Lines Sync",
+      message: latestOrdersSuccessResult.error.message,
+    });
   }
   if (metricsResult.error) {
     warnings.push({ label: "PO Portal Metrics", message: metricsResult.error.message });
@@ -476,8 +586,10 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
     warnings.push({ label: "Next Expected Arrival", message: nextEtaResult.error.message });
   }
 
-  const latestRun = (latestSyncResult.data ?? null) as SyncRunRow | null;
-  const latestSuccess = (latestSuccessResult.data ?? null) as SyncRunRow | null;
+  const latestCatalogRun = (latestCatalogSyncResult.data ?? null) as SyncRunRow | null;
+  const latestCatalogSuccess = (latestCatalogSuccessResult.data ?? null) as SyncRunRow | null;
+  const latestOrdersRun = (latestOrdersSyncResult.data ?? null) as SyncRunRow | null;
+  const latestOrdersSuccess = (latestOrdersSuccessResult.data ?? null) as SyncRunRow | null;
   const metrics = (metricsResult.data ?? null) as PoMetricsRow | null;
   const poValueRows = (openPoValueResult.data ?? []) as PoValueRow[];
   const latestReceipt = (latestReceiptResult.data ?? null) as ReceiptDateRow | null;
@@ -500,8 +612,17 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
     (sum, row) => sum + toNumber(row.active_line_count) + toNumber(row.pending_line_count),
     0,
   );
-  const syncStatus = statusFor(latestRun);
-  const syncFreshness = freshnessFor(latestRun, latestSuccess);
+  const catalogInventory = syncSourceSummary(
+    SHOPIFY_PRODUCTS_INVENTORY_SYNC_SOURCE,
+    latestCatalogRun,
+    latestCatalogSuccess,
+  );
+  const ordersSales = syncSourceSummary(
+    SHOPIFY_ORDERS_SALES_SYNC_SOURCE,
+    latestOrdersRun,
+    latestOrdersSuccess,
+  );
+  const syncFreshness = overallSyncHealth([catalogInventory, ordersSales]);
 
   const data: PoDashboardData = {
     generatedAt,
@@ -539,22 +660,10 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
       recentlyReceivedCount: recentReceiptsCount.count,
     },
     sync: {
+      catalogInventory,
       dataFreshness: syncFreshness,
-      durationSeconds:
-        nullableNumber(latestRun?.duration_seconds) ??
-        (latestRun?.started_at && latestRun?.finished_at
-          ? Math.round((new Date(latestRun.finished_at).getTime() - new Date(latestRun.started_at).getTime()) / 1000)
-          : null),
-      errorMessage: latestRun?.error_message ?? null,
-      inventoryRowsSynced: nullableNumber(latestRun?.inventory_rows_seen),
-      lastStatus: syncStatus,
-      lastSuccessfulSyncTime: latestSuccess?.finished_at ?? latestSuccess?.started_at ?? null,
-      lastSyncTime: latestRun?.finished_at ?? latestRun?.started_at ?? null,
-      ordersSynced: nullableNumber(latestRun?.orders_seen) ?? nullableNumber(latestRun?.sales_lines_seen),
-      productsSynced: nullableNumber(latestRun?.products_seen),
-      source: latestRun?.source ?? null,
-      syncLogFound: Boolean(latestRun || latestSuccess),
-      variantsSynced: nullableNumber(latestRun?.variants_seen),
+      ordersSales,
+      syncLogFound: catalogInventory.syncLogFound || ordersSales.syncLogFound,
     },
     attentionItems: [],
     warnings,
@@ -564,17 +673,20 @@ export async function getPoDashboardData(): Promise<PoDashboardData> {
     ...(data.sync.dataFreshness === "failed"
       ? [
           {
-            detail: data.sync.errorMessage ?? "Latest sync run failed.",
-            label: "Last Shopify sync failed",
+            detail: [data.sync.catalogInventory, data.sync.ordersSales]
+              .filter((summary) => summary.lastStatus === "failed")
+              .map((summary) => summary.errorMessage ?? `${summary.source} failed.`)
+              .join(" "),
+            label: "Shopify sync failed",
             tone: "red" as const,
           },
         ]
       : []),
-    ...(data.sync.dataFreshness === "stale"
+    ...(data.sync.dataFreshness === "warning"
       ? [
           {
-            detail: "Latest successful sync is older than 24 hours.",
-            label: "Shopify sync is stale",
+            detail: "One required Shopify sync source is missing, stale, or still running.",
+            label: "Shopify sync needs review",
             tone: "yellow" as const,
           },
         ]

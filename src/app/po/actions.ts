@@ -8,7 +8,9 @@ import {
   canEditPo,
   canManagePayments,
   canReceivePo,
+  canUseReceivingWorkflow,
 } from "@/lib/access-control";
+import { sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type PoActionState = {
@@ -16,6 +18,7 @@ export type PoActionState = {
   message: string;
   poId?: string;
   headerPurpose?: string;
+  payments?: PoPaymentDisplayRow[];
   supplierDiscussionNote?: string;
 };
 
@@ -54,7 +57,7 @@ async function requirePoPermission(
   message: string,
 ) {
   const profile = await requireUser(nextPath);
-  if (profile.role !== "super_admin" || !allowed(profile.email)) {
+  if (!((profile.role === "super_admin" || canUseReceivingWorkflow(profile)) && allowed(profile.email))) {
     throw new Error(message);
   }
   return profile;
@@ -325,6 +328,39 @@ function formText(formData: FormData, name: string) {
 
 function xeroStatus(value: string) {
   return value === "draft" || value === "uploaded" ? value : "pending";
+}
+
+async function paymentRowsForPo(
+  supabase: ReturnType<typeof actionClient>,
+  poId: string,
+) {
+  const columns =
+    "id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at,updated_at";
+  const query = await supabase
+    .from("po_payments")
+    .select(columns)
+    .eq("po_id", poId);
+
+  if (!query.error) {
+    return sortPoPayments((query.data ?? []) as PoPaymentDisplayRow[]);
+  }
+
+  if (!schemaColumnMiss(query.error.message)) {
+    throw new Error(query.error.message);
+  }
+
+  const fallbackQuery = await supabase
+    .from("po_payments")
+    .select(
+      "id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at",
+    )
+    .eq("po_id", poId);
+
+  if (fallbackQuery.error) {
+    throw new Error(fallbackQuery.error.message);
+  }
+
+  return sortPoPayments((fallbackQuery.data ?? []) as PoPaymentDisplayRow[]);
 }
 
 function normalizedCurrency(value: string | null | undefined) {
@@ -1858,6 +1894,7 @@ export async function updatePoPaymentsAction(
             xeroStatus: legacyXeroStatuses[index] ?? "",
           }));
 
+    // TODO: move this multi-row delete/update/insert flow into a DB transaction/RPC so partial saves cannot persist.
     for (const rowInput of rows) {
       const { index, rawId } = rowInput;
       if (rawId && deleteIds.has(rawId)) {
@@ -1919,8 +1956,9 @@ export async function updatePoPaymentsAction(
     }
 
     await recalculatePoAmount(poId);
+    const payments = await paymentRowsForPo(supabase, poId);
     refreshPoViews(poId);
-    return success(`Saved ${savedCount} payment rows`);
+    return { ...success(`Saved ${savedCount} payment rows`), payments };
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Save payments failed");
   }

@@ -6,6 +6,7 @@ export type AccessRole =
   | "super_admin"
   | "executive_readonly"
   | "incoming_eta_viewer"
+  | "warehouse_staff"
   | "dashboard_only"
   | "admin";
 
@@ -13,6 +14,9 @@ const incomingEtaViewerEmails = new Set([
   "sam@bangtaomuaythai.com",
   "lewis@bangtaomuaythai.com",
   "saytarn.a@bangtaomuaythai.com",
+]);
+
+const warehouseStaffEmails = new Set([
   "chonlasit.c@bangtaomuaythai.com",
 ]);
 
@@ -32,6 +36,9 @@ export function getUserAccessRole(email: string | null | undefined): AccessRole 
 
   if (incomingEtaViewerEmails.has(normalizedEmail)) {
     return "incoming_eta_viewer";
+  }
+  if (warehouseStaffEmails.has(normalizedEmail)) {
+    return "warehouse_staff";
   }
   if (executiveReadonlyEmails.has(normalizedEmail)) {
     return "executive_readonly";
@@ -53,16 +60,18 @@ export function getProfileAccessRole(profile: CurrentUserProfile): AccessRole {
 }
 
 export function canViewIncomingEtaOnly(email: string | null | undefined) {
-  return getUserAccessRole(email) === "incoming_eta_viewer";
+  const role = getUserAccessRole(email);
+  return role === "incoming_eta_viewer" || role === "warehouse_staff";
 }
 
 export function canViewAllPages(email: string | null | undefined) {
   const role = getUserAccessRole(email);
-  return role !== "incoming_eta_viewer" && role !== "dashboard_only";
+  return role !== "incoming_eta_viewer" && role !== "warehouse_staff" && role !== "dashboard_only";
 }
 
 export function canOpenPoDetail(email: string | null | undefined) {
-  return getUserAccessRole(email) !== "incoming_eta_viewer";
+  const role = getUserAccessRole(email);
+  return role !== "incoming_eta_viewer" && role !== "warehouse_staff" && role !== "dashboard_only";
 }
 
 export function canCreatePo(email: string | null | undefined) {
@@ -74,7 +83,8 @@ export function canEditPo(email: string | null | undefined) {
 }
 
 export function canReceivePo(email: string | null | undefined) {
-  return getUserAccessRole(email) === "admin";
+  const role = getUserAccessRole(email);
+  return role === "admin" || role === "warehouse_staff";
 }
 
 export function canManagePayments(email: string | null | undefined) {
@@ -85,10 +95,18 @@ export function canApprovePaymentRequest(email: string | null | undefined) {
   return getUserAccessRole(email) === "admin";
 }
 
+export function canUseReceivingWorkflow(profile: CurrentUserProfile) {
+  const role = getProfileAccessRole(profile);
+  return role === "warehouse_staff" || (profile.role === "super_admin" && canReceivePo(profile.email));
+}
+
 export function readonlyAccessLabel(profile: CurrentUserProfile) {
   const role = getProfileAccessRole(profile);
   if (role === "incoming_eta_viewer") {
     return "Incoming ETA view only";
+  }
+  if (role === "warehouse_staff") {
+    return "Warehouse receiving access";
   }
   if (role === "executive_readonly") {
     return "Read-only access";

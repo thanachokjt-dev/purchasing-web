@@ -16,7 +16,9 @@ import {
   canCreatePo,
   canEditPo,
   canOpenPoDetail,
+  canReceivePo,
   canViewIncomingEtaOnly,
+  getProfileAccessRole,
   readonlyAccessLabel,
 } from "@/lib/access-control";
 import { PendingSubmitButton } from "@/app/loading-controls";
@@ -1243,6 +1245,8 @@ export default async function PoPortalPage({
   const allowCreatePo = canCreatePo(currentUser.email) && currentUser.role === "super_admin";
   const allowEditPo = canEditPo(currentUser.email) && currentUser.role === "super_admin";
   const allowOpenPoDetail = canOpenPoDetail(currentUser.email);
+  const allowReceivePo = canReceivePo(currentUser.email);
+  const isWarehouseStaff = getProfileAccessRole(currentUser) === "warehouse_staff";
   const accessNote = readonlyAccessLabel(currentUser);
 
   if (!incomingEtaOnly && !canAccessAdminControlTower(currentUser)) {
@@ -2052,7 +2056,16 @@ export default async function PoPortalPage({
       {sortKey === key ? ` ${sortDir}` : ""}
     </Link>
   );
-  const renderIncomingActionRow = (row: (typeof incomingActionRows)[number]) => (
+  const renderIncomingActionRow = (row: (typeof incomingActionRows)[number]) => {
+    const canOpenReceiving =
+      isWarehouseStaff &&
+      allowReceivePo &&
+      Boolean(row.poId && row.poDetailHref) &&
+      row.source === "active" &&
+      row.balanceQty > 0 &&
+      !["Received", "Closed", "Cancelled"].includes(row.status);
+
+    return (
     <tr
       className={row.status === "ETA Passed" ? "bg-[#fff8f8]" : "bg-white"}
       data-incoming-date-received={row.dateReceived || ""}
@@ -2112,7 +2125,14 @@ export default async function PoPortalPage({
         </span>
       </td>
       <td className="whitespace-nowrap px-3 py-2">
-        {allowOpenPoDetail ? (
+        {canOpenReceiving ? (
+          <Link
+            className="inline-flex rounded-md bg-[#172026] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#364252]"
+            href={`${row.poDetailHref}#receiving`}
+          >
+            Lines &amp; Receiving
+          </Link>
+        ) : allowOpenPoDetail ? (
           <Link
             className="inline-flex rounded-md bg-[#172026] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#364252]"
             href={row.poDetailHref}
@@ -2124,7 +2144,8 @@ export default async function PoPortalPage({
         )}
       </td>
     </tr>
-  );
+    );
+  };
   const renderPaymentActionRow = (event: PaymentTimelineEvent) => {
     const deltaDays = daysBetweenDates(today, event.eventDate);
     const isOverdue = deltaDays < 0;

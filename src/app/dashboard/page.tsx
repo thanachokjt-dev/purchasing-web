@@ -16,7 +16,11 @@ import {
 } from "lucide-react";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
-import { getPoDashboardData, type DashboardCardTone } from "@/lib/po-dashboard";
+import {
+  getPoDashboardData,
+  type DashboardCardTone,
+  type ShopifySyncSourceSummary,
+} from "@/lib/po-dashboard";
 import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
 
 export const dynamic = "force-dynamic";
@@ -102,10 +106,14 @@ function statusTone(status: string): DashboardCardTone {
   if (status === "running") {
     return "blue";
   }
-  if (status === "stale") {
+  if (status === "stale" || status === "warning") {
     return "yellow";
   }
   return "gray";
+}
+
+function formatStatusLabel(status: string) {
+  return status === "success" ? "success" : status;
 }
 
 type SummaryCardProps = {
@@ -145,12 +153,6 @@ export default async function DashboardPage() {
 
   const dashboard = await getPoDashboardData();
   const syncTone = statusTone(dashboard.sync.dataFreshness);
-  const syncStatusLabel =
-    dashboard.sync.lastStatus === "success"
-      ? "success"
-      : dashboard.sync.lastStatus === "unknown"
-        ? "unknown"
-        : dashboard.sync.lastStatus;
 
   const poCards = [
     {
@@ -379,9 +381,9 @@ export default async function DashboardPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#64707d]">
                     System / Shopify Sync Status
                   </p>
-                  <h2 className="mt-2 text-2xl font-semibold">Last Shopify Sync</h2>
+                  <h2 className="mt-2 text-2xl font-semibold">Shopify Sync Health</h2>
                   <p className="mt-2 text-sm text-[#5c6875]">
-                    Source: {dashboard.sync.source ?? "No sync log table row found"}
+                    Catalog/inventory and orders/sales-line syncs are checked independently.
                   </p>
                 </div>
                 <span
@@ -390,46 +392,33 @@ export default async function DashboardPage() {
                   {dashboard.sync.dataFreshness}
                 </span>
               </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-md border border-[#e1e6ec] bg-[#f9fafb] p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">Status</p>
-                  <p className="mt-1 text-lg font-semibold capitalize">{syncStatusLabel}</p>
-                </div>
-                <div className="rounded-md border border-[#e1e6ec] bg-[#f9fafb] p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">Last Run</p>
-                  <p className="mt-1 text-sm font-semibold">{formatDateTime(dashboard.sync.lastSyncTime)}</p>
-                </div>
-                <div className="rounded-md border border-[#e1e6ec] bg-[#f9fafb] p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">Last Success</p>
-                  <p className="mt-1 text-sm font-semibold">
-                    {formatDateTime(dashboard.sync.lastSuccessfulSyncTime)}
-                  </p>
-                </div>
-                <div className="rounded-md border border-[#e1e6ec] bg-[#f9fafb] p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">Duration</p>
-                  <p className="mt-1 text-lg font-semibold">{formatDuration(dashboard.sync.durationSeconds)}</p>
-                </div>
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                <ShopifySyncCard
+                  metrics={[
+                    ["Products Synced", dashboard.sync.catalogInventory.productsSynced],
+                    ["Variants Synced", dashboard.sync.catalogInventory.variantsSynced],
+                    ["Inventory Rows", dashboard.sync.catalogInventory.inventoryRowsSynced],
+                  ]}
+                  summary={dashboard.sync.catalogInventory}
+                  title="Catalog / Inventory Sync"
+                />
+                <ShopifySyncCard
+                  metrics={[
+                    ["Orders Seen", dashboard.sync.ordersSales.ordersSeen],
+                    ["Sales Lines Seen", dashboard.sync.ordersSales.salesLinesSeen],
+                  ]}
+                  summary={dashboard.sync.ordersSales}
+                  title="Orders / Sales Lines Sync"
+                />
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <SummaryPill label="Products synced" value={dashboard.sync.productsSynced} />
-                <SummaryPill label="Variants synced" value={dashboard.sync.variantsSynced} />
-                <SummaryPill label="Inventory rows" value={dashboard.sync.inventoryRowsSynced} />
-                <SummaryPill label="Orders / sales lines" value={dashboard.sync.ordersSynced} />
-              </div>
-              {dashboard.sync.errorMessage ? (
-                <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                  {dashboard.sync.errorMessage}
-                </div>
-              ) : null}
-              {dashboard.sync.dataFreshness === "stale" ? (
+              {dashboard.sync.dataFreshness === "warning" ? (
                 <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   Check Vercel Cron /api/sync/daily and CRON_SECRET.
                 </div>
               ) : null}
               {!dashboard.sync.syncLogFound ? (
                 <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                  No sync log table row found. Recommended future enhancement: a compact `sync_run_logs`
-                  table/view if sync metadata needs to cover more jobs than `sync_runs`.
+                  No reliable Shopify sync history was found in `sync_runs` for the required sources.
                 </div>
               ) : null}
             </article>
@@ -508,11 +497,61 @@ export default async function DashboardPage() {
   );
 }
 
-function SummaryPill({ label, value }: { label: string; value: number | null }) {
+function ShopifySyncCard({
+  metrics,
+  summary,
+  title,
+}: {
+  metrics: Array<[string, number | null]>;
+  summary: ShopifySyncSourceSummary;
+  title: string;
+}) {
+  const sourceTone = statusTone(summary.dataFreshness);
+  const metricValue = (value: number | null) => {
+    if (!summary.syncLogFound) {
+      return "Unknown";
+    }
+    return value === null ? "N/A" : formatNumber(value);
+  };
+
+  return (
+    <section className="rounded-lg border border-[#e1e6ec] bg-[#f9fafb] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-[#172026]">{title}</h3>
+          <p className="mt-1 text-xs text-[#667380]">Diagnostic source: {summary.source}</p>
+        </div>
+        <span
+          className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-semibold capitalize ${toneClasses[sourceTone]}`}
+        >
+          {summary.dataFreshness}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <SyncDetail label="Status" value={formatStatusLabel(summary.lastStatus)} />
+        <SyncDetail label="Duration" value={formatDuration(summary.durationSeconds)} />
+        <SyncDetail label="Last Run" value={formatDateTime(summary.lastSyncTime)} />
+        <SyncDetail label="Last Success" value={formatDateTime(summary.lastSuccessfulSyncTime)} />
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {metrics.map(([label, value]) => (
+          <SyncDetail label={label} value={metricValue(value)} key={label} />
+        ))}
+      </div>
+      {summary.errorMessage ? (
+        <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          {summary.errorMessage}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function SyncDetail({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-[#e1e6ec] bg-white p-3">
       <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value === null ? "N/A" : formatNumber(value)}</p>
+      <p className="mt-1 text-sm font-semibold text-[#172026]">{value}</p>
     </div>
   );
 }
