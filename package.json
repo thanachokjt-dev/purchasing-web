@@ -7,6 +7,7 @@
     "dev:clean": "npm run kill:3000 && next dev",
     "kill:3000": "node scripts/kill-port-3000.mjs",
     "build": "next build",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
     "lint": "eslint",
     "backfill:sales-demand": "node scripts/backfill-sales-summary-demand.mjs",

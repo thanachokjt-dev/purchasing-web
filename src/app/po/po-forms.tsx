@@ -280,6 +280,25 @@ function createAddedPaymentDraftKey(index: number) {
   return `draft-added-${index}`;
 }
 
+function dateInputValue(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!slashMatch) {
+    return "";
+  }
+  const day = slashMatch[1].padStart(2, "0");
+  const month = slashMatch[2].padStart(2, "0");
+  const year = slashMatch[3].length === 2 ? `20${slashMatch[3]}` : slashMatch[3];
+  return `${year}-${month}-${day}`;
+}
+
 const inputClass =
   "h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm text-[#172026] outline-none focus:border-[#255f85]";
 const labelClass = "grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]";
@@ -2155,6 +2174,7 @@ export function LandedCostAllocationForm({
 
 function PaymentAmountFields({
   amount,
+  amountThb,
   amountName = "amount",
   currency,
   exchangeRate,
@@ -2162,6 +2182,7 @@ function PaymentAmountFields({
   isDraftRow = false,
 }: {
   amount: number | string | null | undefined;
+  amountThb?: number | string | null | undefined;
   amountName?: string;
   currency: string | null | undefined;
   exchangeRate: number | string | null | undefined;
@@ -2171,11 +2192,17 @@ function PaymentAmountFields({
   const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
   const savedExchangeRate = Number(exchangeRate ?? 0);
   const nextAmountValue = amount === null || amount === undefined ? "" : String(amount);
+  const inferredRate =
+    normalizedCurrency !== "THB" && Number(amount ?? 0) > 0 && Number(amountThb ?? 0) > 0
+      ? Number(amountThb) / Number(amount)
+      : 0;
   const nextRateValue =
     exchangeRate === null || exchangeRate === undefined || savedExchangeRate <= 0
       ? normalizedCurrency === "THB"
         ? "1"
-        : ""
+        : inferredRate > 1
+          ? String(Number(inferredRate.toFixed(6)))
+          : ""
       : String(exchangeRate);
   const [amountValue, setAmountValue] = useState(nextAmountValue);
   const [rateValue, setRateValue] = useState(nextRateValue);
@@ -2183,7 +2210,9 @@ function PaymentAmountFields({
   const rateNumber = Number(rateValue || 0);
   const shouldValidateFx = !isDraftRow || amountNumber > 0;
   const thbAmount =
-    Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
+    amountValue === nextAmountValue && rateValue === nextRateValue && Number(amountThb ?? 0) > 0
+      ? Number(amountThb)
+      : Number.isFinite(amountNumber) && Number.isFinite(rateNumber) ? amountNumber * rateNumber : 0;
   const hasInvalidForeignFx = shouldValidateFx && normalizedCurrency !== "THB" && rateNumber <= 1;
   const savedFxLabel = normalizedCurrency === "THB"
     ? "THB uses FX 1"
@@ -2272,12 +2301,15 @@ function SyncedPaymentInput({
   type?: string;
   value: string;
 }) {
+  const [inputValue, setInputValue] = useState(value);
+
   return (
     <input
       className={className}
-      defaultValue={value}
       name={name}
+      onChange={(event) => setInputValue(event.target.value)}
       type={type}
+      value={inputValue}
     />
   );
 }
@@ -2369,6 +2401,29 @@ export function PaymentScheduleForm({
   const nextDraftKeyIndex = useRef(0);
   const [localPayments, setLocalPayments] = useState(() => sortPoPayments(payments));
   const [draftKeys, setDraftKeys] = useState(() => [initialPaymentDraftKey]);
+  const previousPaymentsSignature = useRef("");
+  const paymentsSignature = useMemo(
+    () =>
+      payments
+        .map((payment) =>
+          [
+            payment.id,
+            payment.payment_status,
+            payment.xero_status,
+            payment.payment_date,
+            payment.due_date,
+            payment.amount,
+            payment.exchange_rate,
+            payment.amount_thb,
+            payment.currency,
+            payment.reference,
+            payment.note,
+          ].join("|"),
+        )
+        .join("::"),
+    [payments],
+  );
+  const sortedPaymentsFromProps = useMemo(() => sortPoPayments(payments), [payments]);
   const [state, formAction, pending] = useActionState(
     async (previousState: PoActionState, formData: FormData) => {
       const nextState = await updatePoPaymentsAction(previousState, formData);
@@ -2382,6 +2437,13 @@ export function PaymentScheduleForm({
     },
     initialState,
   );
+  useEffect(() => {
+    if (previousPaymentsSignature.current === paymentsSignature) {
+      return;
+    }
+    previousPaymentsSignature.current = paymentsSignature;
+    setLocalPayments(sortedPaymentsFromProps);
+  }, [paymentsSignature, sortedPaymentsFromProps]);
 
   const sortedPayments = sortPoPayments(localPayments);
   const rows = [
@@ -2474,10 +2536,16 @@ export function PaymentScheduleForm({
           <tbody className="divide-y divide-[#edf1f5]">
             {rows.map(({ payment, rowKey }, index) => {
               const rowOptions = payment ? options : optionsForNewRows;
+              const rowError = state.paymentErrors?.[rowKey];
 
               return (
               <tr key={rowKey}>
-                <td className="px-3 py-3 font-semibold">Payment {index + 1}</td>
+                <td className="px-3 py-3 font-semibold">
+                  Payment {index + 1}
+                  {rowError ? (
+                    <p className="mt-1 text-xs font-semibold text-[#b42318]">{rowError}</p>
+                  ) : null}
+                </td>
                 <td className="px-3 py-3">
                   <input name="paymentRowKey" type="hidden" value={rowKey} />
                   <input name={`paymentId:${rowKey}`} type="hidden" value={payment?.id ?? ""} />
@@ -2514,7 +2582,7 @@ export function PaymentScheduleForm({
                     key={`${rowKey}:payment-date:${payment?.payment_date ?? ""}`}
                     name={`paymentDate:${rowKey}`}
                     type="date"
-                    value={payment?.payment_date ?? ""}
+                    value={dateInputValue(payment?.payment_date)}
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -2522,7 +2590,7 @@ export function PaymentScheduleForm({
                     key={`${rowKey}:due-date:${payment?.due_date ?? ""}`}
                     name={`dueDate:${rowKey}`}
                     type="date"
-                    value={payment?.due_date ?? ""}
+                    value={dateInputValue(payment?.due_date)}
                   />
                 </td>
                 <td className="px-3 py-3">
@@ -2536,6 +2604,7 @@ export function PaymentScheduleForm({
                 </td>
                 <PaymentAmountFields
                   amount={payment?.amount ?? ""}
+                  amountThb={payment?.amount_thb}
                   amountName={`amount:${rowKey}`}
                   currency={payment?.currency ?? currency}
                   exchangeRate={
@@ -2544,7 +2613,7 @@ export function PaymentScheduleForm({
                   }
                   exchangeRateName={`exchangeRate:${rowKey}`}
                   isDraftRow={!payment?.id}
-                  key={`${rowKey}:amount:${payment?.amount ?? ""}:${payment?.exchange_rate ?? ""}:${payment?.currency ?? currency}`}
+                  key={`${rowKey}:amount:${payment?.amount ?? ""}:${payment?.exchange_rate ?? ""}:${payment?.amount_thb ?? ""}:${payment?.currency ?? currency}`}
                 />
                 <td className="px-3 py-3">
                   <SyncedPaymentInput

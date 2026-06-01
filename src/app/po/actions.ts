@@ -18,6 +18,7 @@ export type PoActionState = {
   message: string;
   poId?: string;
   headerPurpose?: string;
+  paymentErrors?: Record<string, string>;
   payments?: PoPaymentDisplayRow[];
   supplierDiscussionNote?: string;
 };
@@ -108,6 +109,40 @@ function optionalDateText(formData: FormData, name: string) {
   }
 
   return value;
+}
+
+function normalizePaymentDateValue(value: string, label: string) {
+  const raw = value.trim();
+  if (!raw) {
+    return "";
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return raw;
+  }
+
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (!slashMatch) {
+    throw new Error(`${label} must be YYYY-MM-DD or DD/MM/YYYY`);
+  }
+
+  const day = Number(slashMatch[1]);
+  const month = Number(slashMatch[2]);
+  const rawYear = slashMatch[3];
+  const year = rawYear.length === 2 ? 2000 + Number(rawYear) : Number(rawYear);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error(`${label} must be a real calendar date`);
+  }
+
+  return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day
+    .toString()
+    .padStart(2, "0")}`;
 }
 
 function todayDateText() {
@@ -1824,24 +1859,13 @@ export async function updatePoPaymentsAction(
       formData.getAll("deletePaymentId").map((value) => String(value).trim()).filter(Boolean),
     );
 
-    if (deleteIds.size > 0) {
-      const { error } = await supabase
-        .from("po_payments")
-        .delete()
-        .eq("po_id", poId)
-        .in("id", Array.from(deleteIds));
-      if (error) {
-        throw new Error(error.message);
-      }
-    }
-
     const existingIds = rowKeys.length > 0
       ? rowKeys.map((rowKey) => formText(formData, `paymentId:${rowKey}`)).filter(Boolean)
       : legacyIds.filter(Boolean);
     const existingPaymentRows = existingIds.length > 0
       ? await supabase
           .from("po_payments")
-          .select("id,exchange_rate,amount_thb,currency")
+          .select("id,exchange_rate,amount_thb,currency,payment_date,due_date")
           .eq("po_id", poId)
           .in("id", existingIds)
       : { data: [], error: null };
@@ -1854,7 +1878,9 @@ export async function updatePoPaymentsAction(
         {
           amountThb: Number(payment.amount_thb ?? 0),
           currency: String(payment.currency ?? "THB"),
+          dueDate: String(payment.due_date ?? ""),
           exchangeRate: Number(payment.exchange_rate ?? 0),
+          paymentDate: String(payment.payment_date ?? ""),
         },
       ]),
     );
@@ -1874,6 +1900,7 @@ export async function updatePoPaymentsAction(
             rawId: formText(formData, `paymentId:${rowKey}`),
             reference: formText(formData, `reference:${rowKey}`),
             note: formText(formData, `note:${rowKey}`),
+            rowKey,
             status: formText(formData, `paymentStatus:${rowKey}`),
             type: formText(formData, `paymentType:${rowKey}`),
             xeroStatus: formText(formData, `xeroStatus:${rowKey}`),
@@ -1889,14 +1916,34 @@ export async function updatePoPaymentsAction(
             rawId,
             reference: legacyReferences[index] ?? "",
             note: legacyNotes[index] ?? "",
+            rowKey: rawId ? `existing-${rawId}` : `legacy-${index}`,
             status: legacyStatuses[index] ?? "",
             type: legacyTypes[index] ?? "",
             xeroStatus: legacyXeroStatuses[index] ?? "",
           }));
 
-    // TODO: move this multi-row delete/update/insert flow into a DB transaction/RPC so partial saves cannot persist.
+    const paymentRowsToSave: Array<{
+      rawId: string;
+      row: {
+        po_id: string;
+        payment_date: string | null;
+        payment_type: string;
+        payment_status: string;
+        due_date: string | null;
+        amount: number;
+        currency: string;
+        exchange_rate: number;
+        amount_thb: number;
+        paid_by: string | null;
+        reference: string | null;
+        note: string | null;
+        xero_status: string;
+      };
+    }> = [];
+    const paymentErrors: Record<string, string> = {};
+
     for (const rowInput of rows) {
-      const { index, rawId } = rowInput;
+      const { index, rawId, rowKey } = rowInput;
       if (rawId && deleteIds.has(rawId)) {
         continue;
       }
@@ -1910,18 +1957,42 @@ export async function updatePoPaymentsAction(
       const currencyCode = normalizedCurrency(rowCurrency);
       const existingPayment = rawId ? existingPaymentById.get(rawId) : undefined;
       const exchangeRateInput = rowInput.exchangeRateValue.trim();
-      const exchangeRate = exchangeRateInput
+      let exchangeRate = exchangeRateInput
         ? nonNegativeTextNumber(exchangeRateInput, `Payment ${index + 1} exchange rate`)
         : existingPayment?.exchangeRate && existingPayment.exchangeRate > 0
           ? existingPayment.exchangeRate
           : currencyCode === "THB"
             ? 1
             : 0;
-      if (currencyCode !== "THB" && exchangeRate <= 1) {
-        throw new Error(`Payment ${index + 1} needs a real FX rate for ${currencyCode}`);
+      if (currencyCode === "THB") {
+        exchangeRate = 1;
       }
-      const paymentDate = rowInput.paymentDate || (status === "paid" ? today : null);
-      const dueDate = rowInput.dueDate || null;
+      if (currencyCode !== "THB" && exchangeRate <= 1) {
+        const message = `Payment ${index + 1} needs a real FX rate for ${currencyCode}`;
+        paymentErrors[rowKey] = message;
+        throw Object.assign(new Error(message), { paymentErrors });
+      }
+      let submittedPaymentDate = "";
+      let submittedDueDate = "";
+      try {
+        submittedPaymentDate = normalizePaymentDateValue(
+          rowInput.paymentDate,
+          `Payment ${index + 1} paid date`,
+        );
+        submittedDueDate = normalizePaymentDateValue(
+          rowInput.dueDate,
+          `Payment ${index + 1} due reminder`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `Payment ${index + 1} has an invalid date`;
+        paymentErrors[rowKey] = message;
+        throw Object.assign(new Error(message), { paymentErrors });
+      }
+      const paymentDate =
+        submittedPaymentDate ||
+        existingPayment?.paymentDate ||
+        (status === "paid" ? today : null);
+      const dueDate = submittedDueDate || existingPayment?.dueDate || null;
       const hasContent =
         Boolean(rawId) ||
         amount > 0;
@@ -1945,7 +2016,22 @@ export async function updatePoPaymentsAction(
         note: rowInput.note || null,
         xero_status: xeroStatus(rowInput.xeroStatus),
       };
+      paymentRowsToSave.push({ rawId, row });
+    }
 
+    if (deleteIds.size > 0) {
+      const { error } = await supabase
+        .from("po_payments")
+        .delete()
+        .eq("po_id", poId)
+        .in("id", Array.from(deleteIds));
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
+    // TODO: move this multi-row delete/update/insert flow into a DB transaction/RPC for stronger all-or-nothing guarantees.
+    for (const { rawId, row } of paymentRowsToSave) {
       const { error } = rawId
         ? await supabase.from("po_payments").update(row).eq("id", rawId).eq("po_id", poId)
         : await supabase.from("po_payments").insert(row);
@@ -1960,6 +2046,11 @@ export async function updatePoPaymentsAction(
     refreshPoViews(poId);
     return { ...success(`Saved ${savedCount} payment rows`), payments };
   } catch (error) {
-    return initialError(error instanceof Error ? error.message : "Save payments failed");
+    const message = error instanceof Error ? error.message : "Save payments failed";
+    const paymentErrors =
+      error && typeof error === "object" && "paymentErrors" in error
+        ? (error as { paymentErrors?: Record<string, string> }).paymentErrors
+        : undefined;
+    return { ...initialError(message), paymentErrors };
   }
 }

@@ -2986,7 +2986,7 @@ export async function getPoPortalDetailData(poId: string) {
   if (paymentQuery.error) {
     const fallbackPaymentQuery = await supabase
       .from("po_payments")
-      .select("id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,currency,paid_by,reference,note,created_at")
+      .select("id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
       .eq("po_id", poId)
       .order("payment_date", { ascending: false });
     paymentRows = fallbackPaymentQuery.data ?? [];
@@ -2994,7 +2994,7 @@ export async function getPoPortalDetailData(poId: string) {
     if (fallbackPaymentQuery.error) {
       const legacyPaymentQuery = await supabase
         .from("po_payments")
-        .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,currency,paid_by,reference,note,created_at")
+        .select("id,po_id,payment_date,payment_type,payment_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at")
         .eq("po_id", poId)
         .order("payment_date", { ascending: false });
       paymentRows = legacyPaymentQuery.data ?? [];

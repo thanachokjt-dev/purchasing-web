@@ -19,6 +19,9 @@ import { requireUser } from "@/lib/auth";
 import {
   getPoDashboardData,
   type DashboardCardTone,
+  type PoSizeMixBucket,
+  type PoSizeMixCard,
+  type PoSizeMixUnknownLine,
   type ShopifySyncSourceSummary,
 } from "@/lib/po-dashboard";
 import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
@@ -50,6 +53,23 @@ const iconToneClasses: Record<DashboardCardTone, string> = {
 
 function formatNumber(value: number) {
   return numberFormatter.format(Math.round(value));
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
+}
+
+function formatSizeMixGroup(value: string) {
+  const labels: Record<string, string> = {
+    adult_apparel_curve: "General Adult Apparel Curve",
+    gloves_oz: "Gloves Ordered by Oz",
+    mma_gloves_size: "MMA Gloves Ordered by Size",
+    shin_guards_size: "Shin Guards Ordered by Size",
+    shirts_tops_size: "Shirts / Tops Ordered by Size",
+    shorts_size: "Shorts Ordered by Size",
+    singlets_size: "Singlets Ordered by Size",
+  };
+  return labels[value] ?? value;
 }
 
 function formatCurrency(value: number | null) {
@@ -461,6 +481,8 @@ export default async function DashboardPage() {
             ))}
           </DashboardSection>
 
+          <PoSizeMixOverview cards={dashboard.sizeMix.cards} sizeMix={dashboard.sizeMix} />
+
           <DashboardSection title="Payment Overview">
             {paymentCards.map((card) => (
               <SummaryCard {...card} key={card.label} />
@@ -553,6 +575,164 @@ function SyncDetail({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">{label}</p>
       <p className="mt-1 text-sm font-semibold text-[#172026]">{value}</p>
     </div>
+  );
+}
+
+function PoSizeMixOverview({
+  cards,
+  sizeMix,
+}: {
+  cards: PoSizeMixCard[];
+  sizeMix: Awaited<ReturnType<typeof getPoDashboardData>>["sizeMix"];
+}) {
+  const hasData = cards.some((card) => card.totalQty > 0);
+
+  return (
+    <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#64707d]">
+            PO History
+          </p>
+          <h2 className="mt-2 text-xl font-semibold text-[#172026]">
+            Historical PO Size Mix Overview
+          </h2>
+          <p className="mt-2 text-sm text-[#5c6875]">
+            Based on PO line quantities across current and closed purchase orders.
+          </p>
+        </div>
+        <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">
+          Ordered qty sample: {formatNumber(sizeMix.sampleQty)}
+        </div>
+      </div>
+
+      {!hasData ? (
+        <div className="mt-4 rounded-md border border-[#e1e6ec] bg-[#f9fafb] p-4 text-sm text-[#5d6a78]">
+          No historical PO size mix data found.
+        </div>
+      ) : (
+        <>
+          {sizeMix.lowSampleSize ? (
+            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Low sample size. Treat this as a rough estimate.
+            </div>
+          ) : null}
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {cards.map((card) => (
+              <PoSizeMixCardView card={card} key={card.group} />
+            ))}
+          </div>
+
+          <div className="mt-4 rounded-lg border border-[#dfe4ea] bg-[#f9fafb] p-4">
+            <h3 className="text-sm font-semibold text-[#172026]">Key takeaways</h3>
+            {sizeMix.takeaways.length > 0 ? (
+              <ul className="mt-2 grid gap-1.5 text-sm text-[#44515f]">
+                {sizeMix.takeaways.map((takeaway) => (
+                  <li key={takeaway}>{takeaway}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-[#667380]">Not enough classified PO quantity for takeaways yet.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#667380]">
+        {sizeMix.notes.map((note) => (
+          <span key={note}>{note}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PoSizeMixCardView({ card }: { card: PoSizeMixCard }) {
+  return (
+    <article className="overflow-hidden rounded-lg border border-[#dfe4ea] bg-white">
+      <div className="bg-[#102235] px-4 py-3 text-white">
+        <h3 className="text-sm font-semibold">{card.title}</h3>
+        <p className="mt-1 text-xs text-[#c6d3df]">Total ordered qty: {formatNumber(card.totalQty)}</p>
+      </div>
+      <div className="grid gap-2 p-4">
+        {card.rows.length > 0 ? (
+          card.rows.map((row) => <PoSizeMixBar row={row} key={`${card.group}-${row.bucket}`} />)
+        ) : (
+          <p className="text-sm text-[#667380]">No matching PO data.</p>
+        )}
+        {card.unknownLines.length > 0 ? <PoSizeMixUnknownLines lines={card.unknownLines} /> : null}
+      </div>
+    </article>
+  );
+}
+
+function PoSizeMixBar({ row }: { row: PoSizeMixBucket }) {
+  const isTopBucket = row.rank <= 2;
+
+  return (
+    <div className="grid grid-cols-[76px_minmax(0,1fr)_52px] items-center gap-2 text-xs" title={`${row.bucket}: ${formatNumber(row.qty)} ordered`}>
+      <span className={isTopBucket ? "font-semibold text-[#172026]" : "font-medium text-[#44515f]"}>
+        {row.bucket}
+      </span>
+      <div className="h-2.5 overflow-hidden rounded-full bg-[#e6ebf0]">
+        <div
+          className={isTopBucket ? "h-full rounded-full bg-[#102235]" : "h-full rounded-full bg-[#7d8da0]"}
+          style={{ width: `${Math.max(1, Math.min(100, row.pct))}%` }}
+        />
+      </div>
+      <span className={isTopBucket ? "text-right font-semibold text-[#172026]" : "text-right font-medium text-[#44515f]"}>
+        {formatPercent(row.pct)}
+      </span>
+    </div>
+  );
+}
+
+function PoSizeMixUnknownLines({ lines }: { lines: PoSizeMixUnknownLine[] }) {
+  return (
+    <details className="mt-2 rounded-md border border-amber-200 bg-amber-50/70">
+      <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-amber-950">
+        Review Unknown lines
+      </summary>
+      <div className="border-t border-amber-200 bg-white p-3">
+        <div className="overflow-x-auto">
+          <table className="min-w-[960px] text-left text-xs">
+            <thead className="text-[#5d6a78]">
+              <tr className="border-b border-[#e1e6ec]">
+                <th className="py-2 pr-3 font-semibold">Group</th>
+                <th className="py-2 pr-3 font-semibold">PO / Quote</th>
+                <th className="py-2 pr-3 font-semibold">Supplier</th>
+                <th className="py-2 pr-3 font-semibold">SKU</th>
+                <th className="py-2 pr-3 font-semibold">Product / Item name</th>
+                <th className="py-2 pr-3 font-semibold">Variant / Option / Size</th>
+                <th className="py-2 pr-3 text-right font-semibold">Ordered Qty</th>
+                <th className="py-2 pr-3 font-semibold">Parse reason</th>
+                <th className="py-2 font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line) => (
+                <tr className="border-b border-[#edf1f5] last:border-b-0" key={`${line.group}-${line.poId}-${line.sku}-${line.itemName}-${line.orderedQty}`}>
+                  <td className="max-w-[150px] py-2 pr-3 align-top text-[#44515f]">{formatSizeMixGroup(line.group)}</td>
+                  <td className="max-w-[140px] py-2 pr-3 align-top font-medium text-[#172026]">{line.poReference || line.poId}</td>
+                  <td className="max-w-[150px] py-2 pr-3 align-top text-[#44515f]">{line.supplierName}</td>
+                  <td className="max-w-[140px] py-2 pr-3 align-top font-mono text-[11px] text-[#172026]">{line.sku || "N/A"}</td>
+                  <td className="max-w-[220px] py-2 pr-3 align-top text-[#172026]">{line.itemName || "N/A"}</td>
+                  <td className="max-w-[180px] py-2 pr-3 align-top text-[#44515f]">{line.variantText || "N/A"}</td>
+                  <td className="py-2 pr-3 text-right align-top font-semibold text-[#172026]">{formatNumber(line.orderedQty)}</td>
+                  <td className="max-w-[160px] py-2 pr-3 align-top text-[#6b4e16]">{line.parseReason}</td>
+                  <td className="py-2 align-top">
+                    <Link className="font-semibold text-[#174ea6] hover:underline" href={line.href}>
+                      Open PO
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
   );
 }
 
