@@ -16,6 +16,7 @@ export type RoleNavItem = {
 const navByRole: Record<UserRole, RoleNavItem[]> = {
   accounting: [
     { href: "/payment-requests?view=accounting", key: "accounting-desk", label: "Accounting Desk" },
+    { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
     { href: "/payment-requests?view=accounting", key: "payments", label: "Payments" },
     { href: "/payment-requests", key: "approvals", label: "Approval Requests" },
     { href: "/payment-requests?view=packs", key: "payment-packs", label: "Payment Packs" },
@@ -40,6 +41,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
   super_admin: [
     { href: "/dashboard", key: "dashboard", label: "Dashboard" },
     { href: "/po", key: "po", label: "PO Portal" },
+    { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
     { href: "/purchasing-decision", key: "reorder", label: "Reorder Planning" },
     {
       href: "/new-product-opening-buy-planner",
@@ -79,7 +81,7 @@ export function navItemsForUser(profile: CurrentUserProfile) {
     return [{ href: "/dashboard", key: "dashboard", label: "Dashboard" }];
   }
   if (getProfileAccessRole(profile) === "executive_readonly") {
-    return navByRole.super_admin;
+    return navByRole.super_admin.filter((item) => item.key !== "cost-price-monitor");
   }
 
   return navByRole[profile.role];
@@ -142,4 +144,12 @@ export function canAccessPaymentWorkbench(profile: CurrentUserProfile) {
     "reviewer",
     "super_admin",
   ].includes(profile.role);
+}
+
+export function canAccessCostPriceMonitor(profile: CurrentUserProfile) {
+  const accessRole = getProfileAccessRole(profile);
+  return (
+    (profile.role === "super_admin" || profile.role === "accounting") &&
+    (accessRole === "super_admin" || accessRole === "admin")
+  );
 }
