@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardList, PackageCheck, ReceiptText } from "lucide-react";
 import {
   BatchReceiveFormBar,
   BatchReceiveLineFields,
@@ -83,6 +83,13 @@ const formatDate = (value: string | null) => {
     timeZone: "Asia/Bangkok",
   }).format(new Date(`${value}T00:00:00`));
 };
+const formatShortDate = (value: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "UTC",
+    year: "numeric",
+  }).format(new Date(`${value}T00:00:00Z`));
 
 const receiptActualDate = (
   receipt: { actual_received_date?: string | null; received_at?: string | null },
@@ -99,6 +106,104 @@ function bangkokDateString(date = new Date()) {
   const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
 
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function normalizeDateOnly(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    const day = slashMatch[1].padStart(2, "0");
+    const month = slashMatch[2].padStart(2, "0");
+    return `${slashMatch[3]}-${month}-${day}`;
+  }
+
+  return null;
+}
+
+function dateOnlyTime(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return Date.UTC(year, month - 1, day);
+}
+
+function durationDaysBetween(startDate: string, endDate: string) {
+  const startTime = dateOnlyTime(startDate);
+  const endTime = dateOnlyTime(endDate);
+  if (startTime === null || endTime === null || endTime < startTime) {
+    return null;
+  }
+
+  return Math.round((endTime - startTime) / 86_400_000);
+}
+
+function durationKpiFromDates({
+  payment1PaidDate,
+  receivedDate,
+  today = bangkokDateString(),
+}: {
+  payment1PaidDate: string | null | undefined;
+  receivedDate: string | null | undefined;
+  today?: string;
+}) {
+  const paidDate = normalizeDateOnly(payment1PaidDate);
+  if (!paidDate) {
+    return {
+      detail: "Waiting for Payment 1 paid date",
+      helper: "Waiting for Payment 1 paid date",
+      value: "Pending",
+    };
+  }
+
+  const actualReceivedDate = normalizeDateOnly(receivedDate);
+  const endDate = actualReceivedDate ?? normalizeDateOnly(today);
+  if (!endDate) {
+    return {
+      detail: "Today could not be resolved",
+      helper: "Invalid date",
+      value: "Invalid date",
+    };
+  }
+
+  const endLabel = actualReceivedDate ? "Received" : "Today";
+  const durationDays = durationDaysBetween(paidDate, endDate);
+  if (durationDays === null) {
+    return {
+      detail: `Paid 1: ${formatShortDate(paidDate)} -> ${endLabel}: ${formatShortDate(endDate)}`,
+      helper: "End date is earlier than Payment 1 paid date",
+      value: "Invalid date",
+    };
+  }
+
+  return {
+    detail: `Paid 1: ${formatShortDate(paidDate)} -> ${endLabel}: ${formatShortDate(endDate)}`,
+    helper: actualReceivedDate ? "Completed" : "In progress",
+    value: `${durationDays} days`,
+  };
+}
+
+function firstPaymentByStableSequence(payments: PoDetailData["payments"]) {
+  return [...payments].sort((a, b) => {
+    const aCreatedAt = a.created_at || "9999-12-31T23:59:59.999Z";
+    const bCreatedAt = b.created_at || "9999-12-31T23:59:59.999Z";
+    const createdCompare = aCreatedAt.localeCompare(bCreatedAt);
+    if (createdCompare !== 0) {
+      return createdCompare;
+    }
+
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  })[0];
 }
 
 function addDays(dateValue: string, days: number) {
@@ -939,6 +1044,10 @@ export default async function PoDetailPage({
       ? `Expected receiving target: approximately ${addDays(order.poDate, maxLeadTimeDays)} (PO date + ${maxLeadTimeDays} days, using the longest SKU lead time set in the system). Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.`
       : "Expected receiving target: SKU lead time is not set in the system. Note: actual KPI lead time should be counted from the payment date that starts production, not from this PO date.";
   const sortedPayments = sortPoPayments(data.payments);
+  const durationKpi = durationKpiFromDates({
+    payment1PaidDate: firstPaymentByStableSequence(data.payments)?.payment_date,
+    receivedDate: order.actualReceivedDate,
+  });
   const paidTotal = data.payments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
     .reduce(
@@ -1040,7 +1149,7 @@ export default async function PoDetailPage({
       </header>
 
       <div className="mx-auto grid w-full max-w-none gap-5 px-4 py-5 sm:px-6 2xl:px-8">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-4">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 2xl:grid-cols-5">
           {[
             {
               detail: `${formatNumber(order.itemCount)} lines`,
@@ -1066,22 +1175,41 @@ export default async function PoDetailPage({
               label: "Amount",
               value: formatCurrency(order.poAmountThb, "THB"),
             },
+            {
+              detail: durationKpi.detail,
+              helper: durationKpi.helper,
+              icon: CalendarDays,
+              label: "Duration KPI",
+              subLabel: "production + receiving",
+              title:
+                "From Payment 1 paid date to PO date received. If not received yet, counts until today.",
+              value: durationKpi.value,
+            },
           ].map((metric) => {
             const Icon = metric.icon;
             return (
               <article
                 className="rounded-lg border border-[#dfe4ea] bg-white p-4 shadow-sm"
+                title={metric.title}
                 key={metric.label}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-[#5d6a78]">{metric.label}</p>
+                    {"subLabel" in metric ? (
+                      <p className="mt-0.5 text-xs font-semibold uppercase tracking-[0.1em] text-[#8a96a3]">
+                        {metric.subLabel}
+                      </p>
+                    ) : null}
                     <p className="mt-2 text-3xl font-semibold">{metric.value}</p>
                   </div>
                   <span className="grid size-10 place-items-center rounded-md bg-[#eef4f8] text-[#255f85]">
                     <Icon size={20} />
                   </span>
                 </div>
+                {"helper" in metric ? (
+                  <p className="mt-2 text-sm font-semibold text-[#364252]">{metric.helper}</p>
+                ) : null}
                 <p className="mt-3 text-sm leading-5 text-[#667380]">{metric.detail}</p>
               </article>
             );
