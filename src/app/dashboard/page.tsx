@@ -15,6 +15,8 @@ import {
   Truck,
   WalletCards,
 } from "lucide-react";
+import { saveDashboardSkuCostOverrideAction } from "@/app/dashboard/actions";
+import { StockCostSaveButton } from "@/app/dashboard/stock-cost-save-button";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import {
@@ -29,6 +31,12 @@ import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
 import { getDashboardStockValueData, type StockValueData } from "@/lib/stock-value-data";
 
 export const dynamic = "force-dynamic";
+
+type DashboardSearchParams = {
+  stockCostError?: string;
+  stockCostSaved?: string;
+  stockCostSku?: string;
+};
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -167,7 +175,12 @@ function SummaryCard({ detail, icon: Icon, label, tone, value }: SummaryCardProp
   );
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<DashboardSearchParams>;
+}) {
+  const params = await searchParams;
   const currentUser = await requireUser("/dashboard");
   if (!canAccessDashboard(currentUser)) {
     redirect(
@@ -490,7 +503,7 @@ export default async function DashboardPage() {
             ))}
           </DashboardSection>
 
-          <InventoryStockValueSection data={stockValue} />
+          <InventoryStockValueSection data={stockValue} stockCostStatus={params} />
 
           <PoSizeMixOverview cards={dashboard.sizeMix.cards} sizeMix={dashboard.sizeMix} />
 
@@ -589,7 +602,13 @@ function SyncDetail({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InventoryStockValueSection({ data }: { data: StockValueData }) {
+function InventoryStockValueSection({
+  data,
+  stockCostStatus,
+}: {
+  data: StockValueData;
+  stockCostStatus: DashboardSearchParams;
+}) {
   const cards = [
     {
       detail: "Positive-stock SKUs from current_inventory_by_sku.",
@@ -657,13 +676,25 @@ function InventoryStockValueSection({ data }: { data: StockValueData }) {
         </div>
       ) : null}
 
+      {stockCostStatus.stockCostSaved === "1" ? (
+        <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">
+          Saved SKU cost override{stockCostStatus.stockCostSku ? ` for ${stockCostStatus.stockCostSku}` : ""}.
+        </div>
+      ) : null}
+      {stockCostStatus.stockCostError ? (
+        <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-800">
+          {stockCostStatus.stockCostSku ? `${stockCostStatus.stockCostSku}: ` : ""}
+          {stockCostStatus.stockCostError}
+        </div>
+      ) : null}
+
       <div className="mt-5 grid gap-5 2xl:grid-cols-2">
         <StockValueMixTable rows={data.supplierMix} title="Supplier Stock Value Mix" />
         <StockValueMixTable rows={data.categoryMix} title="Category Stock Value Mix" />
       </div>
 
       <div className="mt-5">
-        <MissingCostSkuTable rows={data.missingCostSkus} />
+        <MissingCostSkuTable rows={data.missingCostSkus} stockCostStatus={stockCostStatus} />
       </div>
     </section>
   );
@@ -713,20 +744,27 @@ function StockValueMixTable({ rows, title }: { rows: StockValueData["supplierMix
   );
 }
 
-function MissingCostSkuTable({ rows }: { rows: StockValueData["missingCostSkus"] }) {
+function MissingCostSkuTable({
+  rows,
+  stockCostStatus,
+}: {
+  rows: StockValueData["missingCostSkus"];
+  stockCostStatus: DashboardSearchParams;
+}) {
   return (
     <section className="rounded-lg border border-[#dfe4ea] bg-[#f9fafb] p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-[#172026]">Missing Cost SKUs</h3>
           <p className="mt-1 text-xs text-[#667380]">Positive-stock SKUs without a valid effective purchase cost.</p>
+          <p className="mt-1 text-xs text-[#667380]">Saved here updates Cost Price Monitor SKU override.</p>
         </div>
         <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
           Review before using for valuation
         </span>
       </div>
       <div className="mt-3 overflow-x-auto">
-        <table className="min-w-[1040px] text-left text-xs">
+        <table className="min-w-[1380px] text-left text-xs">
           <thead className="text-[#5d6a78]">
             <tr className="border-b border-[#dfe4ea]">
               <th className="py-2 pr-3 font-semibold">SKU</th>
@@ -736,6 +774,10 @@ function MissingCostSkuTable({ rows }: { rows: StockValueData["missingCostSkus"]
               <th className="py-2 pr-3 font-semibold">Category</th>
               <th className="py-2 pr-3 text-right font-semibold">Current Qty</th>
               <th className="py-2 font-semibold">Cost Status</th>
+              <th className="py-2 pl-3 font-semibold">Manual purchase cost</th>
+              <th className="py-2 pr-3 font-semibold">Manual landed cost</th>
+              <th className="py-2 pr-3 font-semibold">Manual selling price</th>
+              <th className="py-2 font-semibold">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -752,12 +794,63 @@ function MissingCostSkuTable({ rows }: { rows: StockValueData["missingCostSkus"]
                     <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
                       {row.status}
                     </span>
+                    {stockCostStatus.stockCostSku === row.sku && stockCostStatus.stockCostError ? (
+                      <p className="mt-2 max-w-[220px] text-[11px] font-semibold text-red-700">
+                        {stockCostStatus.stockCostError}
+                      </p>
+                    ) : null}
+                  </td>
+                  <td className="py-2 pl-3 align-top" colSpan={4}>
+                    <form
+                      action={saveDashboardSkuCostOverrideAction}
+                      className="grid min-w-[520px] grid-cols-[minmax(120px,1fr)_minmax(120px,1fr)_minmax(120px,1fr)_104px] gap-2"
+                    >
+                      <input name="sku" type="hidden" value={row.sku} />
+                      <label className="sr-only" htmlFor={`manual-purchase-${row.sku}`}>
+                        Manual purchase cost for {row.sku}
+                      </label>
+                      <input
+                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
+                        id={`manual-purchase-${row.sku}`}
+                        min="0.0001"
+                        name="manualPurchasePrice"
+                        placeholder="Purchase"
+                        required
+                        step="0.0001"
+                        type="number"
+                      />
+                      <label className="sr-only" htmlFor={`manual-landed-${row.sku}`}>
+                        Manual landed cost for {row.sku}
+                      </label>
+                      <input
+                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
+                        id={`manual-landed-${row.sku}`}
+                        min="0.0001"
+                        name="manualLandedCost"
+                        placeholder="Landed"
+                        step="0.0001"
+                        type="number"
+                      />
+                      <label className="sr-only" htmlFor={`manual-selling-${row.sku}`}>
+                        Manual selling price for {row.sku}
+                      </label>
+                      <input
+                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
+                        id={`manual-selling-${row.sku}`}
+                        min="0.0001"
+                        name="manualSellingPrice"
+                        placeholder="Selling"
+                        step="0.0001"
+                        type="number"
+                      />
+                      <StockCostSaveButton />
+                    </form>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td className="py-3 text-[#667380]" colSpan={7}>
+                <td className="py-3 text-[#667380]" colSpan={11}>
                   All positive-stock SKUs have effective purchase cost.
                 </td>
               </tr>
