@@ -39,7 +39,6 @@ type CatalogItemOption = {
   supplierCode: string;
   supplierName: string;
   currency: string;
-  shopifyPrice: number;
   lastUnitPrice: number;
   lastFreightUnitCost: number;
   lastLandedUnitCost: number;
@@ -60,6 +59,9 @@ type DraftLineItem = {
   fullName?: string;
   qty: number;
   unitPrice: number;
+  unitPriceSource?: string;
+  unitPriceSourceDate?: string;
+  unitPriceSourcePoReference?: string;
   freightUnitCost?: number;
   landedUnitCost?: number;
   lineAmount: number;
@@ -731,7 +733,7 @@ export function CreatePoForm({
         sku: item.sku,
         source: "catalog",
         tempId: createDraftLineId(),
-        unitPrice: String(item.lastUnitPrice || item.shopifyPrice || ""),
+        unitPrice: String(item.lastUnitPrice || ""),
         variantTitle: item.variantTitle,
       },
     ]);
@@ -1401,7 +1403,7 @@ export function SmartAddPoItemForm({
     }));
     setPriceBySku((current) => ({
       ...current,
-      [item.sku]: current[item.sku] ?? String(item.lastUnitPrice || item.shopifyPrice || ""),
+      [item.sku]: current[item.sku] ?? String(item.lastUnitPrice || ""),
     }));
     setFreightBySku((current) => ({
       ...current,
@@ -1516,7 +1518,7 @@ export function SmartAddPoItemForm({
                         placeholder="Price"
                         step="0.0001"
                         type="number"
-                        value={priceBySku[item.sku] ?? String(item.lastUnitPrice || item.shopifyPrice || "")}
+                        value={priceBySku[item.sku] ?? String(item.lastUnitPrice || "")}
                       />
                       <input
                         className={inputClass}
@@ -1612,7 +1614,7 @@ export function PoDraftLinesForm({
       ...current,
       [draftLineKey(line)]: value,
     }));
-    updateLine(index, { unitPrice: value });
+    updateLine(index, { unitPrice: value, unitPriceSource: "manual" });
   }
 
   function updateFreightUnitCost(index: number, value: number) {
@@ -2053,6 +2055,13 @@ export function PoDraftLinesForm({
                     type="number"
                     value={item.unitPrice}
                   />
+                  <p className="mt-1 text-[11px] text-[#667380]">
+                    {item.unitPriceSource === "latest_closed_po"
+                      ? `Latest closed PO${item.unitPriceSourcePoReference ? ` · ${item.unitPriceSourcePoReference}` : ""}${item.unitPriceSourceDate ? ` · ${item.unitPriceSourceDate}` : ""}`
+                      : item.unitPriceSource === "no_purchase_history"
+                        ? "No purchase history"
+                        : "Manual"}
+                  </p>
                 </td>
                 <td className="px-4 py-3">
                   <input

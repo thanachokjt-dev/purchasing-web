@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { canCreatePo, canEditPo } from "@/lib/access-control";
 import { getPurchasingSetupData } from "@/lib/purchasing-setup";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { getLatestClosedPoUnitCostBySkus } from "@/lib/latest-closed-po-cost";
 
 function textAt(values: FormDataEntryValue[], index: number) {
   return String(values[index] ?? "").trim();
@@ -415,7 +416,6 @@ export async function createPoFromDecisionAction(formData: FormData) {
   const productBySku = textMap(allSkus, formData.getAll("poProductName"));
   const mainNameBySku = textMap(allSkus, formData.getAll("poMainName"));
   const supplierBySku = textMap(allSkus, formData.getAll("poSupplier"));
-  const unitPriceBySku = textMap(allSkus, formData.getAll("poUnitPrice"));
   const rawQtyBySku = textMap(allSkus, formData.getAll("poRawQty"));
   const roundedQtyBySku = textMap(allSkus, formData.getAll("poRoundedQty"));
   let selectedSkusWithQty: string[];
@@ -477,6 +477,19 @@ export async function createPoFromDecisionAction(formData: FormData) {
       a.localeCompare(b)
     );
   });
+  let latestCostBySku: Awaited<ReturnType<typeof getLatestClosedPoUnitCostBySkus>>;
+  try {
+    latestCostBySku = await getLatestClosedPoUnitCostBySkus(
+      supabase,
+      sortedSelectedSkus,
+      currency,
+    );
+  } catch (error) {
+    redirectWithPoError(
+      formData,
+      error instanceof Error ? error.message : "Could not load latest closed PO costs.",
+    );
+  }
   const items = (() => {
     try {
       return sortedSelectedSkus.map((sku, index) => {
@@ -485,7 +498,8 @@ export async function createPoFromDecisionAction(formData: FormData) {
           qtyChoice === "raw"
             ? numberFromMap(rawQtyBySku, sku, "Order qty")
             : numberFromMap(roundedQtyBySku, sku, "Rounded qty");
-        const unitPrice = numberFromMap(unitPriceBySku, sku, "Unit price");
+        const latestCost = latestCostBySku.get(sku);
+        const unitPrice = latestCost?.latestUnitPrice ?? 0;
         const productTitle = productBySku.get(sku) || sku;
 
         return {
@@ -506,6 +520,13 @@ export async function createPoFromDecisionAction(formData: FormData) {
           full_name: productTitle,
           line_status: "draft",
           source: "purchasing_decision",
+          source_payload: {
+            unitPriceSource: latestCost ? "latest_closed_po" : "no_purchase_history",
+            unitPriceSourceCurrency: currency,
+            unitPriceSourceDate: latestCost?.latestPurchaseDate ?? null,
+            unitPriceSourcePoId: latestCost?.sourcePoId ?? null,
+            unitPriceSourcePoReference: latestCost?.sourcePoReference ?? null,
+          },
           updated_at: new Date().toISOString(),
         };
       });
