@@ -11,6 +11,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { getPoPortalData } from "@/lib/po-portal";
+import { poDurationFromDates } from "@/lib/po-duration";
 import { formatNumber } from "@/lib/baseline-data";
 import {
   canCreatePo,
@@ -774,6 +775,7 @@ type IncomingEtaTooltipItem = {
   poStatus: string;
   productName: string;
   productTitle: string;
+  payment1PaidDate: string;
   quotationReference: string;
   receivedQty: number;
   sku: string;
@@ -971,6 +973,7 @@ function groupedIncomingPos(rows: IncomingEtaSupplierRow[]) {
       lineStatuses: string[];
       lineCount: number;
       orderedQty: number;
+      payment1PaidDate: string;
       poDetailHref: string;
       poId: string;
       poReference: string;
@@ -994,6 +997,7 @@ function groupedIncomingPos(rows: IncomingEtaSupplierRow[]) {
         lineStatuses: [] as string[],
         lineCount: 0,
         orderedQty: 0,
+        payment1PaidDate: item.payment1PaidDate,
         poDetailHref: item.poDetailHref || (item.poId ? `/po/${item.poId}` : "/po"),
         poId: item.poId,
         poReference: item.poReference,
@@ -1016,6 +1020,9 @@ function groupedIncomingPos(rows: IncomingEtaSupplierRow[]) {
       }
       if (!current.latestSupplierComment && item.latestSupplierComment) {
         current.latestSupplierComment = item.latestSupplierComment;
+      }
+      if (!current.payment1PaidDate && item.payment1PaidDate) {
+        current.payment1PaidDate = item.payment1PaidDate;
       }
       if (!current.quotationReference && item.quotationReference) {
         current.quotationReference = item.quotationReference;
@@ -1484,6 +1491,7 @@ export default async function PoPortalPage({
           etaStatus,
           headerPurpose: group.headerPurpose,
           lineCount: group.lineCount,
+          payment1PaidDate: group.payment1PaidDate,
           poDetailHref: group.poDetailHref || `/po/${group.poId}`,
           poId: group.poId,
           poReference: group.poReference,
@@ -1522,6 +1530,7 @@ export default async function PoPortalPage({
         etaStatus,
         headerPurpose: row.headerPurpose,
         lineCount: row.lineCount,
+        payment1PaidDate: row.payment1PaidDate,
         poDetailHref: row.poDetailHref,
         poId: row.poId,
         poReference: row.poReference,
@@ -1555,6 +1564,7 @@ export default async function PoPortalPage({
     dateReceived: row.dateReceived,
     etaDate: row.etaDate,
     lineCount: row.lineCount,
+    payment1PaidDate: row.payment1PaidDate,
     poId: row.poId,
     receivedQty: row.receivedQty,
     source: row.source,
@@ -2064,6 +2074,12 @@ export default async function PoPortalPage({
       row.source === "active" &&
       row.balanceQty > 0 &&
       !["Received", "Closed", "Cancelled"].includes(row.status);
+    const duration = poDurationFromDates({
+      payment1PaidDate: row.payment1PaidDate,
+      receivedDate: row.dateReceived,
+      today: incomingToday,
+    });
+    const showDurationHelper = duration.helper === "Completed" || duration.helper === "In progress";
 
     return (
     <tr
@@ -2090,6 +2106,12 @@ export default async function PoPortalPage({
       </td>
       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
         {row.dateReceived ? formatShortDate(row.dateReceived) : "-"}
+      </td>
+      <td className="whitespace-nowrap px-3 py-2" title={duration.detail}>
+        <p className="font-mono text-xs font-semibold text-[#172026]">{duration.value}</p>
+        {showDurationHelper ? (
+          <p className="mt-0.5 text-[11px] font-semibold text-[#667380]">{duration.helper}</p>
+        ) : null}
       </td>
       <td className="min-w-0 px-3 py-2 font-semibold">
         {row.supplierName || "-"}
@@ -3428,11 +3450,12 @@ export default async function PoPortalPage({
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                <table className="w-full min-w-[1320px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[1430px] table-fixed text-left text-sm">
                   <colgroup>
                     <col className="w-[104px]" />
                     <col className="w-[112px]" />
                     <col className="w-[112px]" />
+                    <col className="w-[110px]" />
                     <col className="w-[15%]" />
                     <col className="w-[20%]" />
                     <col className="w-[18%]" />
@@ -3447,6 +3470,7 @@ export default async function PoPortalPage({
                       <th className="px-3 py-2 font-semibold">ETA date</th>
                       <th className="px-3 py-2 font-semibold">Timing</th>
                       <th className="px-3 py-2 font-semibold">Date received</th>
+                      <th className="px-3 py-2 font-semibold">Duration</th>
                       <th className="px-3 py-2 font-semibold">Supplier</th>
                       <th className="px-3 py-2 font-semibold">PO / Quote</th>
                       <th className="px-3 py-2 font-semibold">Purpose / Tag</th>
@@ -3461,13 +3485,13 @@ export default async function PoPortalPage({
                     {primaryIncomingActionRows.map(renderIncomingActionRow)}
                     {incomingActionRows.length === 0 ? (
                       <tr>
-                        <td className="px-3 py-4 text-sm text-[#667380]" colSpan={11}>
+                        <td className="px-3 py-4 text-sm text-[#667380]" colSpan={12}>
                           No scheduled incoming ETA records found.
                         </td>
                       </tr>
                     ) : null}
                     <tr data-incoming-empty-state hidden>
-                      <td className="px-3 py-4 text-sm text-[#667380]" colSpan={11}>
+                      <td className="px-3 py-4 text-sm text-[#667380]" colSpan={12}>
                         No incoming records for the current chart selection.
                       </td>
                     </tr>
@@ -3476,7 +3500,7 @@ export default async function PoPortalPage({
                 </div>
                 {extraIncomingActionRows.length > 0 ? (
                   <details className="group border-t border-[#edf1f5]" data-incoming-extra-details>
-                    <summary className="flex min-w-[1320px] cursor-pointer list-none justify-center bg-white px-3 py-3 text-sm font-semibold text-[#255f85] hover:bg-[#f7f9fb]">
+                    <summary className="flex min-w-[1430px] cursor-pointer list-none justify-center bg-white px-3 py-3 text-sm font-semibold text-[#255f85] hover:bg-[#f7f9fb]">
                       <span className="group-open:hidden">
                         Expand Incoming List ({formatNumber(extraIncomingActionRows.length)} more)
                       </span>
@@ -3485,11 +3509,12 @@ export default async function PoPortalPage({
                       </span>
                     </summary>
                     <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1320px] table-fixed text-left text-sm">
+                    <table className="w-full min-w-[1430px] table-fixed text-left text-sm">
                       <colgroup>
                         <col className="w-[104px]" />
                         <col className="w-[112px]" />
                         <col className="w-[112px]" />
+                        <col className="w-[110px]" />
                         <col className="w-[15%]" />
                         <col className="w-[20%]" />
                         <col className="w-[18%]" />

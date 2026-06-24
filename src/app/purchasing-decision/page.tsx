@@ -63,10 +63,6 @@ function formatDecimal(value: number, digits = 2) {
   }).format(value);
 }
 
-function qtyValue(value: number) {
-  return Number.isFinite(value) ? String(value) : "0";
-}
-
 function alertLabel(status: string) {
   if (status === "order_now") {
     return "Order now";
@@ -652,12 +648,6 @@ export default async function PurchasingDecisionPage({
                           name="poSupplier"
                           type="hidden"
                           value={line.supplier}
-                        />
-                        <input
-                          form={createPoFormId}
-                          name="poUnitPrice"
-                          type="hidden"
-                          value={qtyValue(line.unitPrice)}
                         />
                       </td>
                       <td className={`${stickyCellBase} left-[52px] z-30 w-[96px] min-w-[96px] ${rowBackground}`}>

@@ -1640,6 +1640,19 @@ export async function updatePoDraftLinesAction(
       throw new Error("No PO lines to update");
     }
 
+    const existingItemIds = itemUuids.filter(Boolean);
+    const { data: existingItems, error: existingItemsError } = await supabase
+      .from("po_items")
+      .select("id,unit_price,source_payload")
+      .eq("po_id", poId)
+      .in("id", existingItemIds);
+    if (existingItemsError) {
+      throw new Error(existingItemsError.message);
+    }
+    const existingItemById = new Map(
+      (existingItems ?? []).map((item) => [String(item.id), item]),
+    );
+
     if (deleteItemUuids.size > 0) {
       const { error } = await supabase
         .from("po_items")
@@ -1673,6 +1686,24 @@ export async function updatePoDraftLinesAction(
       );
       const currency = (currencyValues[index] || "THB").toUpperCase();
       const landedUnitCost = unitPrice + freightUnitCost;
+      const existingItem = existingItemById.get(itemUuid);
+      const existingUnitPrice = Number(existingItem?.unit_price ?? 0);
+      const sourcePayload =
+        existingItem?.source_payload &&
+        typeof existingItem.source_payload === "object" &&
+        !Array.isArray(existingItem.source_payload)
+          ? (existingItem.source_payload as Record<string, unknown>)
+          : {};
+      const nextSourcePayload =
+        Math.abs(existingUnitPrice - unitPrice) > 0.0000001
+          ? {
+              ...sourcePayload,
+              unitPriceSource: "manual",
+              unitPriceSourceDate: null,
+              unitPriceSourcePoId: null,
+              unitPriceSourcePoReference: null,
+            }
+          : sourcePayload;
 
       const { error } = await supabase
         .from("po_items")
@@ -1689,6 +1720,7 @@ export async function updatePoDraftLinesAction(
           line_amount: orderedQty * unitPrice,
           currency,
           remark: remarkValues[index] || null,
+          source_payload: nextSourcePayload,
           updated_at: new Date().toISOString(),
         })
         .eq("id", itemUuid)

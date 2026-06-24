@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserProfile } from "@/lib/auth";
 import {
+  AVG_PURCHASE_COST_CUTOFF_DATE,
   FIXED_LANDCOST_ESTIMATE,
   getCostPriceMonitorData,
 } from "@/lib/cost-price-monitor";
@@ -20,9 +21,11 @@ const headers = [
   "Supplier",
   "Category",
   "Product Group",
-  "Avg purchase / unit",
+  "Unit summary mode",
+  `Purchase / unit (PO >= ${AVG_PURCHASE_COST_CUTOFF_DATE})`,
+  "Purchase / unit source",
   "Latest purchase / unit",
-  "Avg landed / unit",
+  "Landed / unit",
   "Latest landed / unit",
   "Max estimated land cost / unit",
   "Max estimated cost",
@@ -195,7 +198,20 @@ function toNonNegativeNumber(value: string | null, fallback: number) {
 }
 
 function printBaseCost(row: { averagePurchasePrice: number; latestPurchasePrice: number }) {
-  return row.latestPurchasePrice > 0 ? row.latestPurchasePrice : row.averagePurchasePrice > 0 ? row.averagePurchasePrice : 0;
+  return row.averagePurchasePrice > 0 ? row.averagePurchasePrice : row.latestPurchasePrice > 0 ? row.latestPurchasePrice : 0;
+}
+
+function averagePurchaseSourceLabel(source: "recent_avg" | "latest_fallback" | "manual" | "missing") {
+  if (source === "manual") {
+    return "Manual override";
+  }
+  if (source === "recent_avg") {
+    return "Recent avg";
+  }
+  if (source === "latest_fallback") {
+    return "Latest cost fallback";
+  }
+  return "Missing cost";
 }
 
 function printLandedAddOn(row: { manualLandedCost: number | null }, estimatedLandCost: number) {
@@ -274,7 +290,9 @@ export async function GET(request: NextRequest) {
         row.supplier,
         row.category,
         row.productGroup,
+        row.rollupMode === "stock_weighted" ? "Weighted" : "No stock fallback",
         row.averagePurchasePrice,
+        averagePurchaseSourceLabel(row.averagePurchasePriceSource),
         row.latestPurchasePrice,
         row.averageLandedCost,
         row.latestLandedCost,

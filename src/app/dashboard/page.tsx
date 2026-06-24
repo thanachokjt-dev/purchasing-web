@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
+  Coins,
   Clock3,
   Database,
   PackageCheck,
@@ -25,6 +26,7 @@ import {
   type ShopifySyncSourceSummary,
 } from "@/lib/po-dashboard";
 import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
+import { getDashboardStockValueData, type StockValueData } from "@/lib/stock-value-data";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +79,10 @@ function formatCurrency(value: number | null) {
     return "N/A";
   }
   return currencyFormatter.format(value);
+}
+
+function formatMoneyValue(value: number) {
+  return currencyFormatter.format(Math.round(value));
 }
 
 function formatDateTime(value: string | null) {
@@ -171,7 +177,10 @@ export default async function DashboardPage() {
     );
   }
 
-  const dashboard = await getPoDashboardData();
+  const [dashboard, stockValue] = await Promise.all([
+    getPoDashboardData(),
+    getDashboardStockValueData(),
+  ]);
   const syncTone = statusTone(dashboard.sync.dataFreshness);
 
   const poCards = [
@@ -481,6 +490,8 @@ export default async function DashboardPage() {
             ))}
           </DashboardSection>
 
+          <InventoryStockValueSection data={stockValue} />
+
           <PoSizeMixOverview cards={dashboard.sizeMix.cards} sizeMix={dashboard.sizeMix} />
 
           <DashboardSection title="Payment Overview">
@@ -561,7 +572,7 @@ function ShopifySyncCard({
         ))}
       </div>
       {summary.errorMessage ? (
-        <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+        <div className="mt-3 whitespace-pre-line break-words rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           {summary.errorMessage}
         </div>
       ) : null}
@@ -575,6 +586,186 @@ function SyncDetail({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-wide text-[#6b7683]">{label}</p>
       <p className="mt-1 text-sm font-semibold text-[#172026]">{value}</p>
     </div>
+  );
+}
+
+function InventoryStockValueSection({ data }: { data: StockValueData }) {
+  const cards = [
+    {
+      detail: "Positive-stock SKUs from current_inventory_by_sku.",
+      icon: Database,
+      label: "Total Current Inventory Qty",
+      tone: "blue" as const,
+      value: formatNumber(data.summary.totalCurrentQty),
+    },
+    {
+      detail: "Current qty multiplied by effective purchase unit cost.",
+      icon: Coins,
+      label: "Estimated Stock Value",
+      tone: data.summary.estimatedStockValue > 0 ? ("green" as const) : ("gray" as const),
+      value: formatMoneyValue(data.summary.estimatedStockValue),
+    },
+    {
+      detail: "Inventory quantity with valid effective purchase cost.",
+      icon: CheckCircle2,
+      label: "Valued Qty",
+      tone: data.summary.valuedQty > 0 ? ("green" as const) : ("gray" as const),
+      value: formatNumber(data.summary.valuedQty),
+    },
+    {
+      detail: "Inventory quantity with missing or invalid effective purchase cost.",
+      icon: AlertTriangle,
+      label: "Missing Cost Qty",
+      tone: data.summary.missingCostQty > 0 ? ("yellow" as const) : ("green" as const),
+      value: formatNumber(data.summary.missingCostQty),
+    },
+    {
+      detail: "Valued quantity divided by total current inventory quantity.",
+      icon: Activity,
+      label: "Cost Coverage %",
+      tone: data.summary.costCoveragePercent >= 80 ? ("green" as const) : data.summary.costCoveragePercent > 0 ? ("yellow" as const) : ("gray" as const),
+      value: formatPercent(data.summary.costCoveragePercent),
+    },
+  ];
+
+  return (
+    <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#64707d]">
+            Inventory Stock Value
+          </p>
+          <h2 className="mt-2 text-xl font-semibold text-[#172026]">Current Stock Valuation MVP</h2>
+          <p className="mt-2 text-sm text-[#5c6875]">
+            Uses positive Shopify stock and effective purchase cost: recent PO average from 2026-04-01 onward, with Latest purchase / unit fallback.
+          </p>
+        </div>
+        <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">
+          Missing costs stay visible and are not valued as zero.
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {cards.map((card) => (
+          <SummaryCard {...card} key={card.label} />
+        ))}
+      </div>
+
+      {data.warnings.length > 0 ? (
+        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {data.warnings.slice(0, 3).join(" ")}
+        </div>
+      ) : null}
+
+      <div className="mt-5 grid gap-5 2xl:grid-cols-2">
+        <StockValueMixTable rows={data.supplierMix} title="Supplier Stock Value Mix" />
+        <StockValueMixTable rows={data.categoryMix} title="Category Stock Value Mix" />
+      </div>
+
+      <div className="mt-5">
+        <MissingCostSkuTable rows={data.missingCostSkus} />
+      </div>
+    </section>
+  );
+}
+
+function StockValueMixTable({ rows, title }: { rows: StockValueData["supplierMix"]; title: string }) {
+  return (
+    <section className="rounded-lg border border-[#dfe4ea] bg-[#f9fafb] p-4">
+      <h3 className="text-sm font-semibold text-[#172026]">{title}</h3>
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-[860px] text-left text-xs">
+          <thead className="text-[#5d6a78]">
+            <tr className="border-b border-[#dfe4ea]">
+              <th className="py-2 pr-3 font-semibold">{title.startsWith("Supplier") ? "Supplier" : "Category"}</th>
+              <th className="py-2 pr-3 text-right font-semibold">Current Qty</th>
+              <th className="py-2 pr-3 text-right font-semibold">Valued Qty</th>
+              <th className="py-2 pr-3 text-right font-semibold">Missing Cost Qty</th>
+              <th className="py-2 pr-3 text-right font-semibold">Cost Coverage %</th>
+              <th className="py-2 pr-3 text-right font-semibold">Estimated Stock Value</th>
+              <th className="py-2 text-right font-semibold">% of Total Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length > 0 ? (
+              rows.slice(0, 12).map((row) => (
+                <tr className="border-b border-[#e6ebf0] last:border-b-0" key={row.label}>
+                  <td className="max-w-[220px] py-2 pr-3 align-top font-semibold text-[#172026]">{row.label}</td>
+                  <td className="py-2 pr-3 text-right align-top text-[#44515f]">{formatNumber(row.currentQty)}</td>
+                  <td className="py-2 pr-3 text-right align-top text-[#44515f]">{formatNumber(row.valuedQty)}</td>
+                  <td className="py-2 pr-3 text-right align-top text-[#44515f]">{formatNumber(row.missingCostQty)}</td>
+                  <td className="py-2 pr-3 text-right align-top font-semibold text-[#172026]">{formatPercent(row.costCoveragePercent)}</td>
+                  <td className="py-2 pr-3 text-right align-top font-semibold text-[#172026]">{formatMoneyValue(row.estimatedStockValue)}</td>
+                  <td className="py-2 text-right align-top text-[#44515f]">{formatPercent(row.percentOfTotalEstimatedValue)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="py-3 text-[#667380]" colSpan={7}>
+                  No positive-stock inventory found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function MissingCostSkuTable({ rows }: { rows: StockValueData["missingCostSkus"] }) {
+  return (
+    <section className="rounded-lg border border-[#dfe4ea] bg-[#f9fafb] p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-[#172026]">Missing Cost SKUs</h3>
+          <p className="mt-1 text-xs text-[#667380]">Top 50 by current quantity.</p>
+        </div>
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+          Review before using for valuation
+        </span>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-[1040px] text-left text-xs">
+          <thead className="text-[#5d6a78]">
+            <tr className="border-b border-[#dfe4ea]">
+              <th className="py-2 pr-3 font-semibold">SKU</th>
+              <th className="py-2 pr-3 font-semibold">Product name</th>
+              <th className="py-2 pr-3 font-semibold">Variant / size / color</th>
+              <th className="py-2 pr-3 font-semibold">Supplier</th>
+              <th className="py-2 pr-3 font-semibold">Category</th>
+              <th className="py-2 pr-3 text-right font-semibold">Current Qty</th>
+              <th className="py-2 font-semibold">Cost Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length > 0 ? (
+              rows.map((row) => (
+                <tr className="border-b border-[#e6ebf0] last:border-b-0" key={row.sku}>
+                  <td className="max-w-[160px] py-2 pr-3 align-top font-mono text-[11px] text-[#172026]">{row.sku}</td>
+                  <td className="max-w-[260px] py-2 pr-3 align-top font-medium text-[#172026]">{row.productName}</td>
+                  <td className="max-w-[200px] py-2 pr-3 align-top text-[#44515f]">{row.variantTitle || "N/A"}</td>
+                  <td className="max-w-[160px] py-2 pr-3 align-top text-[#44515f]">{row.supplier}</td>
+                  <td className="max-w-[160px] py-2 pr-3 align-top text-[#44515f]">{row.category}</td>
+                  <td className="py-2 pr-3 text-right align-top font-semibold text-[#172026]">{formatNumber(row.currentQty)}</td>
+                  <td className="py-2 align-top">
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                      {row.status}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="py-3 text-[#667380]" colSpan={7}>
+                  All positive-stock SKUs have effective purchase cost.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

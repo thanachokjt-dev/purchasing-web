@@ -45,6 +45,7 @@ next-env.d.ts
 .codex-*.log
 .codex-*.err.log
 .codex-logs/
+/cleanup-logs/
 supabase/.temp/
 
 .vercel

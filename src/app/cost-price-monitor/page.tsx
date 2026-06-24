@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Fragment } from "react";
 import {
   AlertTriangle,
   ArrowDown,
@@ -28,6 +29,7 @@ import {
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import {
+  AVG_PURCHASE_COST_CUTOFF_DATE,
   FIXED_LANDCOST_ESTIMATE,
   getCostPriceMonitorData,
   LOW_MARGIN_CRITICAL_PCT,
@@ -76,6 +78,36 @@ function moneyValue(value: number) {
   return value > 0 ? numberValue(value) : "0";
 }
 
+function averagePurchaseSourceLabel(source: CostPriceMonitorRow["averagePurchasePriceSource"]) {
+  if (source === "manual") {
+    return "Manual override";
+  }
+  if (source === "recent_avg") {
+    return "Recent avg";
+  }
+  if (source === "latest_fallback") {
+    return "Latest cost fallback";
+  }
+  return "Missing recent cost";
+}
+
+function rollupModeLabel(mode: CostPriceMonitorRow["rollupMode"]) {
+  return mode === "stock_weighted" ? "Weighted" : "No stock fallback";
+}
+
+function variantCostSourceLabel(source: CostPriceMonitorRow["skuDetails"][number]["effectivePurchasePriceSource"]) {
+  if (source === "manual") {
+    return "Manual override";
+  }
+  if (source === "recent_avg") {
+    return "Recent avg";
+  }
+  if (source === "latest_fallback") {
+    return "Latest cost fallback";
+  }
+  return "Missing cost";
+}
+
 function marginValue(value: number | null) {
   return value === null ? "N/A" : `${value.toFixed(1)}%`;
 }
@@ -94,7 +126,7 @@ function badgeClass(label: string) {
   if (label === "Hidden") {
     return "border-slate-200 bg-slate-100 text-slate-700";
   }
-  if (label === "Critical margin" || label === "Missing cost") {
+  if (label === "Critical margin" || label === "Missing cost" || label === "Missing recent cost") {
     return "border-red-200 bg-red-50 text-red-800";
   }
   if (label === "Low margin" || label === "No landed cost" || label === "No recent PO") {
@@ -522,11 +554,16 @@ export default async function CostPriceMonitorPage({
                       <SortHeader params={params} sortKey="category">Category</SortHeader>
                     </th>
                     <th className="px-3 py-3 font-semibold">Product Group</th>
-                    <th className="px-3 py-3 text-right font-semibold">Avg purchase / unit</th>
+                    <th className="px-3 py-3 text-right font-semibold">
+                      <span className="block">Purchase / unit</span>
+                      <span className="mt-1 block text-[11px] font-medium normal-case leading-snug text-[#667380]">
+                        Valid PO cost lines from {AVG_PURCHASE_COST_CUTOFF_DATE} onward
+                      </span>
+                    </th>
                     <th className="px-3 py-3 text-right font-semibold">
                       <SortHeader params={params} sortKey="latest_purchase_price">Latest purchase / unit</SortHeader>
                     </th>
-                    <th className="px-3 py-3 text-right font-semibold">Avg landed / unit</th>
+                    <th className="px-3 py-3 text-right font-semibold">Landed / unit</th>
                     <th className="px-3 py-3 text-right font-semibold">
                       <SortHeader params={params} sortKey="latest_landed_cost">Latest landed / unit</SortHeader>
                     </th>
@@ -546,11 +583,11 @@ export default async function CostPriceMonitorPage({
                 <tbody>
                   {data.rows.length > 0 ? (
                     data.rows.map((row) => (
+                      <Fragment key={row.groupKey}>
                       <tr
-                        className="border-b border-[#edf1f5] align-top last:border-b-0"
+                        className="border-b border-[#edf1f5] align-top"
                         data-group-key={row.groupKey}
                         data-override-row
-                        key={row.groupKey}
                       >
                         <td className="px-3 py-3 text-center">
                           <RowSelectionCheckbox groupKey={row.groupKey} />
@@ -577,18 +614,30 @@ export default async function CostPriceMonitorPage({
                         <td className="max-w-[170px] px-3 py-3 text-[#44515f]">{row.supplier}</td>
                         <td className="max-w-[150px] px-3 py-3 text-[#44515f]">{row.category}</td>
                         <td className="max-w-[180px] px-3 py-3 text-[#44515f]">{row.productGroup}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-[#172026]">{moneyValue(row.averagePurchasePrice)}</td>
+                        <td className="px-3 py-3 text-right">
+                          <p className="font-semibold text-[#172026]">{moneyValue(row.averagePurchasePrice)}</p>
+                          <p className="mt-1 text-[11px] font-medium text-[#667380]">
+                            {rollupModeLabel(row.rollupMode)} · {averagePurchaseSourceLabel(row.averagePurchasePriceSource)}
+                          </p>
+                        </td>
                         <td className="px-3 py-3 text-right">
                           <PriceCell source={row.latestPurchasePriceSource} value={row.latestPurchasePrice} />
                         </td>
-                        <td className="px-3 py-3 text-right font-semibold text-[#172026]">{moneyValue(row.averageLandedCost)}</td>
+                        <td className="px-3 py-3 text-right">
+                          <p className="font-semibold text-[#172026]">{moneyValue(row.averageLandedCost)}</p>
+                          <p className="mt-1 text-[11px] font-medium text-[#667380]">{rollupModeLabel(row.rollupMode)}</p>
+                        </td>
                         <td className="px-3 py-3 text-right">
                           <PriceCell manualLabel="Manual + land" source={row.latestLandedCostSource} value={row.latestLandedCost} />
                         </td>
                         <td className="px-3 py-3 text-right">
                           <PriceCell source={row.sellingPriceSource} value={row.sellingPrice} />
+                          <p className="mt-1 text-[11px] font-medium text-[#667380]">{rollupModeLabel(row.rollupMode)}</p>
                         </td>
-                        <td className={`px-3 py-3 text-right ${marginClass(row.marginPct)}`}>{marginValue(row.marginPct)}</td>
+                        <td className={`px-3 py-3 text-right ${marginClass(row.marginPct)}`}>
+                          <p>{marginValue(row.marginPct)}</p>
+                          <p className="mt-1 text-[11px] font-medium text-[#667380]">{rollupModeLabel(row.rollupMode)}</p>
+                        </td>
                         <td className="max-w-[160px] px-3 py-3">
                           {row.latestPoId ? (
                             <Link className="inline-flex items-center gap-1 font-semibold text-[#174ea6] hover:underline" href={row.href}>
@@ -610,7 +659,7 @@ export default async function CostPriceMonitorPage({
                             <input name="category" type="hidden" value={row.category} />
                             <input name="productGroup" type="hidden" value={row.productGroup} />
                             <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64707d]">
-                              Purchase
+                              Group purchase default
                               <input
                                 className={smallInputClass}
                                 data-override-input="true"
@@ -622,7 +671,7 @@ export default async function CostPriceMonitorPage({
                               />
                             </label>
                             <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64707d]">
-                              Landed
+                              Group landed default
                               <input
                                 className={smallInputClass}
                                 data-override-input="true"
@@ -634,7 +683,7 @@ export default async function CostPriceMonitorPage({
                               />
                             </label>
                             <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64707d]">
-                              Selling
+                              Group selling default
                               <input
                                 className={smallInputClass}
                                 data-override-input="true"
@@ -651,7 +700,7 @@ export default async function CostPriceMonitorPage({
                                 groupKey={row.groupKey}
                                 loadingText="Saving"
                               >
-                                Save override
+                                Save group default
                               </RowOverrideSubmitButton>
                             ) : (
                               <button
@@ -693,6 +742,104 @@ export default async function CostPriceMonitorPage({
                           </div>
                         </td>
                       </tr>
+                      <tr className="border-b border-[#edf1f5] bg-[#fbfcfd]">
+                        <td className="px-3 py-3" colSpan={21}>
+                          <details>
+                            <summary className="cursor-pointer text-xs font-semibold text-[#174ea6]">
+                              SKU / Variant details ({row.skuDetails.length})
+                            </summary>
+                            <div className="mt-3 overflow-x-auto rounded-md border border-[#e1e6ec] bg-white">
+                              <table className="min-w-[1500px] text-left text-xs">
+                                <thead className="bg-[#f8fafc] text-[#5d6a78]">
+                                  <tr className="border-b border-[#e1e6ec]">
+                                    <th className="px-3 py-2 font-semibold">SKU</th>
+                                    <th className="px-3 py-2 font-semibold">Variant / size / color</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Current stock qty</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Recent avg purchase / unit</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Latest purchase / unit</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Effective purchase / unit</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Effective landed / unit</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Shopify selling price</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Effective selling price</th>
+                                    <th className="px-3 py-2 text-right font-semibold">Margin %</th>
+                                    <th className="px-3 py-2 font-semibold">Cost source/status</th>
+                                    <th className="px-3 py-2 font-semibold">SKU override</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {row.skuDetails.map((detail) => (
+                                    <tr className="border-b border-[#edf1f5] align-top last:border-b-0" data-sku={detail.sku} data-sku-override-row key={detail.sku}>
+                                      <td className="px-3 py-2 font-mono text-[11px] text-[#172026]">
+                                        {detail.sku}
+                                        <input name="skuOverrideSku" type="hidden" value={detail.sku} />
+                                        <input name="skuOverrideGroupKey" type="hidden" value={row.groupKey} />
+                                      </td>
+                                      <td className="max-w-[180px] px-3 py-2 text-[#44515f]">{detail.variantTitle || detail.sku}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-[#172026]">{qtyValue(detail.currentQty)}</td>
+                                      <td className="px-3 py-2 text-right text-[#44515f]">{moneyValue(detail.recentAveragePurchasePrice)}</td>
+                                      <td className="px-3 py-2 text-right text-[#44515f]">{moneyValue(detail.latestPurchasePrice)}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-[#172026]">{moneyValue(detail.effectivePurchasePrice)}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-[#172026]">{moneyValue(detail.effectiveLandedCost)}</td>
+                                      <td className="px-3 py-2 text-right text-[#44515f]">{moneyValue(detail.shopifySellingPrice)}</td>
+                                      <td className="px-3 py-2 text-right font-semibold text-[#172026]">{moneyValue(detail.effectiveSellingPrice)}</td>
+                                      <td className={`px-3 py-2 text-right ${marginClass(detail.marginPct)}`}>{marginValue(detail.marginPct)}</td>
+                                      <td className="px-3 py-2 text-[#44515f]">{variantCostSourceLabel(detail.effectivePurchasePriceSource)}</td>
+                                      <td className="min-w-[330px] px-3 py-2">
+                                        <div className="grid grid-cols-4 gap-2">
+                                          <input
+                                            className={smallInputClass}
+                                            data-override-input="true"
+                                            defaultValue={detail.manualPurchasePrice ?? ""}
+                                            min="0"
+                                            name="skuManualPurchasePrice"
+                                            placeholder="Purchase"
+                                            step="0.0001"
+                                            type="number"
+                                          />
+                                          <input
+                                            className={smallInputClass}
+                                            data-override-input="true"
+                                            defaultValue={detail.manualLandedCost ?? ""}
+                                            min="0"
+                                            name="skuManualLandedCost"
+                                            placeholder="Landed"
+                                            step="0.0001"
+                                            type="number"
+                                          />
+                                          <input
+                                            className={smallInputClass}
+                                            data-override-input="true"
+                                            defaultValue={detail.manualSellingPrice ?? ""}
+                                            min="0"
+                                            name="skuManualSellingPrice"
+                                            placeholder="Selling"
+                                            step="0.0001"
+                                            type="number"
+                                          />
+                                          {data.overrideReady ? (
+                                            <RowOverrideSubmitButton
+                                              className="h-8 rounded-md bg-[#172026] px-2 text-xs font-semibold text-white disabled:opacity-50"
+                                              loadingText="Saving"
+                                              sku={detail.sku}
+                                            >
+                                              Save SKU
+                                            </RowOverrideSubmitButton>
+                                          ) : (
+                                            <button className="h-8 rounded-md bg-[#9aa5b1] px-2 text-xs font-semibold text-white" disabled type="button">
+                                              Migration required
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
+                      </Fragment>
                     ))
                   ) : (
                     <tr>

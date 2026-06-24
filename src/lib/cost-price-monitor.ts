@@ -7,6 +7,7 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 const PAGE_SIZE = 1000;
 export const COST_PRICE_MONITOR_PAGE_SIZE = 100;
+export const AVG_PURCHASE_COST_CUTOFF_DATE = "2026-04-01";
 export const LOW_MARGIN_WARNING_PCT = 35;
 export const LOW_MARGIN_CRITICAL_PCT = 20;
 export const FIXED_LANDCOST_ESTIMATE = 120;
@@ -69,6 +70,7 @@ type OverrideRow = {
   manual_selling_price: number | string | null;
   note: string | null;
   product_group?: string | null;
+  scope?: "sku" | "group_default" | string | null;
   sku?: string | null;
   supplier?: string | null;
   updated_at: string | null;
@@ -131,10 +133,6 @@ type SkuPlanningMeta = {
 };
 
 type GroupAccumulator = {
-  averageLandedDenominator: number;
-  averageLandedNumerator: number;
-  averagePurchaseDenominator: number;
-  averagePurchaseNumerator: number;
   categoryCounts: Map<string, number>;
   color: string;
   groupKey: string;
@@ -142,15 +140,26 @@ type GroupAccumulator = {
   latestPoId: string;
   latestTimestamp: number;
   latestLine: PoLineRow | null;
-  lines: Array<{ line: PoLineRow; qty: number; timestamp: number }>;
   mainName: string;
   productGroupCounts: Map<string, number>;
-  sellingPriceCount: number;
-  sellingPriceTotal: number;
+  purchaseStockValue: number;
+  landedStockValue: number;
+  sellingValue: number;
   skuVariants: Map<string, string>;
+  skuDetails: CostPriceMonitorSkuDetail[];
   stockQty: number;
   supplierCounts: Map<string, number>;
   imageUrl: string;
+};
+
+type SkuAccumulator = {
+  landedDenominator: number;
+  landedNumerator: number;
+  latestLine: PoLineRow | null;
+  latestTimestamp: number;
+  lines: Array<{ line: PoLineRow; qty: number; timestamp: number }>;
+  recentPurchaseDenominator: number;
+  recentPurchaseNumerator: number;
 };
 
 type ManualOverride = {
@@ -158,6 +167,25 @@ type ManualOverride = {
   manualPurchasePrice: number | null;
   manualSellingPrice: number | null;
   note: string;
+};
+
+export type CostPriceMonitorSkuDetail = {
+  currentQty: number;
+  effectiveLandedCost: number;
+  effectiveLandedCostSource: "actual" | "manual" | "missing";
+  effectivePurchasePrice: number;
+  effectivePurchasePriceSource: "recent_avg" | "latest_fallback" | "manual" | "missing";
+  effectiveSellingPrice: number;
+  effectiveSellingPriceSource: "actual" | "manual" | "missing";
+  latestPurchasePrice: number;
+  manualLandedCost: number | null;
+  manualPurchasePrice: number | null;
+  manualSellingPrice: number | null;
+  marginPct: number | null;
+  recentAveragePurchasePrice: number;
+  shopifySellingPrice: number;
+  sku: string;
+  variantTitle: string;
 };
 
 export type CostPriceMonitorFilters = {
@@ -195,6 +223,7 @@ type CleanCostPriceMonitorFilters = {
 export type CostPriceMonitorRow = {
   averageLandedCost: number;
   averagePurchasePrice: number;
+  averagePurchasePriceSource: "recent_avg" | "latest_fallback" | "manual" | "missing";
   badges: string[];
   category: string;
   color: string;
@@ -217,9 +246,11 @@ export type CostPriceMonitorRow = {
   marginPct: number | null;
   note: string;
   productGroup: string;
+  rollupMode: "stock_weighted" | "no_stock_fallback";
   sellingPrice: number;
   sellingPriceSource: "actual" | "manual" | "missing";
   skuCount: number;
+  skuDetails: CostPriceMonitorSkuDetail[];
   skuList: string;
   skuSummary: string;
   stockQty: number;
@@ -549,6 +580,34 @@ function purchaseTimestamp(line: PoLineRow) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function purchaseDateForAverage(line: PoLineRow) {
+  const order = Array.isArray(line.po_orders) ? line.po_orders[0] : line.po_orders;
+  return (order?.po_date || order?.created_at || order?.updated_at || line.created_at || line.updated_at || "").slice(0, 10);
+}
+
+function isRecentAveragePurchaseLine(line: PoLineRow) {
+  const purchaseDate = purchaseDateForAverage(line);
+  return purchaseDate >= AVG_PURCHASE_COST_CUTOFF_DATE;
+}
+
+function isMissingVariantOverrideTableError(error: { code?: string; message?: string } | null) {
+  const message = error?.message ?? "";
+
+  return (
+    error?.code === "42P01" ||
+    /relation .*cost_price_monitor_variant_overrides.*does not exist/i.test(message)
+  );
+}
+
+function isPermissionOrRlsError(error: { code?: string; message?: string } | null) {
+  return (
+    error?.code === "42501" ||
+    /row-level security/i.test(error?.message ?? "") ||
+    /permission denied/i.test(error?.message ?? "") ||
+    /violates row-level security/i.test(error?.message ?? "")
+  );
+}
+
 function latestPurchaseDate(line: PoLineRow | null) {
   if (!line) {
     return "";
@@ -600,6 +659,13 @@ function validPoLine(line: PoLineRow) {
 
 function weightedAverage(numerator: number, denominator: number) {
   return denominator > 0 ? numerator / denominator : 0;
+}
+
+function averagePositive(values: number[]) {
+  const validValues = values.filter((value) => Number.isFinite(value) && value > 0);
+  return validValues.length > 0
+    ? validValues.reduce((total, value) => total + value, 0) / validValues.length
+    : 0;
 }
 
 async function fetchAll<T>(
@@ -758,6 +824,31 @@ function firstPositive(...values: Array<number | null | undefined>) {
   return values.find((value) => (value ?? 0) > 0) ?? 0;
 }
 
+function effectiveAveragePurchasePrice(recentAverage: number, latestPurchase: number, manualPurchasePrice?: number | null) {
+  if ((manualPurchasePrice ?? 0) > 0 && Number.isFinite(manualPurchasePrice)) {
+    return {
+      source: "manual" as const,
+      value: manualPurchasePrice ?? 0,
+    };
+  }
+  if (recentAverage > 0 && Number.isFinite(recentAverage)) {
+    return {
+      source: "recent_avg" as const,
+      value: recentAverage,
+    };
+  }
+  if (latestPurchase > 0 && Number.isFinite(latestPurchase)) {
+    return {
+      source: "latest_fallback" as const,
+      value: latestPurchase,
+    };
+  }
+  return {
+    source: "missing" as const,
+    value: 0,
+  };
+}
+
 function mostCommon(values: Map<string, number>, fallback: string) {
   return (
     [...values.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? fallback
@@ -772,10 +863,6 @@ function addCount(map: Map<string, number>, value: string, weight = 1) {
 
 function emptyAccumulator(meta: SkuPlanningMeta): GroupAccumulator {
   return {
-    averageLandedDenominator: 0,
-    averageLandedNumerator: 0,
-    averagePurchaseDenominator: 0,
-    averagePurchaseNumerator: 0,
     categoryCounts: new Map([[meta.category, 1]]),
     color: meta.color,
     groupKey: meta.groupKey,
@@ -783,11 +870,12 @@ function emptyAccumulator(meta: SkuPlanningMeta): GroupAccumulator {
     latestLine: null,
     latestPoId: "",
     latestTimestamp: 0,
-    lines: [],
     mainName: meta.mainName,
     productGroupCounts: new Map([[meta.productGroup, 1]]),
-    sellingPriceCount: meta.sellingPrice > 0 ? 1 : 0,
-    sellingPriceTotal: meta.sellingPrice > 0 ? meta.sellingPrice : 0,
+    landedStockValue: 0,
+    purchaseStockValue: 0,
+    sellingValue: 0,
+    skuDetails: [],
     skuVariants: new Map([[meta.sku, meta.variantTitle || meta.sku]]),
     stockQty: 0,
     supplierCounts: new Map([[meta.supplier, 1]]),
@@ -865,8 +953,11 @@ function sortRows(rows: CostPriceMonitorRow[], sortKey: string, direction: "asc"
 
 function buildBadges(row: Omit<CostPriceMonitorRow, "badges">, latestLandedActual: number) {
   const badges: string[] = [];
-  if (row.costBasis <= 0) {
+  if (row.averagePurchasePrice <= 0) {
     badges.push("Missing cost");
+  }
+  if (row.averagePurchasePrice <= 0) {
+    badges.push("Missing recent cost");
   }
   if (
     row.latestPurchasePriceSource === "manual" ||
@@ -942,47 +1033,29 @@ function applyFilters(rows: CostPriceMonitorRow[], filters: ReturnType<typeof cl
 
 function manualOverrideForGroup(
   groupKeyValue: string,
-  skuValues: string[],
   overridesByGroup: Map<string, OverrideRow>,
-  overridesBySku: Map<string, OverrideRow>,
 ): ManualOverride {
   const groupOverride = overridesByGroup.get(groupKeyValue);
-  if (groupOverride) {
-    return {
-      manualLandedCost: groupOverride.manual_landed_cost == null ? null : toNumber(groupOverride.manual_landed_cost),
-      manualPurchasePrice:
-        groupOverride.manual_purchase_price == null ? null : toNumber(groupOverride.manual_purchase_price),
-      manualSellingPrice: groupOverride.manual_selling_price == null ? null : toNumber(groupOverride.manual_selling_price),
-      note: compactText(groupOverride.note),
-    };
-  }
-
-  const skuOverrides = skuValues.map((sku) => overridesBySku.get(sku)).filter(Boolean) as OverrideRow[];
-  const average = (getter: (row: OverrideRow) => number | string | null | undefined) => {
-    const values = skuOverrides
-      .map(getter)
-      .flatMap((value) => (value === null || value === undefined ? [] : [toNumber(value)]));
-    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-  };
-
   return {
-    manualLandedCost: average((row) => row.manual_landed_cost),
-    manualPurchasePrice: average((row) => row.manual_purchase_price),
-    manualSellingPrice: average((row) => row.manual_selling_price),
-    note: skuOverrides.map((row) => compactText(row.note)).find(Boolean) ?? "",
+    manualLandedCost: groupOverride?.manual_landed_cost == null ? null : toNumber(groupOverride.manual_landed_cost),
+    manualPurchasePrice: groupOverride?.manual_purchase_price == null ? null : toNumber(groupOverride.manual_purchase_price),
+    manualSellingPrice: groupOverride?.manual_selling_price == null ? null : toNumber(groupOverride.manual_selling_price),
+    note: compactText(groupOverride?.note),
   };
 }
 
-function latestPoWeightedCost(
-  accumulator: GroupAccumulator,
+function latestPoWeightedCostFromEntries(
+  entries: Array<{ line: PoLineRow; qty: number; timestamp: number }>,
+  latestLine: PoLineRow | null,
+  latestTimestamp: number,
   field: "landed_unit_cost" | "unit_price",
 ) {
-  if (!accumulator.latestLine) {
+  if (!latestLine) {
     return { actual: 0, denominator: 0 };
   }
-  const latestPoIdValue = latestPoId(accumulator.latestLine);
-  const latestLines = accumulator.lines.filter((entry) =>
-    latestPoIdValue ? latestPoId(entry.line) === latestPoIdValue : entry.timestamp === accumulator.latestTimestamp,
+  const latestPoIdValue = latestPoId(latestLine);
+  const latestLines = entries.filter((entry) =>
+    latestPoIdValue ? latestPoId(entry.line) === latestPoIdValue : entry.timestamp === latestTimestamp,
   );
   const numerator = latestLines.reduce((sum, entry) => {
     const value = toNumber(entry.line[field]);
@@ -1029,6 +1102,7 @@ function buildRows({
   const overridesBySku = new Map<string, OverrideRow>();
   const metaBySku = new Map<string, SkuPlanningMeta>();
   const groups = new Map<string, GroupAccumulator>();
+  const skuAccumulators = new Map<string, SkuAccumulator>();
   const allSkus = new Set<string>();
 
   for (const row of variantRows) {
@@ -1048,7 +1122,9 @@ function buildRows({
   for (const row of overrideRows) {
     const key = compactText(row.group_key);
     const sku = compactText(row.sku);
-    if (key) {
+    if (sku && row.scope === "sku") {
+      overridesBySku.set(sku, row);
+    } else if (key && (!row.scope || row.scope === "group_default")) {
       overridesByGroup.set(key, row);
     } else if (sku) {
       overridesBySku.set(sku, row);
@@ -1104,11 +1180,6 @@ function buildRows({
     if (meta.hidden) {
       accumulator.hiddenSkuCount += 1;
     }
-    accumulator.stockQty += stockBySku.get(sku) ?? 0;
-    if (meta.sellingPrice > 0) {
-      accumulator.sellingPriceTotal += meta.sellingPrice;
-      accumulator.sellingPriceCount += 1;
-    }
     addCount(accumulator.supplierCounts, meta.supplier);
     addCount(accumulator.categoryCounts, meta.category);
     addCount(accumulator.productGroupCounts, meta.productGroup);
@@ -1118,6 +1189,15 @@ function buildRows({
       accumulator.imageUrl = compactText(variant?.variant_image_url) || compactText(product?.product_image_url);
     }
     groups.set(meta.groupKey, accumulator);
+    skuAccumulators.set(sku, {
+      landedDenominator: 0,
+      landedNumerator: 0,
+      latestLine: null,
+      latestTimestamp: 0,
+      lines: [],
+      recentPurchaseDenominator: 0,
+      recentPurchaseNumerator: 0,
+    });
   }
 
   for (const line of poRows) {
@@ -1150,23 +1230,118 @@ function buildRows({
       metaBySku.set(sku, meta);
     }
     const accumulator = groups.get(meta.groupKey) ?? emptyAccumulator(meta);
+    const skuAccumulator =
+      skuAccumulators.get(sku) ??
+      {
+        landedDenominator: 0,
+        landedNumerator: 0,
+        latestLine: null,
+        latestTimestamp: 0,
+        lines: [],
+        recentPurchaseDenominator: 0,
+        recentPurchaseNumerator: 0,
+      };
     const unitPrice = toNumber(line.unit_price);
     const landedCost = toNumber(line.landed_unit_cost);
     const timestamp = purchaseTimestamp(line);
-    accumulator.lines.push({ line, qty, timestamp });
-    if (unitPrice > 0) {
-      accumulator.averagePurchaseNumerator += unitPrice * qty;
-      accumulator.averagePurchaseDenominator += qty;
+    skuAccumulator.lines.push({ line, qty, timestamp });
+    if (unitPrice > 0 && isRecentAveragePurchaseLine(line)) {
+      skuAccumulator.recentPurchaseNumerator += unitPrice * qty;
+      skuAccumulator.recentPurchaseDenominator += qty;
     }
     if (landedCost > 0) {
-      accumulator.averageLandedNumerator += landedCost * qty;
-      accumulator.averageLandedDenominator += qty;
+      skuAccumulator.landedNumerator += landedCost * qty;
+      skuAccumulator.landedDenominator += qty;
+    }
+    if (timestamp >= skuAccumulator.latestTimestamp) {
+      skuAccumulator.latestLine = line;
+      skuAccumulator.latestTimestamp = timestamp;
     }
     if (timestamp >= accumulator.latestTimestamp) {
       accumulator.latestLine = line;
       accumulator.latestPoId = latestPoId(line);
       accumulator.latestTimestamp = timestamp;
     }
+    skuAccumulators.set(sku, skuAccumulator);
+    groups.set(meta.groupKey, accumulator);
+  }
+
+  for (const [sku, meta] of metaBySku) {
+    const accumulator = groups.get(meta.groupKey) ?? emptyAccumulator(meta);
+    const skuAccumulator =
+      skuAccumulators.get(sku) ??
+      {
+        landedDenominator: 0,
+        landedNumerator: 0,
+        latestLine: null,
+        latestTimestamp: 0,
+        lines: [],
+        recentPurchaseDenominator: 0,
+        recentPurchaseNumerator: 0,
+      };
+    const groupManual = manualOverrideForGroup(meta.groupKey, overridesByGroup);
+    const skuManual = overridesBySku.get(sku);
+    const skuManualPurchase = skuManual?.manual_purchase_price == null ? null : toNumber(skuManual.manual_purchase_price);
+    const skuManualLanded = skuManual?.manual_landed_cost == null ? null : toNumber(skuManual.manual_landed_cost);
+    const skuManualSelling = skuManual?.manual_selling_price == null ? null : toNumber(skuManual.manual_selling_price);
+    const manualPurchase = (skuManualPurchase ?? 0) > 0 ? skuManualPurchase : groupManual.manualPurchasePrice;
+    const manualLanded = (skuManualLanded ?? 0) > 0 ? skuManualLanded : groupManual.manualLandedCost;
+    const manualSelling = (skuManualSelling ?? 0) > 0 ? skuManualSelling : groupManual.manualSellingPrice;
+    const recentAveragePurchasePrice = weightedAverage(
+      skuAccumulator.recentPurchaseNumerator,
+      skuAccumulator.recentPurchaseDenominator,
+    );
+    const latestPurchase = latestPoWeightedCostFromEntries(
+      skuAccumulator.lines,
+      skuAccumulator.latestLine,
+      skuAccumulator.latestTimestamp,
+      "unit_price",
+    );
+    const latestLanded = latestPoWeightedCostFromEntries(
+      skuAccumulator.lines,
+      skuAccumulator.latestLine,
+      skuAccumulator.latestTimestamp,
+      "landed_unit_cost",
+    );
+    const averageLanded = weightedAverage(skuAccumulator.landedNumerator, skuAccumulator.landedDenominator);
+    const effectivePurchase = effectiveAveragePurchasePrice(
+      recentAveragePurchasePrice,
+      latestPurchase.actual,
+      manualPurchase,
+    );
+    const landedActual = firstPositive(latestLanded.actual, averageLanded);
+    const effectiveLandedCost = displayLandedCost(landedActual, effectivePurchase.value, manualLanded);
+    const effectiveLandedCostSource = landedCostSource(landedActual, manualLanded);
+    const effectiveSellingPrice = displayCost(meta.sellingPrice, manualSelling);
+    const effectiveSellingPriceSource = costSource(meta.sellingPrice, manualSelling);
+    const currentQty = stockBySku.get(sku) ?? 0;
+    const purchaseStockValue = currentQty > 0 && effectivePurchase.value > 0 ? currentQty * effectivePurchase.value : 0;
+    const landedStockValue = currentQty > 0 && effectiveLandedCost > 0 ? currentQty * effectiveLandedCost : 0;
+    const sellingValue = currentQty > 0 && effectiveSellingPrice > 0 ? currentQty * effectiveSellingPrice : 0;
+    const skuDetail: CostPriceMonitorSkuDetail = {
+      currentQty,
+      effectiveLandedCost,
+      effectiveLandedCostSource,
+      effectivePurchasePrice: effectivePurchase.value,
+      effectivePurchasePriceSource: effectivePurchase.source,
+      effectiveSellingPrice,
+      effectiveSellingPriceSource,
+      latestPurchasePrice: displayCost(latestPurchase.actual, skuManualPurchase ?? groupManual.manualPurchasePrice),
+      manualLandedCost: skuManualLanded,
+      manualPurchasePrice: skuManualPurchase,
+      manualSellingPrice: skuManualSelling,
+      marginPct: effectiveSellingPrice > 0 && effectivePurchase.value > 0 ? ((effectiveSellingPrice - effectivePurchase.value) / effectiveSellingPrice) * 100 : null,
+      recentAveragePurchasePrice,
+      shopifySellingPrice: meta.sellingPrice,
+      sku,
+      variantTitle: meta.variantTitle || sku,
+    };
+
+    accumulator.stockQty += currentQty;
+    accumulator.purchaseStockValue += purchaseStockValue;
+    accumulator.landedStockValue += landedStockValue;
+    accumulator.sellingValue += sellingValue;
+    accumulator.skuDetails.push(skuDetail);
     groups.set(meta.groupKey, accumulator);
   }
 
@@ -1189,25 +1364,41 @@ function buildRows({
   const rows = [...groups.values()].map((accumulator) => {
     const skus = [...accumulator.skuVariants.keys()];
     const visibility = skus.length > 0 && accumulator.hiddenSkuCount >= skus.length ? "hidden" : "active";
-    const manual = manualOverrideForGroup(accumulator.groupKey, skus, overridesByGroup, overridesBySku);
-    const latestPurchase = latestPoWeightedCost(accumulator, "unit_price");
-    const latestLanded = latestPoWeightedCost(accumulator, "landed_unit_cost");
-    const averageLandedCost = weightedAverage(accumulator.averageLandedNumerator, accumulator.averageLandedDenominator);
-    const averagePurchasePrice = weightedAverage(accumulator.averagePurchaseNumerator, accumulator.averagePurchaseDenominator);
-    const latestPurchasePrice = displayCost(latestPurchase.actual, manual.manualPurchasePrice);
-    const latestLandedCost = displayLandedCost(latestLanded.actual, latestPurchasePrice, manual.manualLandedCost);
-    const sellingAverage = weightedAverage(accumulator.sellingPriceTotal, accumulator.sellingPriceCount);
-    const sellingPrice = displayCost(sellingAverage, manual.manualSellingPrice);
-    const costBasis = firstPositive(
-      latestLandedCost,
-      latestPurchasePrice,
-      averageLandedCost,
-      averagePurchasePrice,
-    );
-    const marginPct = sellingPrice > 0 ? ((sellingPrice - costBasis) / sellingPrice) * 100 : null;
+    const manual = manualOverrideForGroup(accumulator.groupKey, overridesByGroup);
+    const rollupMode = accumulator.stockQty > 0 ? "stock_weighted" : "no_stock_fallback";
+    const averagePurchase = rollupMode === "stock_weighted"
+      ? weightedAverage(accumulator.purchaseStockValue, accumulator.stockQty)
+      : averagePositive(accumulator.skuDetails.map((detail) => detail.effectivePurchasePrice));
+    const averageLandedCost = rollupMode === "stock_weighted"
+      ? weightedAverage(accumulator.landedStockValue, accumulator.stockQty)
+      : averagePositive(accumulator.skuDetails.map((detail) => detail.effectiveLandedCost));
+    const sellingPrice = rollupMode === "stock_weighted"
+      ? weightedAverage(accumulator.sellingValue, accumulator.stockQty)
+      : averagePositive(accumulator.skuDetails.map((detail) => detail.effectiveSellingPrice));
+    const latestPurchasePrice = firstPositive(...accumulator.skuDetails.map((detail) => detail.latestPurchasePrice));
+    const latestLandedCost = firstPositive(...accumulator.skuDetails.map((detail) => detail.effectiveLandedCost));
+    const marginPct = rollupMode === "stock_weighted"
+      ? accumulator.sellingValue > 0
+        ? ((accumulator.sellingValue - accumulator.purchaseStockValue) / accumulator.sellingValue) * 100
+        : null
+      : sellingPrice > 0 && averagePurchase > 0
+        ? ((sellingPrice - averagePurchase) / sellingPrice) * 100
+        : null;
+    const costBasis = firstPositive(averageLandedCost, averagePurchase);
+    const purchaseSourceDetails = rollupMode === "no_stock_fallback"
+      ? accumulator.skuDetails.filter((detail) => detail.effectivePurchasePrice > 0)
+      : accumulator.skuDetails;
+    const averagePurchaseSource = purchaseSourceDetails.length === 0 || purchaseSourceDetails.some((detail) => detail.effectivePurchasePriceSource === "missing")
+      ? "missing"
+      : purchaseSourceDetails.some((detail) => detail.effectivePurchasePriceSource === "manual")
+        ? "manual"
+        : purchaseSourceDetails.some((detail) => detail.effectivePurchasePriceSource === "latest_fallback")
+        ? "latest_fallback"
+        : "recent_avg";
     const rowWithoutBadges = {
       averageLandedCost,
-      averagePurchasePrice,
+      averagePurchasePrice: averagePurchase,
+      averagePurchasePriceSource: averagePurchaseSource,
       category: mostCommon(accumulator.categoryCounts, "Uncategorized"),
       color: accumulator.color,
       costBasis,
@@ -1216,12 +1407,12 @@ function buildRows({
       latestInvoiceQuoteReference: latestReference(accumulator.latestLine),
       imageUrl: accumulator.imageUrl,
       latestLandedCost,
-      latestLandedCostSource: landedCostSource(latestLanded.actual, manual.manualLandedCost),
+      latestLandedCostSource: accumulator.skuDetails.some((detail) => detail.effectiveLandedCostSource === "manual") ? "manual" : averageLandedCost > 0 ? "actual" : "missing",
       latestPoId: accumulator.latestPoId,
       latestPoStatus: latestStatus(accumulator.latestLine) || "No PO",
       latestPurchaseDate: latestPurchaseDate(accumulator.latestLine),
       latestPurchasePrice,
-      latestPurchasePriceSource: costSource(latestPurchase.actual, manual.manualPurchasePrice),
+      latestPurchasePriceSource: costSource(latestPurchasePrice, manual.manualPurchasePrice),
       mainName: accumulator.mainName,
       manualLandedCost: manual.manualLandedCost,
       manualPurchasePrice: manual.manualPurchasePrice,
@@ -1229,9 +1420,11 @@ function buildRows({
       marginPct,
       note: manual.note,
       productGroup: mostCommon(accumulator.productGroupCounts, "Unassigned"),
+      rollupMode,
       sellingPrice,
-      sellingPriceSource: costSource(sellingAverage, manual.manualSellingPrice),
+      sellingPriceSource: accumulator.skuDetails.some((detail) => detail.effectiveSellingPriceSource === "manual") ? "manual" : sellingPrice > 0 ? "actual" : "missing",
       skuCount: skus.length,
+      skuDetails: accumulator.skuDetails.sort((a, b) => b.currentQty - a.currentQty || a.sku.localeCompare(b.sku)),
       skuList: skus.join(", "),
       skuSummary: skuSummary([...accumulator.skuVariants.values()]),
       stockQty: accumulator.stockQty,
@@ -1241,7 +1434,7 @@ function buildRows({
 
     return {
       ...rowWithoutBadges,
-      badges: buildBadges(rowWithoutBadges, latestLanded.actual),
+      badges: buildBadges(rowWithoutBadges, averageLandedCost),
     } satisfies CostPriceMonitorRow;
   });
 
@@ -1367,6 +1560,23 @@ export async function getCostPriceMonitorData(filters: CostPriceMonitorFilters =
     .order("updated_at", { ascending: false });
   let overrideReady = !overrideResult.error;
   const overrideRows: OverrideRow[] = overrideReady ? ((overrideResult.data ?? []) as OverrideRow[]) : [];
+
+  const scopedOverrideResult = await (supabase as SupabaseClient)
+    .from("cost_price_monitor_variant_overrides")
+    .select("id,scope,sku,group_key,manual_purchase_price,manual_landed_cost,manual_selling_price,note,updated_by,updated_at,created_at")
+    .order("updated_at", { ascending: false });
+  if (scopedOverrideResult.error) {
+    overrideReady = false;
+    if (isMissingVariantOverrideTableError(scopedOverrideResult.error)) {
+      warnings.push("Scoped SKU overrides table is not available yet. Apply migration 060 for SKU-level Cost Price Monitor overrides.");
+    } else if (isPermissionOrRlsError(scopedOverrideResult.error)) {
+      warnings.push("Scoped SKU overrides could not be read because Supabase denied admin access. Confirm SUPABASE_SERVICE_ROLE_KEY is configured on the server.");
+    } else {
+      warnings.push(`Scoped SKU overrides could not be read: ${scopedOverrideResult.error.message}`);
+    }
+  } else {
+    overrideRows.push(...((scopedOverrideResult.data ?? []) as OverrideRow[]));
+  }
 
   const legacyOverrideResult = await (supabase as SupabaseClient)
     .from("cost_price_overrides")

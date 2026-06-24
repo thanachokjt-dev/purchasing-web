@@ -148,59 +148,108 @@ function shouldIncludeLocation(locationName: string, filter: LocationFilter) {
 }
 
 function variantLabel(variant: ShopifyVariantNode) {
-  return [
-    variant.product.title,
-    variant.title,
-    extractShopifyNumericId(variant.id),
-  ]
-    .filter(Boolean)
-    .join(" / ");
+  return `Product: ${variant.product.title} (ID ${extractShopifyNumericId(variant.product.id)}) | Variant: ${variant.title} (ID ${extractShopifyNumericId(variant.id)})`;
 }
 
-function assertSkuQuality(
-  nodes: ShopifyVariantNode[],
-  seenSkuByVariant: Map<string, string>,
-) {
-  const pageSkuByVariant = new Map<string, string>();
-  const blankSkuVariants: string[] = [];
-  const duplicateSkuVariants: string[] = [];
+function normalizedSkuKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function assertSkuQuality(nodes: ShopifyVariantNode[]) {
+  const variantsBySku = new Map<string, ShopifyVariantNode[]>();
+  const blankSkuVariants: ShopifyVariantNode[] = [];
 
   for (const variant of nodes) {
     const sku = variant.sku?.trim();
-    const label = variantLabel(variant);
 
     if (!sku) {
-      blankSkuVariants.push(label);
+      blankSkuVariants.push(variant);
       continue;
     }
 
-    const existingVariant =
-      pageSkuByVariant.get(sku) ?? seenSkuByVariant.get(sku);
-    if (existingVariant) {
-      duplicateSkuVariants.push(`${sku}: ${existingVariant} + ${label}`);
-      continue;
-    }
-
-    pageSkuByVariant.set(sku, label);
+    const key = normalizedSkuKey(sku);
+    variantsBySku.set(key, [...(variantsBySku.get(key) ?? []), variant]);
   }
 
-  if (blankSkuVariants.length || duplicateSkuVariants.length) {
-    const details = [
-      blankSkuVariants.length
-        ? `Blank SKU variants: ${blankSkuVariants.slice(0, 10).join("; ")}`
-        : null,
-      duplicateSkuVariants.length
-        ? `Duplicate SKUs: ${duplicateSkuVariants.slice(0, 10).join("; ")}`
-        : null,
-    ].filter(Boolean);
-
+  if (blankSkuVariants.length) {
     throw new Error(
-      `Shopify catalog data quality check failed. ${details.join(" ")} Fix these Shopify variants before syncing so rows are not skipped or merged incorrectly.`,
+      [
+        "Invalid blank Shopify SKU detected.",
+        "Shopify sync failed because every variant must have a unique, non-blank SKU for inventory and purchasing reports.",
+        "Affected variants (first 10):",
+        ...blankSkuVariants.slice(0, 10).map((variant) => `- ${variantLabel(variant)}`),
+        "Please add a unique SKU to each Shopify variant, then run sync again.",
+      ].join("\n"),
     );
   }
 
-  for (const [sku, label] of pageSkuByVariant.entries()) {
-    seenSkuByVariant.set(sku, label);
+  const duplicates = [...variantsBySku.values()].filter((variants) => variants.length > 1);
+  if (duplicates.length) {
+    const firstSku = duplicates[0][0].sku?.trim() ?? "unknown";
+    throw new Error(
+      [
+        `Duplicate Shopify SKU detected: ${firstSku}`,
+        "Shopify sync failed because duplicate variant SKUs were found. Please make each Shopify variant SKU unique, then run sync again.",
+        "Duplicate SKUs (first 10):",
+        ...duplicates.slice(0, 10).flatMap((variants) => [
+          `- SKU ${variants[0].sku?.trim() ?? "unknown"}`,
+          ...variants.map((variant) => `  - ${variantLabel(variant)}`),
+        ]),
+      ].join("\n"),
+    );
+  }
+}
+
+async function assertNoExistingSkuOwnershipConflicts(
+  supabase: SupabaseClient,
+  nodes: ShopifyVariantNode[],
+) {
+  const incomingBySku = new Map(
+    nodes.map((variant) => [variant.sku?.trim() ?? "", variant] as const),
+  );
+  const skus = [...incomingBySku.keys()].filter(Boolean);
+  const existingRows: Array<{
+    shopify_variant_id: string;
+    sku: string;
+    variant_title: string | null;
+  }> = [];
+
+  for (let index = 0; index < skus.length; index += 200) {
+    const { data, error } = await supabase
+      .from("product_variants")
+      .select("shopify_variant_id,sku,variant_title")
+      .in("sku", skus.slice(index, index + 200));
+    if (error) {
+      throw new Error(`Variant SKU preflight lookup failed: ${error.message}`);
+    }
+    existingRows.push(...((data ?? []) as typeof existingRows));
+  }
+
+  const conflicts = existingRows.flatMap((existing) => {
+    const incoming = incomingBySku.get(existing.sku);
+    if (
+      !incoming ||
+      String(existing.shopify_variant_id) === extractShopifyNumericId(incoming.id)
+    ) {
+      return [];
+    }
+    return [{ existing, incoming }];
+  });
+
+  if (conflicts.length) {
+    throw new Error(
+      [
+        `Duplicate Shopify SKU detected: ${conflicts[0].existing.sku}`,
+        "The incoming Shopify payload is unique, but these SKUs are still owned by older Shopify variant IDs in the catalog database. No catalog or inventory rows were written.",
+        "SKU ownership conflicts (first 10):",
+        ...conflicts.slice(0, 10).flatMap(({ existing, incoming }) => [
+          `- SKU ${existing.sku}`,
+          `  - Incoming ${variantLabel(incoming)}`,
+          `  - Existing database variant: ${existing.variant_title ?? "Untitled"} (Shopify variant ID ${existing.shopify_variant_id})`,
+        ]),
+        "Review the deleted/replaced Shopify variants, then remove or archive the stale catalog rows through an approved cleanup workflow before running sync again.",
+      ].join("\n"),
+    );
   }
 }
 
@@ -549,7 +598,6 @@ export async function syncShopifyProductsAndInventory(
   const syncedAt = new Date().toISOString();
   const runId = await createSyncRun(supabase, options);
   const locationFilter = locationFilterFromEnv();
-  const seenSkuByVariant = new Map<string, string>();
   let cursor: string | null = null;
   const query =
     options.sinceAt || options.untilAt
@@ -573,6 +621,7 @@ export async function syncShopifyProductsAndInventory(
   };
 
   try {
+    const pages: ShopifyVariantNode[][] = [];
     while (hasNextPage && stats.pagesSeen < maxPages) {
       const result: ShopifyGraphqlResult<ProductVariantsPayload> =
         await shopifyGraphql<ProductVariantsPayload>(
@@ -581,18 +630,7 @@ export async function syncShopifyProductsAndInventory(
       );
       const page = result.data.productVariants;
       throttle = result.extensions?.cost?.throttleStatus ?? null;
-
-      assertSkuQuality(page.nodes, seenSkuByVariant);
-      const nodesWithAllInventoryLevels = await expandPageInventoryLevels(page.nodes);
-      const persisted = await persistPage(
-        supabase,
-        nodesWithAllInventoryLevels,
-        syncedAt,
-        locationFilter,
-      );
-      stats.productsSeen += persisted.products;
-      stats.variantsSeen += persisted.variants;
-      stats.inventoryRowsSeen += persisted.inventory;
+      pages.push(page.nodes);
       stats.pagesSeen += 1;
 
       hasNextPage = page.pageInfo.hasNextPage;
@@ -602,6 +640,24 @@ export async function syncShopifyProductsAndInventory(
     stats.hasNextPage = hasNextPage;
     stats.lastCursor = cursor;
     stats.throttle = throttle;
+
+    const allNodes = pages.flat();
+    assertSkuQuality(allNodes);
+    await assertNoExistingSkuOwnershipConflicts(supabase, allNodes);
+
+    for (const pageNodes of pages) {
+      const nodesWithAllInventoryLevels = await expandPageInventoryLevels(pageNodes);
+      const persisted = await persistPage(
+        supabase,
+        nodesWithAllInventoryLevels,
+        syncedAt,
+        locationFilter,
+      );
+      stats.productsSeen += persisted.products;
+      stats.variantsSeen += persisted.variants;
+      stats.inventoryRowsSeen += persisted.inventory;
+    }
+
     await finishSyncRun(supabase, runId, "completed", stats);
 
     return {
