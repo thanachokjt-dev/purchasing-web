@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
   addPoItemAction,
@@ -14,6 +14,7 @@ import {
   createPoAction,
   deleteDraftPoAction,
   receivePoItemAction,
+  repricePoDraftLinesAction,
   removePoReceiptAction,
   updatePoHeaderRefsAction,
   updatePoDraftLinesAction,
@@ -1194,7 +1195,6 @@ export function PoHeaderRefsForm({
     updatePoHeaderRefsAction,
     initialState,
   );
-
   return (
     <form action={formAction} className="grid gap-3">
       <input name="poId" type="hidden" value={poId} />
@@ -1562,6 +1562,8 @@ export function PoDraftLinesForm({
     updatePoDraftLinesAction,
     initialState,
   );
+  const [repriceState, setRepriceState] = useState<PoActionState>(initialState);
+  const [repricePending, startRepriceTransition] = useTransition();
   const [lines, setLines] = useState(items);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [adjustPercent, setAdjustPercent] = useState("");
@@ -1591,6 +1593,40 @@ export function PoDraftLinesForm({
   const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
   const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
   const exchangeRateAverage = averageExchangeRate(exchangeRates);
+
+  function repriceDraftLines() {
+    if (!window.confirm("This will replace current draft unit prices with latest closed PO purchase costs. Lines without purchase history will be set to 0.")) {
+      return;
+    }
+    startRepriceTransition(async () => {
+      const formData = new FormData();
+      formData.set("poId", poId);
+      const result = await repricePoDraftLinesAction(initialState, formData);
+      setRepriceState(result);
+      if (!result.ok || !result.repricedLines?.length) {
+        return;
+      }
+      const repricedById = new Map(
+        result.repricedLines.map((line) => [line.itemUuid, line]),
+      );
+      setLines((current) =>
+        current.map((line) => {
+          const repriced = line.itemUuid ? repricedById.get(line.itemUuid) : undefined;
+          return repriced ? { ...line, ...repriced } : line;
+        }),
+      );
+      setBaseUnitPriceByLine((current) => {
+        const next = { ...current };
+        for (const line of items) {
+          const repriced = line.itemUuid ? repricedById.get(line.itemUuid) : undefined;
+          if (repriced) next[draftLineKey(line)] = repriced.unitPrice;
+        }
+        return next;
+      });
+      setVatMode("none");
+      setExchangeMode("none");
+    });
+  }
 
   function updateLine(index: number, patch: Partial<DraftLineItem>) {
     setLines((current) =>
@@ -1846,6 +1882,20 @@ export function PoDraftLinesForm({
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={resetVat} type="button">
           Reset VAT
         </button>
+        <div className="grid max-w-sm gap-1">
+          <button
+            className="h-10 rounded-md border border-[#9a5b13] bg-[#fff8e8] px-4 text-xs font-semibold text-[#7a450b] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={pending || repricePending}
+            onClick={repriceDraftLines}
+            type="button"
+          >
+            {repricePending ? "Repricing..." : "Refresh unit cost from latest PO"}
+          </button>
+          <p className="text-xs normal-case tracking-normal text-[#667380]">
+            Manual action only. Existing prices are unchanged until confirmed.
+          </p>
+          <ActionMessage state={repriceState} />
+        </div>
         <label className={labelClass}>
           Logistic cost total
           <input

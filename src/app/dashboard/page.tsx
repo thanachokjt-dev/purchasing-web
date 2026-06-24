@@ -688,7 +688,7 @@ function StockValueMixTable({ rows, title }: { rows: StockValueData["supplierMix
           </thead>
           <tbody>
             {rows.length > 0 ? (
-              rows.slice(0, 12).map((row) => (
+              rows.map((row) => (
                 <tr className="border-b border-[#e6ebf0] last:border-b-0" key={row.label}>
                   <td className="max-w-[220px] py-2 pr-3 align-top font-semibold text-[#172026]">{row.label}</td>
                   <td className="py-2 pr-3 text-right align-top text-[#44515f]">{formatNumber(row.currentQty)}</td>
@@ -719,7 +719,7 @@ function MissingCostSkuTable({ rows }: { rows: StockValueData["missingCostSkus"]
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h3 className="text-sm font-semibold text-[#172026]">Missing Cost SKUs</h3>
-          <p className="mt-1 text-xs text-[#667380]">Top 50 by current quantity.</p>
+          <p className="mt-1 text-xs text-[#667380]">Positive-stock SKUs without a valid effective purchase cost.</p>
         </div>
         <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
           Review before using for valuation

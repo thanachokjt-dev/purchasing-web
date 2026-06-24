@@ -15,10 +15,10 @@ type SupabaseError = {
 
 type ScopedOverridePayload = {
   group_key: string | null;
-  manual_landed_cost: number | null;
-  manual_purchase_price: number | null;
-  manual_selling_price: number | null;
-  note: string | null;
+  manual_landed_cost?: number | null;
+  manual_purchase_price?: number | null;
+  manual_selling_price?: number | null;
+  note?: string | null;
   scope: "group_default" | "sku";
   sku?: string | null;
   updated_at: string;
@@ -30,10 +30,10 @@ type LegacyGroupOverridePayload = {
   color: string | null;
   group_key: string;
   main_name: string;
-  manual_landed_cost: number | null;
-  manual_purchase_price: number | null;
-  manual_selling_price: number | null;
-  note: string | null;
+  manual_landed_cost?: number | null;
+  manual_purchase_price?: number | null;
+  manual_selling_price?: number | null;
+  note?: string | null;
   product_group: string | null;
   sku: null;
   supplier: string | null;
@@ -49,9 +49,9 @@ function textAt(formData: FormData, name: string, index: number) {
   return String(formData.getAll(name)[index] ?? "").trim();
 }
 
-function nullableNonNegativeNumber(raw: string, label: string) {
+function optionalNonNegativeNumber(raw: string, label: string) {
   if (!raw) {
-    return { value: null };
+    return { value: undefined };
   }
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) {
@@ -168,23 +168,58 @@ async function saveScopedOverrideRow(
       ? { column: "sku", value: payload.sku ?? "" }
       : { column: "group_key", value: payload.group_key ?? "" };
 
-  const updateResult = await supabase
+  const existingResult = await supabase
     .from("cost_price_monitor_variant_overrides")
-    .update(payload)
+    .select("id,manual_purchase_price,manual_landed_cost,manual_selling_price,note")
     .eq("scope", payload.scope)
     .eq(target.column, target.value)
-    .select("id");
+    .limit(1)
+    .maybeSingle();
 
-  if (updateResult.error) {
-    logScopedOverrideSaveError(`${scopeLabel} override update`, updateResult.error, payload);
-    return updateResult.error;
+  if (existingResult.error) {
+    logScopedOverrideSaveError(`${scopeLabel} override read`, existingResult.error, payload);
+    return existingResult.error;
   }
 
-  if ((updateResult.data ?? []).length > 0) {
+  const basePayload = {
+    group_key: payload.group_key,
+    scope: payload.scope,
+    sku: payload.sku ?? null,
+    updated_at: payload.updated_at,
+    updated_by: payload.updated_by,
+  };
+  const valuePayload: Partial<ScopedOverridePayload> = {};
+  if (payload.manual_purchase_price !== undefined) {
+    valuePayload.manual_purchase_price = payload.manual_purchase_price;
+  }
+  if (payload.manual_landed_cost !== undefined) {
+    valuePayload.manual_landed_cost = payload.manual_landed_cost;
+  }
+  if (payload.manual_selling_price !== undefined) {
+    valuePayload.manual_selling_price = payload.manual_selling_price;
+  }
+  if (payload.note !== undefined) {
+    valuePayload.note = payload.note;
+  }
+
+  if (existingResult.data) {
+    const updateResult = await supabase
+      .from("cost_price_monitor_variant_overrides")
+      .update({ ...basePayload, ...valuePayload })
+      .eq("id", existingResult.data.id)
+      .select("id");
+
+    if (updateResult.error) {
+      logScopedOverrideSaveError(`${scopeLabel} override update`, updateResult.error, payload);
+      return updateResult.error;
+    }
+
     return null;
   }
 
-  const insertResult = await supabase.from("cost_price_monitor_variant_overrides").insert(payload);
+  const insertResult = await supabase
+    .from("cost_price_monitor_variant_overrides")
+    .insert({ ...basePayload, ...valuePayload });
   if (!insertResult.error) {
     return null;
   }
@@ -192,7 +227,7 @@ async function saveScopedOverrideRow(
   if (insertResult.error.code === "23505") {
     const retryResult = await supabase
       .from("cost_price_monitor_variant_overrides")
-      .update(payload)
+      .update({ ...basePayload, ...valuePayload })
       .eq("scope", payload.scope)
       .eq(target.column, target.value)
       .select("id");
@@ -207,6 +242,58 @@ async function saveScopedOverrideRow(
 
   logScopedOverrideSaveError(`${scopeLabel} override insert`, insertResult.error, payload);
   return insertResult.error;
+}
+
+async function saveLegacyGroupOverrideRow(
+  supabase: NonNullable<ReturnType<typeof getSupabaseServiceClient>>,
+  payload: LegacyGroupOverridePayload,
+) {
+  const existingResult = await supabase
+    .from("cost_price_monitor_overrides")
+    .select("group_key")
+    .eq("group_key", payload.group_key)
+    .limit(1)
+    .maybeSingle();
+
+  if (existingResult.error) {
+    return existingResult.error;
+  }
+
+  const basePayload = {
+    category: payload.category,
+    color: payload.color,
+    group_key: payload.group_key,
+    main_name: payload.main_name,
+    product_group: payload.product_group,
+    sku: null,
+    supplier: payload.supplier,
+    updated_at: payload.updated_at,
+    updated_by: payload.updated_by,
+  };
+  const valuePayload: Partial<LegacyGroupOverridePayload> = {};
+  if (payload.manual_purchase_price !== undefined) {
+    valuePayload.manual_purchase_price = payload.manual_purchase_price;
+  }
+  if (payload.manual_landed_cost !== undefined) {
+    valuePayload.manual_landed_cost = payload.manual_landed_cost;
+  }
+  if (payload.manual_selling_price !== undefined) {
+    valuePayload.manual_selling_price = payload.manual_selling_price;
+  }
+  if (payload.note !== undefined) {
+    valuePayload.note = payload.note;
+  }
+
+  if (existingResult.data) {
+    return (
+      await supabase
+        .from("cost_price_monitor_overrides")
+        .update({ ...basePayload, ...valuePayload })
+        .eq("group_key", payload.group_key)
+    ).error;
+  }
+
+  return (await supabase.from("cost_price_monitor_overrides").insert({ ...basePayload, ...valuePayload })).error;
 }
 
 export async function saveCostPriceOverrideAction(formData: FormData) {
@@ -266,15 +353,15 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
       return [];
     }
 
-    const manualPurchasePrice = nullableNonNegativeNumber(
+    const manualPurchasePrice = optionalNonNegativeNumber(
       textAt(formData, "manualPurchasePrice", index),
       "Manual purchase override",
     );
-    const manualLandedCost = nullableNonNegativeNumber(
+    const manualLandedCost = optionalNonNegativeNumber(
       textAt(formData, "manualLandedCost", index),
       "Manual landed override",
     );
-    const manualSellingPrice = nullableNonNegativeNumber(
+    const manualSellingPrice = optionalNonNegativeNumber(
       textAt(formData, "manualSellingPrice", index),
       "Manual selling override",
     );
@@ -284,10 +371,11 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
       return [];
     }
 
-    const manualPurchaseValue = manualPurchasePrice.value ?? null;
-    const manualLandedValue = manualLandedCost.value ?? null;
-    const manualSellingValue = manualSellingPrice.value ?? null;
-    const note = textAt(formData, "note", index) || null;
+    const manualPurchaseValue = manualPurchasePrice.value;
+    const manualLandedValue = manualLandedCost.value;
+    const manualSellingValue = manualSellingPrice.value;
+    const noteText = textAt(formData, "note", index);
+    const note = noteText ? noteText : undefined;
     const updatedBy = profile.authUserId;
 
     legacyGroupPayload.push({
@@ -326,15 +414,15 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
       return [];
     }
 
-    const manualPurchasePrice = nullableNonNegativeNumber(
+    const manualPurchasePrice = optionalNonNegativeNumber(
       textAt(formData, "skuManualPurchasePrice", index),
       "SKU manual purchase override",
     );
-    const manualLandedCost = nullableNonNegativeNumber(
+    const manualLandedCost = optionalNonNegativeNumber(
       textAt(formData, "skuManualLandedCost", index),
       "SKU manual landed override",
     );
-    const manualSellingPrice = nullableNonNegativeNumber(
+    const manualSellingPrice = optionalNonNegativeNumber(
       textAt(formData, "skuManualSellingPrice", index),
       "SKU manual selling override",
     );
@@ -349,10 +437,10 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
         scope: "sku",
         sku,
         group_key: null,
-        manual_purchase_price: manualPurchasePrice.value ?? null,
-        manual_landed_cost: manualLandedCost.value ?? null,
-        manual_selling_price: manualSellingPrice.value ?? null,
-        note: null,
+        manual_purchase_price: manualPurchasePrice.value,
+        manual_landed_cost: manualLandedCost.value,
+        manual_selling_price: manualSellingPrice.value,
+        note: undefined,
         updated_by: profile.authUserId,
         updated_at: now,
       },
@@ -389,26 +477,36 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
   }
 
   if (!errorMessage && legacyGroupPayload.length > 0) {
-    const legacyPayload = legacyGroupPayload;
-    const { error } = await supabase
-      .from("cost_price_monitor_overrides")
-      .upsert(legacyPayload, { onConflict: "group_key" });
-
-    if (error) {
+    for (const payload of legacyGroupPayload) {
+      const error = await saveLegacyGroupOverrideRow(supabase, payload);
+      if (!error) {
+        continue;
+      }
       if (isMissingOverrideTableError(error)) {
-        const legacyRows = legacyPayload.map((row) => ({ ...row, sku: null }));
-        const legacyResult = await supabase
-          .from("cost_price_overrides")
-          .upsert(legacyRows, { onConflict: "group_key" });
+        const legacyResult = await supabase.from("cost_price_overrides").upsert(
+          [
+            {
+              ...payload,
+              manual_landed_cost: payload.manual_landed_cost ?? null,
+              manual_purchase_price: payload.manual_purchase_price ?? null,
+              manual_selling_price: payload.manual_selling_price ?? null,
+              note: payload.note ?? null,
+              sku: null,
+            },
+          ],
+          { onConflict: "group_key" },
+        );
         if (legacyResult.error) {
           console.error("Cost Price Monitor legacy override save failed", legacyResult.error);
           errorMessage =
             "Manual override could not be saved. Apply migration 058 or confirm the legacy override table is available.";
+          break;
         }
       } else {
         console.error("Cost Price Monitor override save failed", error);
         errorMessage =
           "Manual override could not be saved. Confirm migration 058 has created cost_price_monitor_overrides.";
+        break;
       }
     }
   }
@@ -419,5 +517,6 @@ export async function saveCostPriceOverridesAction(formData: FormData) {
 
   revalidatePath("/cost-price-monitor");
   revalidatePath("/cost-price-monitor/print");
+  revalidatePath("/dashboard");
   redirect(returnToWithStatus(returnTo, "saved"));
 }

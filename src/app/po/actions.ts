@@ -11,6 +11,7 @@ import {
   canUseReceivingWorkflow,
 } from "@/lib/access-control";
 import { sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
+import { getLatestClosedPoUnitCostBySkus } from "@/lib/latest-closed-po-cost";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 
 export type PoActionState = {
@@ -20,6 +21,15 @@ export type PoActionState = {
   headerPurpose?: string;
   paymentErrors?: Record<string, string>;
   payments?: PoPaymentDisplayRow[];
+  repricedLines?: Array<{
+    itemUuid: string;
+    landedUnitCost: number;
+    lineAmount: number;
+    unitPrice: number;
+    unitPriceSource: "latest_closed_po" | "no_purchase_history";
+    unitPriceSourceDate: string;
+    unitPriceSourcePoReference: string;
+  }>;
   supplierDiscussionNote?: string;
 };
 
@@ -1737,6 +1747,176 @@ export async function updatePoDraftLinesAction(
     return success(`Saved draft details for ${itemUuids.length} lines`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Save draft failed");
+  }
+}
+
+export async function repricePoDraftLinesAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    const profile = await requireEditPoPermission("/po");
+    if (profile.role !== "super_admin") {
+      throw new Error("Only super_admin can reprice existing PO draft lines");
+    }
+    const supabase = actionClient();
+    const poId = requiredText(formData, "poId");
+    const { data: order, error: orderError } = await supabase
+      .from("po_orders")
+      .select("po_id,work_status,currency,actual_received_date,closed_at,cancelled_at")
+      .eq("po_id", poId)
+      .maybeSingle();
+    if (orderError) throw new Error(orderError.message);
+    if (!order) throw new Error(`PO ${poId} does not exist`);
+    if (
+      normalizeStatus(order.work_status ?? "") !== "draft" ||
+      order.actual_received_date ||
+      order.closed_at ||
+      order.cancelled_at
+    ) {
+      throw new Error("Only unreceived draft POs can be repriced");
+    }
+
+    const currency = String(order.currency || "THB").trim().toUpperCase();
+    const { data: itemRows, error: itemError } = await supabase
+      .from("po_items")
+      .select("id,sku,ordered_qty,legacy_received_qty,unit_price,freight_unit_cost,landed_unit_cost,line_amount,currency,line_status,source_payload,updated_at")
+      .eq("po_id", poId)
+      .order("sort_position", { ascending: true, nullsFirst: false })
+      .order("line_no", { ascending: true });
+    if (itemError) throw new Error(itemError.message);
+    const items = itemRows ?? [];
+    if (!items.length) throw new Error("This PO has no draft lines to reprice");
+    if (
+      items.some(
+        (item) =>
+          normalizeStatus(String(item.line_status ?? "")) !== "draft" ||
+          Number(item.legacy_received_qty ?? 0) > 0,
+      )
+    ) {
+      throw new Error("Received or locked PO lines cannot be repriced");
+    }
+    if (
+      items.some(
+        (item) => String(item.currency || currency).trim().toUpperCase() !== currency,
+      )
+    ) {
+      throw new Error("All draft line currencies must match the PO currency before repricing");
+    }
+
+    const itemIds = items.map((item) => String(item.id));
+    const { count: receiptCount, error: receiptError } = await supabase
+      .from("po_receipts")
+      .select("id", { count: "exact", head: true })
+      .in("po_item_id", itemIds);
+    if (receiptError) throw new Error(receiptError.message);
+    if ((receiptCount ?? 0) > 0) {
+      throw new Error("PO lines with receipt history cannot be repriced");
+    }
+
+    const itemSkus = items.map((item) => String(item.sku ?? "").trim());
+    if (itemSkus.some((sku) => !sku)) {
+      throw new Error("Every draft line must have a SKU before repricing");
+    }
+    const skus = Array.from(new Set(itemSkus));
+    const latestCostBySku = await getLatestClosedPoUnitCostBySkus(
+      supabase,
+      skus,
+      currency,
+    );
+    const updatedItems: typeof items = [];
+
+    const rollback = async () => {
+      const rollbackErrors: string[] = [];
+      for (const item of [...updatedItems].reverse()) {
+        const { error } = await supabase
+          .from("po_items")
+          .update({
+            unit_price: item.unit_price,
+            landed_unit_cost: item.landed_unit_cost,
+            line_amount: item.line_amount,
+            source_payload: item.source_payload,
+            updated_at: item.updated_at,
+          })
+          .eq("id", item.id)
+          .eq("po_id", poId);
+        if (error) {
+          rollbackErrors.push(`${item.sku}: ${error.message}`);
+        }
+      }
+      return rollbackErrors;
+    };
+
+    const repricedLines: NonNullable<PoActionState["repricedLines"]> = [];
+    try {
+      for (const item of items) {
+        const sku = String(item.sku).trim();
+        const latestCost = latestCostBySku.get(sku);
+        const unitPrice = latestCost?.latestUnitPrice ?? 0;
+        const freightUnitCost = Number(item.freight_unit_cost ?? 0);
+        const orderedQty = Number(item.ordered_qty ?? 0);
+        const landedUnitCost = unitPrice + freightUnitCost;
+        const lineAmount = orderedQty * unitPrice;
+        const sourcePayload = {
+          ...objectValue(item.source_payload),
+          unitPriceSource: latestCost ? "latest_closed_po" : "no_purchase_history",
+          unitPriceSourceCurrency: currency,
+          unitPriceSourceDate: latestCost?.latestPurchaseDate ?? null,
+          unitPriceSourcePoId: latestCost?.sourcePoId ?? null,
+          unitPriceSourcePoReference: latestCost?.sourcePoReference ?? null,
+        };
+        const { data: updated, error: updateError } = await supabase
+          .from("po_items")
+          .update({
+            unit_price: unitPrice,
+            landed_unit_cost: landedUnitCost,
+            line_amount: lineAmount,
+            source_payload: sourcePayload,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", item.id)
+          .eq("po_id", poId)
+          .eq("line_status", "draft")
+          .select("id")
+          .maybeSingle();
+        if (updateError || !updated) {
+          throw new Error(updateError?.message ?? `Line ${sku} changed while repricing`);
+        }
+        updatedItems.push(item);
+        repricedLines.push({
+          itemUuid: String(item.id),
+          landedUnitCost,
+          lineAmount,
+          unitPrice,
+          unitPriceSource: latestCost ? "latest_closed_po" : "no_purchase_history",
+          unitPriceSourceDate: latestCost?.latestPurchaseDate ?? "",
+          unitPriceSourcePoReference: latestCost?.sourcePoReference ?? "",
+        });
+      }
+      await recalculatePoAmount(poId);
+    } catch (error) {
+      const rollbackErrors = await rollback();
+      await recalculatePoAmount(poId).catch(() => undefined);
+      if (rollbackErrors.length) {
+        throw new Error(
+          `${error instanceof Error ? error.message : "Reprice failed"}. Rollback also failed: ${rollbackErrors.join("; ")}`,
+        );
+      }
+      throw error;
+    }
+
+    refreshPoViews(poId);
+    const historyCount = repricedLines.filter(
+      (line) => line.unitPriceSource === "latest_closed_po",
+    ).length;
+    return {
+      ...success(
+        `Repriced ${repricedLines.length} draft lines: ${historyCount} from latest closed PO, ${repricedLines.length - historyCount} set to 0`,
+      ),
+      repricedLines,
+    };
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "Reprice draft lines failed");
   }
 }
 

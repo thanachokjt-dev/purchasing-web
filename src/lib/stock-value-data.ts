@@ -40,12 +40,13 @@ type ManualSupplierRow = {
 };
 
 export type StockValueCostStatus =
+  | "Manual override"
   | "Recent avg"
   | "Latest cost fallback"
-  | "Missing recent cost"
+  | "Missing cost"
   | "Invalid cost"
   | "Missing supplier"
-  | "Missing category";
+  | "Uncategorized";
 
 export type StockValueSummary = {
   costCoveragePercent: number;
@@ -82,6 +83,25 @@ export type StockValueData = {
   supplierMix: StockValueMixRow[];
   warnings: string[];
 };
+
+export function effectiveSkuPurchaseCostMap(rows: CostPriceMonitorRow[]) {
+  const costBySku = new Map<
+    string,
+    {
+      source: CostPriceMonitorRow["skuDetails"][number]["effectivePurchasePriceSource"];
+      unitCost: number;
+    }
+  >();
+  for (const row of rows) {
+    for (const detail of row.skuDetails) {
+      costBySku.set(detail.sku, {
+        source: detail.effectivePurchasePriceSource,
+        unitCost: detail.effectivePurchasePrice,
+      });
+    }
+  }
+  return costBySku;
+}
 
 const excelSupplierBySku = new Map(excelSupplierMap.map((row) => [row.sku, row.supplierName]));
 
@@ -169,16 +189,18 @@ function variantOptionText(row: VariantRow | undefined) {
   return Array.from(new Set(values)).join(" / ");
 }
 
-function splitSkuList(value: string) {
-  return value
-    .split(",")
-    .map((sku) => sku.trim())
-    .filter(Boolean);
-}
-
-function stockValueCostStatus(source: CostPriceMonitorRow["averagePurchasePriceSource"] | undefined, cost: number | undefined): StockValueCostStatus {
+function stockValueCostStatus(
+  source: CostPriceMonitorRow["skuDetails"][number]["effectivePurchasePriceSource"] | undefined,
+  cost: number | undefined,
+): StockValueCostStatus {
   if (cost !== undefined && (!Number.isFinite(cost) || cost < 0)) {
     return "Invalid cost";
+  }
+  if (cost === undefined || cost <= 0 || source === "missing") {
+    return "Missing cost";
+  }
+  if (source === "manual") {
+    return "Manual override";
   }
   if (source === "recent_avg") {
     return "Recent avg";
@@ -186,7 +208,7 @@ function stockValueCostStatus(source: CostPriceMonitorRow["averagePurchasePriceS
   if (source === "latest_fallback") {
     return "Latest cost fallback";
   }
-  return "Missing recent cost";
+  return "Missing cost";
 }
 
 function aggregateMix(rows: Array<{ currentQty: number; estimatedStockValue: number | null; key: string }>) {
@@ -303,19 +325,7 @@ export async function getDashboardStockValueData(): Promise<StockValueData> {
   );
   const supplierAliases = buildSupplierAliases(setupData.suppliers.filter((supplier) => supplier.isActive).map((supplier) => supplier.supplierName));
 
-  const costBySku = new Map<string, { source: CostPriceMonitorRow["averagePurchasePriceSource"]; unitCost: number }>();
-  for (const row of costMonitorData.rows) {
-    for (const sku of splitSkuList(row.skuList)) {
-      const unitCost = numeric(row.averagePurchasePrice);
-      const existing = costBySku.get(sku);
-      if (!existing || (existing.unitCost <= 0 && unitCost > 0)) {
-        costBySku.set(sku, {
-          source: row.averagePurchasePriceSource,
-          unitCost,
-        });
-      }
-    }
-  }
+  const costBySku = effectiveSkuPurchaseCostMap(costMonitorData.rows);
 
   const detailRows = [...stockBySku.entries()].map(([sku, currentQty]) => {
     const variant = variantsBySku.get(sku);
@@ -354,8 +364,7 @@ export async function getDashboardStockValueData(): Promise<StockValueData> {
     categoryMix: aggregateMix(detailRows.map((row) => ({ ...row, key: row.category }))),
     missingCostSkus: detailRows
       .filter((row) => row.estimatedStockValue === null)
-      .sort((a, b) => b.currentQty - a.currentQty || a.sku.localeCompare(b.sku))
-      .slice(0, 50),
+      .sort((a, b) => b.currentQty - a.currentQty || a.sku.localeCompare(b.sku)),
     summary: {
       costCoveragePercent: totalCurrentQty > 0 ? (valuedQty / totalCurrentQty) * 100 : 0,
       estimatedStockValue,
