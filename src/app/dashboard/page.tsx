@@ -15,8 +15,8 @@ import {
   Truck,
   WalletCards,
 } from "lucide-react";
-import { saveDashboardSkuCostOverrideAction } from "@/app/dashboard/actions";
-import { StockCostSaveButton } from "@/app/dashboard/stock-cost-save-button";
+import { MissingCostSkuTable } from "@/app/dashboard/missing-cost-sku-table";
+import { SupplierTagSalesQtyComparisonTable } from "@/app/dashboard/supplier-tag-sales-qty-table";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import {
@@ -29,6 +29,7 @@ import {
 } from "@/lib/po-dashboard";
 import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
 import { getDashboardStockValueData, type StockValueData } from "@/lib/stock-value-data";
+import { getSupplierTagSalesQtyComparisonData } from "@/lib/supplier-sales-qty-data";
 
 export const dynamic = "force-dynamic";
 
@@ -190,9 +191,10 @@ export default async function DashboardPage({
     );
   }
 
-  const [dashboard, stockValue] = await Promise.all([
+  const [dashboard, stockValue, supplierTagSalesQty] = await Promise.all([
     getPoDashboardData(),
     getDashboardStockValueData(),
+    getSupplierTagSalesQtyComparisonData(),
   ]);
   const syncTone = statusTone(dashboard.sync.dataFreshness);
 
@@ -505,6 +507,8 @@ export default async function DashboardPage({
 
           <InventoryStockValueSection data={stockValue} stockCostStatus={params} />
 
+          <SupplierTagSalesQtyComparisonTable data={supplierTagSalesQty} />
+
           <PoSizeMixOverview cards={dashboard.sizeMix.cards} sizeMix={dashboard.sizeMix} />
 
           <DashboardSection title="Payment Overview">
@@ -734,124 +738,6 @@ function StockValueMixTable({ rows, title }: { rows: StockValueData["supplierMix
               <tr>
                 <td className="py-3 text-[#667380]" colSpan={7}>
                   No positive-stock inventory found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function MissingCostSkuTable({
-  rows,
-  stockCostStatus,
-}: {
-  rows: StockValueData["missingCostSkus"];
-  stockCostStatus: DashboardSearchParams;
-}) {
-  return (
-    <section className="rounded-lg border border-[#dfe4ea] bg-[#f9fafb] p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-[#172026]">Missing Cost SKUs</h3>
-          <p className="mt-1 text-xs text-[#667380]">Positive-stock SKUs without a valid effective purchase cost.</p>
-          <p className="mt-1 text-xs text-[#667380]">Saved here updates Cost Price Monitor SKU override.</p>
-        </div>
-        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
-          Review before using for valuation
-        </span>
-      </div>
-      <div className="mt-3 overflow-x-auto">
-        <table className="min-w-[1380px] text-left text-xs">
-          <thead className="text-[#5d6a78]">
-            <tr className="border-b border-[#dfe4ea]">
-              <th className="py-2 pr-3 font-semibold">SKU</th>
-              <th className="py-2 pr-3 font-semibold">Product name</th>
-              <th className="py-2 pr-3 font-semibold">Variant / size / color</th>
-              <th className="py-2 pr-3 font-semibold">Supplier</th>
-              <th className="py-2 pr-3 font-semibold">Category</th>
-              <th className="py-2 pr-3 text-right font-semibold">Current Qty</th>
-              <th className="py-2 font-semibold">Cost Status</th>
-              <th className="py-2 pl-3 font-semibold">Manual purchase cost</th>
-              <th className="py-2 pr-3 font-semibold">Manual landed cost</th>
-              <th className="py-2 pr-3 font-semibold">Manual selling price</th>
-              <th className="py-2 font-semibold">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length > 0 ? (
-              rows.map((row) => (
-                <tr className="border-b border-[#e6ebf0] last:border-b-0" key={row.sku}>
-                  <td className="max-w-[160px] py-2 pr-3 align-top font-mono text-[11px] text-[#172026]">{row.sku}</td>
-                  <td className="max-w-[260px] py-2 pr-3 align-top font-medium text-[#172026]">{row.productName}</td>
-                  <td className="max-w-[200px] py-2 pr-3 align-top text-[#44515f]">{row.variantTitle || "N/A"}</td>
-                  <td className="max-w-[160px] py-2 pr-3 align-top text-[#44515f]">{row.supplier}</td>
-                  <td className="max-w-[160px] py-2 pr-3 align-top text-[#44515f]">{row.category}</td>
-                  <td className="py-2 pr-3 text-right align-top font-semibold text-[#172026]">{formatNumber(row.currentQty)}</td>
-                  <td className="py-2 align-top">
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
-                      {row.status}
-                    </span>
-                    {stockCostStatus.stockCostSku === row.sku && stockCostStatus.stockCostError ? (
-                      <p className="mt-2 max-w-[220px] text-[11px] font-semibold text-red-700">
-                        {stockCostStatus.stockCostError}
-                      </p>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pl-3 align-top" colSpan={4}>
-                    <form
-                      action={saveDashboardSkuCostOverrideAction}
-                      className="grid min-w-[520px] grid-cols-[minmax(120px,1fr)_minmax(120px,1fr)_minmax(120px,1fr)_104px] gap-2"
-                    >
-                      <input name="sku" type="hidden" value={row.sku} />
-                      <label className="sr-only" htmlFor={`manual-purchase-${row.sku}`}>
-                        Manual purchase cost for {row.sku}
-                      </label>
-                      <input
-                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
-                        id={`manual-purchase-${row.sku}`}
-                        min="0.0001"
-                        name="manualPurchasePrice"
-                        placeholder="Purchase"
-                        required
-                        step="0.0001"
-                        type="number"
-                      />
-                      <label className="sr-only" htmlFor={`manual-landed-${row.sku}`}>
-                        Manual landed cost for {row.sku}
-                      </label>
-                      <input
-                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
-                        id={`manual-landed-${row.sku}`}
-                        min="0.0001"
-                        name="manualLandedCost"
-                        placeholder="Landed"
-                        step="0.0001"
-                        type="number"
-                      />
-                      <label className="sr-only" htmlFor={`manual-selling-${row.sku}`}>
-                        Manual selling price for {row.sku}
-                      </label>
-                      <input
-                        className="h-8 w-full rounded-md border border-[#cfd6df] bg-white px-2 text-xs text-[#172026] outline-none focus:border-[#255f85]"
-                        id={`manual-selling-${row.sku}`}
-                        min="0.0001"
-                        name="manualSellingPrice"
-                        placeholder="Selling"
-                        step="0.0001"
-                        type="number"
-                      />
-                      <StockCostSaveButton />
-                    </form>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td className="py-3 text-[#667380]" colSpan={11}>
-                  All positive-stock SKUs have effective purchase cost.
                 </td>
               </tr>
             )}
