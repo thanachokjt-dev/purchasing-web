@@ -22,7 +22,7 @@ type ReportParams = {
   sellingWeight?: string;
   status?: string;
   supplier?: string;
-  tag?: string;
+  tag?: string | string[];
   visibility?: string;
 };
 
@@ -228,7 +228,9 @@ function overDaysPercent(line: PurchasingDecisionLine, maxDays: number) {
 function decisionHref(params: ReportParams) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => query.append(key, item));
+    } else if (value) {
       query.set(key, value);
     }
   }

@@ -913,6 +913,102 @@ export function StockFilterSelect({
   );
 }
 
+export function TagFilterSelect({
+  options,
+  selectedTags,
+}: {
+  options: { label: string; value: string }[];
+  selectedTags: string[];
+}) {
+  const normalizedSelectedTags = selectedTags.map(
+    (value) =>
+      options.find((option) => option.value.toLowerCase() === value.toLowerCase())
+        ?.value ?? value,
+  );
+  const selectableOptions = [
+    ...options,
+    ...normalizedSelectedTags
+      .filter(
+        (value) =>
+          value !== "all" &&
+          !options.some((option) => option.value.toLowerCase() === value.toLowerCase()),
+      )
+      .map((value) => ({ label: value, value })),
+  ];
+  const initialSelection =
+    normalizedSelectedTags.length && !normalizedSelectedTags.includes("all")
+      ? normalizedSelectedTags
+      : selectableOptions.map((option) => option.value);
+  const [selected, setSelected] = useState(initialSelection);
+  const allSelected =
+    selectableOptions.length === 0 ||
+    selectableOptions.every((option) => selected.includes(option.value));
+  const valuesForSubmit = allSelected ? ["all"] : selected;
+  const selectedLabels = selectableOptions
+    .filter((option) => selected.includes(option.value))
+    .map((option) => option.label);
+  const label = allSelected
+    ? "All tags"
+    : selectedLabels.length === 1
+      ? selectedLabels[0]
+      : `${selectedLabels.length} tags selected`;
+
+  function toggle(value: string) {
+    setSelected((current) => {
+      if (!current.includes(value)) {
+        return [...current, value];
+      }
+      if (current.length === 1) {
+        return current;
+      }
+
+      return current.filter((item) => item !== value);
+    });
+  }
+
+  return (
+    <div className="grid gap-1">
+      {valuesForSubmit.map((value) => (
+        <input key={value} name="tag" type="hidden" value={value} />
+      ))}
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Tags
+      </span>
+      <details className="group relative z-[90]">
+        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+          <span className="truncate">{label}</span>
+          <span aria-hidden="true" className="text-xs text-[#65717f]">
+            v
+          </span>
+        </summary>
+        <div className="absolute right-0 z-[110] mt-1 grid max-h-80 w-64 gap-1 overflow-y-auto rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+          <button
+            className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
+            onClick={() => setSelected(selectableOptions.map((option) => option.value))}
+            type="button"
+          >
+            Select all
+          </button>
+          {selectableOptions.map((option) => (
+            <label
+              className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#172026] hover:bg-[#f3f5f7]"
+              key={option.value}
+            >
+              <input
+                checked={selected.includes(option.value)}
+                className="size-4 accent-[#172026]"
+                onChange={() => toggle(option.value)}
+                type="checkbox"
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,

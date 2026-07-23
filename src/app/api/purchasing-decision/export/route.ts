@@ -34,6 +34,17 @@ function selectedStock(searchParams: URLSearchParams) {
   return stocks.length ? stocks : "all";
 }
 
+function selectedTags(searchParams: URLSearchParams) {
+  const tags = searchParams.getAll("tag").flatMap((value) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+
+  return tags.length ? tags : "all";
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const data = await getPurchasingDecisionData({
@@ -48,7 +59,7 @@ export async function GET(request: NextRequest) {
     sellingWeight: searchParams.get("sellingWeight"),
     stock: selectedStock(searchParams),
     supplier: searchParams.get("supplier") ?? "all",
-    tag: searchParams.get("tag") ?? "all",
+    tag: selectedTags(searchParams),
     visibility: searchParams.get("visibility") ?? "active",
   });
   const headers = [
