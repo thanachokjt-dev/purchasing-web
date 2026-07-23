@@ -1303,22 +1303,16 @@ export default async function PoDetailPage({
         ) : null}
 
         {data.source === "supabase" && allowEditPo ? (
-          <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm" id="draft-lines">
-            <div className="border-b border-[#e2e7ed] p-5">
-              <h2 className="text-lg font-semibold">Draft Line Details</h2>
-              <p className="mt-1 text-sm text-[#667380]">
-                Edit SKU, product name, order qty, unit price, freight/unit, and
-                remarks while the PO is still open. This keeps the draft in one PO
-                even when supplier details arrive in pieces.
-              </p>
-            </div>
-            <PoDraftLinesForm
-              items={data.items}
-              poId={order.poId}
-              poReference={order.quotationReference || order.poId}
-              supplierName={order.supplierName}
-            />
-          </section>
+          <PoDraftLinesForm
+            items={data.items}
+            key={data.items
+              .map((item) => `${item.itemUuid ?? item.poItemId}:${item.qty}:${item.unitPrice}`)
+              .join("|")}
+            poId={order.poId}
+            poReference={order.quotationReference || order.poId}
+            supplierCode={order.supplierCode}
+            supplierName={order.supplierName}
+          />
         ) : null}
 
         {data.source === "supabase" && allowEditPo ? (
@@ -1360,6 +1354,7 @@ export default async function PoDetailPage({
           </section>
         ) : null}
 
+        {!(data.source === "supabase" && allowEditPo) ? (
         <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
           <div className="border-b border-[#e2e7ed] p-5">
             <h2 className="text-lg font-semibold">Supplier Quote Matrix</h2>
@@ -1444,6 +1439,7 @@ export default async function PoDetailPage({
             ))}
           </div>
         </section>
+        ) : null}
 
         <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-[#e2e7ed] p-5 lg:flex-row lg:items-center lg:justify-between">

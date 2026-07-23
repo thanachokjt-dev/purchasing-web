@@ -22,6 +22,15 @@ import {
   type PoActionState,
 } from "@/app/po/actions";
 import { LoadingLabel } from "@/app/loading-controls";
+import {
+  matrixItemFamily,
+  matrixItemSize,
+  matrixProductName,
+  matrixSectionLabel,
+  matrixSectionName,
+  sortMatrixSizes,
+  type MatrixFamily,
+} from "@/lib/po-size-matrix";
 import { sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 
 type SupplierOption = {
@@ -37,6 +46,8 @@ type CatalogItemOption = {
   mainName: string;
   variantTitle: string;
   imageUrl: string | null;
+  tags: string[];
+  onHand: number;
   supplierCode: string;
   supplierName: string;
   currency: string;
@@ -52,6 +63,7 @@ type CatalogItemOption = {
 
 type DraftLineItem = {
   itemUuid?: string;
+  tempId?: string;
   imageUrl?: string | null;
   lineNo: string;
   sku: string;
@@ -69,6 +81,8 @@ type DraftLineItem = {
   currency: string;
   remark: string;
   sortPosition?: number;
+  tags?: string[];
+  onHand?: number;
 };
 
 type PaymentRowItem = PoPaymentDisplayRow;
@@ -202,7 +216,7 @@ function paymentTypeOptionsWithBlank(
 }
 
 function draftLineKey(item: DraftLineItem) {
-  return item.itemUuid || `${item.sku}:${item.lineNo}`;
+  return item.itemUuid || item.tempId || `${item.sku}:${item.lineNo}`;
 }
 
 function roundQtyUpToTen(value: number) {
@@ -631,6 +645,128 @@ function useCatalogSearch({
     items: hasSearchQuery ? items : [],
     loading: hasSearchQuery && loading,
   };
+}
+
+function editableQuoteMatrixRows(lines: DraftLineItem[]) {
+  const rows = new Map<
+    string,
+    {
+      family: MatrixFamily;
+      groupTag: string;
+      imageUrl: string | null;
+      items: Map<
+        string,
+        {
+          lineIndexes: number[];
+          onHand: number;
+          orderedQty: number;
+          skus: Set<string>;
+        }
+      >;
+      productName: string;
+      totalQty: number;
+    }
+  >();
+
+  lines.forEach((line, lineIndex) => {
+    const productName = matrixProductName(line);
+    const groupTag = matrixSectionName(line);
+    const family = matrixItemFamily(line);
+    const key = `${groupTag.toLowerCase()}::${family}::${productName.toLowerCase()}`;
+    const row =
+      rows.get(key) ??
+      {
+        family,
+        groupTag,
+        imageUrl: line.imageUrl ?? null,
+        items: new Map(),
+        productName,
+        totalQty: 0,
+      };
+    const size = matrixItemSize(line);
+    const cell =
+      row.items.get(size) ??
+      {
+        lineIndexes: [],
+        onHand: 0,
+        orderedQty: 0,
+        skus: new Set<string>(),
+      };
+
+    cell.lineIndexes.push(lineIndex);
+    cell.orderedQty += line.qty;
+    if (!cell.skus.has(line.sku)) {
+      cell.onHand += line.onHand ?? 0;
+      cell.skus.add(line.sku);
+    }
+    row.totalQty += line.qty;
+    if (!row.imageUrl && line.imageUrl) {
+      row.imageUrl = line.imageUrl;
+    }
+
+    row.items.set(size, cell);
+    rows.set(key, row);
+  });
+
+  const rowValues = Array.from(rows.values());
+  return Array.from(
+    rowValues
+      .reduce((groupMap, row) => {
+        const groupKey = `${row.groupTag}::${row.family}`;
+        groupMap.set(groupKey, [...(groupMap.get(groupKey) ?? []), row]);
+        return groupMap;
+      }, new Map<string, typeof rowValues>())
+      .entries(),
+  )
+    .map(([, groupRows]) => {
+      const family = groupRows[0]?.family ?? "unknown";
+      const groupTag = groupRows[0]?.groupTag ?? "Untagged";
+      const sizes = sortMatrixSizes(
+        groupRows.flatMap((row) => Array.from(row.items.keys())),
+        family,
+      );
+      const maxQty = Math.max(
+        0,
+        ...groupRows.flatMap((row) =>
+          Array.from(row.items.values()).map((item) => item.orderedQty),
+        ),
+      );
+
+      return {
+        family,
+        groupTag,
+        label: matrixSectionLabel(groupTag, family),
+        maxQty,
+        rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
+        sizes,
+      };
+    })
+    .sort((a, b) => a.groupTag.localeCompare(b.groupTag) || a.label.localeCompare(b.label));
+}
+
+function editableQtyHeatStyle(value: number, maxValue: number) {
+  if (!value) {
+    return {
+      backgroundColor: "#111827",
+      color: "#ffffff",
+    };
+  }
+
+  const ratio = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
+  const hue = 4 + ratio * 128;
+  const saturation = 62;
+  const lightness = 93 - ratio * 8;
+
+  return {
+    backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
+    color: "#172026",
+  };
+}
+
+function formatQty(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 export function PoStatusFilterSelect({
@@ -1551,11 +1687,13 @@ export function PoDraftLinesForm({
   items,
   poId,
   poReference,
+  supplierCode,
   supplierName,
 }: {
   items: DraftLineItem[];
   poId: string;
   poReference: string;
+  supplierCode: string;
   supplierName: string;
 }) {
   const [state, formAction, pending] = useActionState(
@@ -1577,6 +1715,20 @@ export function PoDraftLinesForm({
   const [shopifyCsvError, setShopifyCsvError] = useState("");
   const [shopifyCsvMessage, setShopifyCsvMessage] = useState("");
   const [shopifyCsvPreparing, setShopifyCsvPreparing] = useState(false);
+  const [matrixSearchQuery, setMatrixSearchQuery] = useState("");
+  const [matrixAddQtyBySku, setMatrixAddQtyBySku] = useState<Record<string, string>>({});
+  const [matrixAddMessage, setMatrixAddMessage] = useState("");
+  const [matrixAddTarget, setMatrixAddTarget] = useState<{
+    productName: string;
+    size: string;
+  } | null>(null);
+  const matrixAddRef = useRef<HTMLDivElement>(null);
+  const { items: matrixCatalogItems, loading: matrixCatalogLoading } = useCatalogSearch({
+    limit: 50,
+    query: matrixSearchQuery,
+    supplierCode,
+    supplierName,
+  });
   const initialQtyByLine = useMemo(
     () =>
       new Map(
@@ -1593,6 +1745,21 @@ export function PoDraftLinesForm({
   const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
   const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
   const exchangeRateAverage = averageExchangeRate(exchangeRates);
+  const matrixGroups = useMemo(() => editableQuoteMatrixRows(lines), [lines]);
+  const visibleMatrixCatalogItems = useMemo(() => {
+    if (!matrixAddTarget) {
+      return matrixCatalogItems;
+    }
+    return matrixCatalogItems.filter(
+      (item) =>
+        matrixItemSize(item) === matrixAddTarget.size &&
+        matrixProductName(item).toLowerCase() === matrixAddTarget.productName.toLowerCase(),
+    );
+  }, [matrixAddTarget, matrixCatalogItems]);
+  const existingSkus = useMemo(
+    () => new Set(lines.map((line) => line.sku.trim()).filter(Boolean)),
+    [lines],
+  );
 
   function repriceDraftLines() {
     if (!window.confirm("This will replace current draft unit prices with latest closed PO purchase costs. Lines without purchase history will be set to 0.")) {
@@ -1637,6 +1804,100 @@ export function PoDraftLinesForm({
         logisticCost,
       ),
     );
+  }
+
+  function updateMatrixQty(lineIndexes: number[], value: number) {
+    const desiredQty = Number.isFinite(value) ? Math.max(0, value) : 0;
+    setLines((current) => {
+      if (lineIndexes.length === 0) {
+        return current;
+      }
+      const next = current.map((line) => ({ ...line }));
+      const currentQty = lineIndexes.reduce(
+        (sum, lineIndex) => sum + (next[lineIndex]?.qty ?? 0),
+        0,
+      );
+      const delta = desiredQty - currentQty;
+
+      if (delta >= 0) {
+        const lineIndex = lineIndexes[0];
+        if (next[lineIndex]) {
+          next[lineIndex].qty += delta;
+        }
+      } else {
+        let qtyToRemove = Math.abs(delta);
+        for (const lineIndex of [...lineIndexes].reverse()) {
+          const line = next[lineIndex];
+          if (!line || qtyToRemove <= 0) {
+            continue;
+          }
+          const removableQty = Math.min(line.qty, qtyToRemove);
+          line.qty -= removableQty;
+          qtyToRemove -= removableQty;
+        }
+      }
+
+      return applyLogisticCostToLines(next, logisticCost);
+    });
+  }
+
+  function addCatalogLineFromMatrix(item: CatalogItemOption) {
+    if (existingSkus.has(item.sku)) {
+      setMatrixAddMessage(`${item.sku} is already in this draft. Edit its quantity in the matrix.`);
+      return;
+    }
+    const requestedQty = Number(
+      matrixAddQtyBySku[item.sku] ?? item.recommendedQty ?? 0,
+    );
+    if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
+      setMatrixAddMessage(`Enter a quantity greater than 0 for ${item.sku}.`);
+      return;
+    }
+
+    const tempId = `matrix-${createDraftLineId()}`;
+    const newLine: DraftLineItem = {
+      currency: item.currency || "THB",
+      freightUnitCost: item.lastFreightUnitCost,
+      fullName: item.productTitle,
+      imageUrl: item.imageUrl,
+      landedUnitCost: item.lastUnitPrice + item.lastFreightUnitCost,
+      lineAmount: requestedQty * item.lastUnitPrice,
+      lineNo: String(lines.length + 1),
+      onHand: item.onHand,
+      productTitle: item.productTitle,
+      qty: requestedQty,
+      remark: "Added from Supplier Quote Matrix",
+      sku: item.sku,
+      tags: item.tags,
+      tempId,
+      unitPrice: item.lastUnitPrice,
+      unitPriceSource: item.lastPoId ? "latest_closed_po" : "no_purchase_history",
+      unitPriceSourcePoReference: item.lastPoId,
+      variantTitle: item.variantTitle,
+    };
+
+    setLines((current) =>
+      applyLogisticCostToLines(
+        [...current, { ...newLine, lineNo: String(current.length + 1) }],
+        logisticCost,
+      ),
+    );
+    setBaseUnitPriceByLine((current) => ({
+      ...current,
+      [tempId]: item.lastUnitPrice,
+    }));
+    setMatrixAddMessage(
+      `Added ${item.sku} to the draft. Save Draft Details to confirm the new line.`,
+    );
+  }
+
+  function openMatrixCellAdd(productName: string, size: string) {
+    setMatrixAddTarget({ productName, size });
+    setMatrixSearchQuery(productName);
+    setMatrixAddMessage(`Choose quantity for ${productName} / ${size}.`);
+    window.setTimeout(() => {
+      matrixAddRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
   }
 
   function updateUnitPrice(index: number, value: number) {
@@ -1850,11 +2111,22 @@ export function PoDraftLinesForm({
   }
 
   return (
-    <form action={formAction}>
+    <form action={formAction} className="grid gap-5">
       <input name="poId" type="hidden" value={poId} />
       {deletedIds.map((id) => (
         <input key={id} name="deleteItemUuid" type="hidden" value={id} />
       ))}
+      <section
+        className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm"
+        id="draft-lines"
+      >
+      <div className="border-b border-[#e2e7ed] p-5">
+        <h2 className="text-lg font-semibold">Draft Line Details</h2>
+        <p className="mt-1 text-sm text-[#667380]">
+          Edit SKU, product name, order qty, unit price, freight/unit, and remarks.
+          Quantity changes here and in the Supplier Quote Matrix stay synchronized.
+        </p>
+      </div>
       <div className="flex flex-wrap items-end gap-3 border-b border-[#e2e7ed] p-4">
         <label className={labelClass}>
           Adjust Qty %
@@ -2037,7 +2309,7 @@ export function PoDraftLinesForm({
               return (
               <tr
                 draggable
-                key={item.itemUuid ?? `${poId}-${item.lineNo}`}
+                key={item.itemUuid ?? item.tempId ?? `${poId}-${item.lineNo}`}
                 onDragOver={(event) => event.preventDefault()}
                 onDragStart={(event) => onDragStart(event, index)}
                 onDrop={(event) => onDrop(event, index)}
@@ -2068,6 +2340,7 @@ export function PoDraftLinesForm({
                 <td className="min-w-[170px] px-4 py-3">
                   <input name="itemUuid" type="hidden" value={item.itemUuid ?? ""} />
                   <input name="currency" type="hidden" value={lineAmountCurrency} />
+                  <input name="variantTitle" type="hidden" value={item.variantTitle ?? ""} />
                   <input
                     className={inputClass}
                     name="sku"
@@ -2161,6 +2434,266 @@ export function PoDraftLinesForm({
           </LoadingLabel>
         </button>
       </div>
+      </section>
+
+      <section className="min-w-0 rounded-lg border border-[#dfe4ea] bg-white shadow-sm">
+        <div className="border-b border-[#e2e7ed] p-5">
+          <h2 className="text-lg font-semibold">Supplier Quote Matrix</h2>
+          <p className="mt-1 text-sm text-[#667380]">
+            Edit order quantities directly in the matrix. On-hand is read-only;
+            every quantity uses the same draft-line state shown above.
+          </p>
+        </div>
+
+        <div className="grid gap-5 p-5">
+          {matrixGroups.map((group) => (
+            <div className="overflow-x-auto rounded-lg border border-[#e2e7ed]" key={group.label}>
+              <div className="border-b border-[#e2e7ed] bg-[#fbfcfd] px-4 py-3">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[#364252]">
+                  {group.label}
+                </h3>
+              </div>
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
+                  <tr>
+                    <th className="border-b border-[#dfe4ea] px-4 py-3 font-semibold">Product</th>
+                    {group.sizes.map((size) => (
+                      <th
+                        className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold"
+                        key={size}
+                      >
+                        {size}
+                      </th>
+                    ))}
+                    <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row) => (
+                    <tr className="border-b border-[#edf1f5]" key={row.productName}>
+                      <td className="min-w-[320px] px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                            {row.imageUrl ? (
+                              <Image
+                                alt={row.productName}
+                                className="h-full w-full object-cover"
+                                height={64}
+                                loading="lazy"
+                                src={row.imageUrl}
+                                unoptimized
+                                width={64}
+                              />
+                            ) : (
+                              <span className="text-[10px] font-semibold text-[#8a96a3]">NO IMG</span>
+                            )}
+                          </span>
+                          <div>
+                            <p className="font-semibold">{row.productName}</p>
+                            <p className="mt-1 text-xs font-semibold italic text-[#172026]">
+                              order qty / on-hand
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      {group.sizes.map((size) => {
+                        const cell = row.items.get(size);
+                        return (
+                          <td
+                            className="min-w-24 border-l border-[#dfe4ea] px-2 py-2 text-right"
+                            key={size}
+                            style={editableQtyHeatStyle(cell?.orderedQty ?? 0, group.maxQty)}
+                          >
+                            {cell ? (
+                              <>
+                                <input
+                                  aria-label={`${row.productName} ${size} order quantity`}
+                                  className="h-9 w-20 rounded-md border border-black/20 bg-white/90 px-2 text-right font-mono text-sm font-semibold text-[#172026] outline-none focus:border-[#255f85]"
+                                  min="0"
+                                  onChange={(event) =>
+                                    updateMatrixQty(
+                                      cell.lineIndexes,
+                                      Number(event.target.value) || 0,
+                                    )
+                                  }
+                                  step="0.0001"
+                                  type="number"
+                                  value={cell.orderedQty}
+                                />
+                                <p className="mt-1 font-mono text-sm font-semibold italic">
+                                  {formatQty(cell.onHand)}
+                                </p>
+                              </>
+                            ) : (
+                              <button
+                                className="h-9 rounded-md border border-white/30 px-2 text-xs font-semibold text-white transition hover:bg-white/10"
+                                onClick={() => openMatrixCellAdd(row.productName, size)}
+                                type="button"
+                              >
+                                + Add
+                              </button>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
+                        {formatQty(row.totalQty)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          <div
+            className="rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-4"
+            ref={matrixAddRef}
+          >
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+              <label className={`${labelClass} flex-1`}>
+                Add SKU below Supplier Quote
+                <input
+                  className={inputClass}
+                  onChange={(event) => {
+                    setMatrixAddTarget(null);
+                    setMatrixSearchQuery(event.target.value);
+                    setMatrixAddMessage("");
+                  }}
+                  placeholder="Search SKU or product name"
+                  value={matrixSearchQuery}
+                />
+              </label>
+              <p className="text-xs text-[#667380]">
+                Choose qty, review on-hand, then press the black Add button.
+              </p>
+            </div>
+
+            {matrixAddTarget ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-[#172026] px-3 py-2 text-xs font-semibold text-white">
+                  Adding {matrixAddTarget.productName} / {matrixAddTarget.size}
+                </span>
+                <button
+                  className="rounded-md border border-[#cfd6df] bg-white px-3 py-2 text-xs font-semibold"
+                  onClick={() => {
+                    setMatrixAddTarget(null);
+                    setMatrixAddMessage("");
+                  }}
+                  type="button"
+                >
+                  Show all search results
+                </button>
+              </div>
+            ) : null}
+            {matrixSearchQuery.trim().length > 0 && matrixSearchQuery.trim().length < 2 ? (
+              <p className="mt-3 text-sm text-[#667380]">Type at least 2 characters to search.</p>
+            ) : null}
+            {matrixCatalogLoading ? (
+              <p className="mt-3 text-sm text-[#667380]">Searching catalog...</p>
+            ) : null}
+            {visibleMatrixCatalogItems.length > 0 ? (
+              <div className="mt-3 grid max-h-[420px] gap-2 overflow-auto">
+                {visibleMatrixCatalogItems.map((item) => {
+                  const alreadyAdded = existingSkus.has(item.sku);
+                  return (
+                    <div
+                      className="grid gap-3 rounded-md border border-[#e2e7ed] bg-white p-3 md:grid-cols-[48px_minmax(240px,1fr)_110px_110px_auto] md:items-center"
+                      key={item.sku}
+                    >
+                      <span className="grid size-12 place-items-center overflow-hidden rounded-md border border-[#dfe4ea] bg-[#f6f7f9]">
+                        {item.imageUrl ? (
+                          <Image
+                            alt={item.productTitle}
+                            className="h-full w-full object-cover"
+                            height={48}
+                            src={item.imageUrl}
+                            unoptimized
+                            width={48}
+                          />
+                        ) : (
+                          <span className="text-[9px] font-semibold text-[#8a96a3]">IMG</span>
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{item.productTitle}</p>
+                        <p className="mt-1 font-mono text-xs text-[#667380]">{item.sku}</p>
+                      </div>
+                      <div className="rounded-md bg-[#eef4f8] px-3 py-2 text-right">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#667380]">
+                          On-hand
+                        </p>
+                        <p className="font-mono font-semibold text-[#255f85]">
+                          {formatQty(item.onHand)}
+                        </p>
+                      </div>
+                      <label className={labelClass}>
+                        Qty
+                        <input
+                          className={`${inputClass} w-full text-right font-mono`}
+                          disabled={alreadyAdded}
+                          min="0"
+                          onChange={(event) =>
+                            setMatrixAddQtyBySku((current) => ({
+                              ...current,
+                              [item.sku]: event.target.value,
+                            }))
+                          }
+                          step="0.0001"
+                          type="number"
+                          value={
+                            matrixAddQtyBySku[item.sku] ??
+                            String(item.recommendedQty || "")
+                          }
+                        />
+                      </label>
+                      <button
+                        className={buttonClass}
+                        disabled={alreadyAdded}
+                        onClick={() => addCatalogLineFromMatrix(item)}
+                        type="button"
+                      >
+                        {alreadyAdded ? "In draft" : "+ Add"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {matrixAddTarget &&
+            !matrixCatalogLoading &&
+            matrixSearchQuery.trim().length >= 2 &&
+            visibleMatrixCatalogItems.length === 0 ? (
+              <p className="mt-3 rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-semibold text-[#946200]">
+                No catalog SKU matched {matrixAddTarget.productName} / {matrixAddTarget.size}.
+                Try a manual SKU search in the box above.
+              </p>
+            ) : null}
+            {matrixAddMessage ? (
+              <p
+                className={`mt-3 rounded-md px-3 py-2 text-sm font-semibold ${
+                  matrixAddMessage.startsWith("Added")
+                    ? "bg-[#eaf6ef] text-[#1f6b3d]"
+                    : "bg-[#fff4e5] text-[#946200]"
+                }`}
+              >
+                {matrixAddMessage}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-[#e2e7ed] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <ActionMessage state={state} />
+            <button className={buttonClass} disabled={pending} type="submit">
+              <LoadingLabel loading={pending} loadingText="Saving...">
+                Save All Draft &amp; Matrix Changes
+              </LoadingLabel>
+            </button>
+          </div>
+        </div>
+      </section>
     </form>
   );
 }

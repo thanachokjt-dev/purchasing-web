@@ -1640,6 +1640,7 @@ export async function updatePoDraftLinesAction(
     );
     const skus = formData.getAll("sku").map((value) => String(value).trim());
     const productTitles = formData.getAll("productTitle").map((value) => String(value).trim());
+    const variantTitles = formData.getAll("variantTitle").map((value) => String(value).trim());
     const qtyValues = formData.getAll("orderedQty").map((value) => String(value).trim());
     const priceValues = formData.getAll("unitPrice").map((value) => String(value).trim());
     const freightValues = formData.getAll("freightUnitCost").map((value) => String(value).trim());
@@ -1651,17 +1652,39 @@ export async function updatePoDraftLinesAction(
     }
 
     const existingItemIds = itemUuids.filter(Boolean);
-    const { data: existingItems, error: existingItemsError } = await supabase
-      .from("po_items")
-      .select("id,unit_price,source_payload")
-      .eq("po_id", poId)
-      .in("id", existingItemIds);
-    if (existingItemsError) {
-      throw new Error(existingItemsError.message);
+    const existingItemsResult = existingItemIds.length
+      ? await supabase
+          .from("po_items")
+          .select("id,unit_price,source_payload")
+          .eq("po_id", poId)
+          .in("id", existingItemIds)
+      : { data: [], error: null };
+    if (existingItemsResult.error) {
+      throw new Error(existingItemsResult.error.message);
     }
     const existingItemById = new Map(
-      (existingItems ?? []).map((item) => [String(item.id), item]),
+      (existingItemsResult.data ?? []).map((item) => [String(item.id), item]),
     );
+    const draftSkus = new Set(
+      itemUuids.flatMap((itemUuid, index) => {
+        const sku = skus[index]?.toLowerCase();
+        return itemUuid && sku && !deleteItemUuids.has(itemUuid) ? [sku] : [];
+      }),
+    );
+    itemUuids.forEach((itemUuid, index) => {
+      if (itemUuid) {
+        return;
+      }
+      const sku = skus[index]?.trim();
+      if (!sku) {
+        throw new Error(`Line ${index + 1} SKU is required`);
+      }
+      const normalizedSku = sku.toLowerCase();
+      if (draftSkus.has(normalizedSku)) {
+        throw new Error(`${sku} is already in this PO draft`);
+      }
+      draftSkus.add(normalizedSku);
+    });
 
     if (deleteItemUuids.size > 0) {
       const { error } = await supabase
@@ -1675,10 +1698,8 @@ export async function updatePoDraftLinesAction(
     }
 
     let nextLineNo = 1;
+    const batchStamp = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
     for (const [index, itemUuid] of itemUuids.entries()) {
-      if (!itemUuid) {
-        continue;
-      }
       if (deleteItemUuids.has(itemUuid)) {
         continue;
       }
@@ -1696,6 +1717,42 @@ export async function updatePoDraftLinesAction(
       );
       const currency = (currencyValues[index] || "THB").toUpperCase();
       const landedUnitCost = unitPrice + freightUnitCost;
+
+      if (!itemUuid) {
+        const lineNo = String(nextLineNo);
+        const { error } = await supabase.from("po_items").insert({
+          po_item_id: `${poId}-${batchStamp}-${index + 1}`,
+          po_id: poId,
+          line_no: lineNo,
+          sort_position: nextLineNo,
+          sku,
+          product_title_snapshot: productTitles[index] || sku,
+          variant_title_snapshot: variantTitles[index] || null,
+          ordered_qty: orderedQty,
+          unit_price: unitPrice,
+          freight_unit_cost: freightUnitCost,
+          landed_unit_cost: landedUnitCost,
+          line_amount: orderedQty * unitPrice,
+          currency,
+          remark: remarkValues[index] || null,
+          full_name: productTitles[index] || sku,
+          line_status: "draft",
+          source: "web_app",
+          source_payload: {
+            unitPriceSource: "manual",
+            unitPriceSourceDate: null,
+            unitPriceSourcePoId: null,
+            unitPriceSourcePoReference: null,
+          },
+          updated_at: new Date().toISOString(),
+        });
+        if (error) {
+          throw new Error(error.message);
+        }
+        nextLineNo += 1;
+        continue;
+      }
+
       const existingItem = existingItemById.get(itemUuid);
       const existingUnitPrice = Number(existingItem?.unit_price ?? 0);
       const sourcePayload =
@@ -1720,6 +1777,7 @@ export async function updatePoDraftLinesAction(
         .update({
           sku,
           product_title_snapshot: productTitles[index] || sku,
+          variant_title_snapshot: variantTitles[index] || null,
           full_name: productTitles[index] || sku,
           line_no: String(nextLineNo),
           sort_position: nextLineNo,
@@ -1744,7 +1802,7 @@ export async function updatePoDraftLinesAction(
 
     await recalculatePoAmount(poId);
     refreshPoViews(poId);
-    return success(`Saved draft details for ${itemUuids.length} lines`);
+    return success(`Saved draft details for ${nextLineNo - 1} lines`);
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Save draft failed");
   }
