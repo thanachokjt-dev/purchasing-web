@@ -17,6 +17,7 @@ import {
   OrderQtyModeHeaderButtons,
   SelectionButtons,
   StockFilterSelect,
+  TagFilterSelect,
   TagDropdownSelect,
 } from "@/app/purchasing-decision/decision-form";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
@@ -96,6 +97,22 @@ function normalizeSelectedStock(stock: string | string[] | undefined) {
   return selected.length ? selected : ["all"];
 }
 
+function normalizeSelectedTags(tag: string | string[] | undefined) {
+  const values = Array.isArray(tag) ? tag : [tag ?? "all"];
+  const selected = values
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (!selected.length || selected.includes("all")) {
+    return ["all"];
+  }
+
+  return Array.from(
+    new Map(selected.map((value) => [value.toLowerCase(), value])).values(),
+  );
+}
+
 function sameText(left: string, right: string) {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
@@ -144,7 +161,7 @@ function decisionReturnTo(params: {
   status?: string;
   stock?: string | string[];
   supplier?: string;
-  tag?: string;
+  tag?: string | string[];
   visibility?: string;
 }) {
   const nextParams = new URLSearchParams();
@@ -175,7 +192,7 @@ function decisionExportHref(params: {
   status?: string;
   stock?: string | string[];
   supplier?: string;
-  tag?: string;
+  tag?: string | string[];
   visibility?: string;
 }) {
   const nextParams = new URLSearchParams();
@@ -211,7 +228,7 @@ function decisionOverstockReportHref(params: {
   sellingWeight?: string;
   status?: string;
   supplier?: string;
-  tag?: string;
+  tag?: string | string[];
   visibility?: string;
 }) {
   const nextParams = new URLSearchParams();
@@ -250,7 +267,7 @@ export default async function PurchasingDecisionPage({
     status?: string;
     stock?: string | string[];
     supplier?: string;
-    tag?: string;
+    tag?: string | string[];
     visibility?: string;
   }>;
 }) {
@@ -261,7 +278,7 @@ export default async function PurchasingDecisionPage({
   const params = await searchParams;
   const q = params.q ?? "";
   const supplier = params.supplier ?? "all";
-  const tag = params.tag ?? "all";
+  const tag = normalizeSelectedTags(params.tag);
   const status = params.status ?? "all";
   const stock = normalizeSelectedStock(params.stock);
   const alert = normalizeSelectedAlerts(params.alert);
@@ -414,19 +431,11 @@ export default async function PurchasingDecisionPage({
                     ))}
                   </select>
                 </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
-                    Tags
-                  </span>
-                  <select className={inputClass} defaultValue={tag} name="tag">
-                    <option value="all">All tags</option>
-                    {data.tagFilterOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <TagFilterSelect
+                  key={`${supplier}\u0000${tag.join("\u0000")}`}
+                  options={data.tagFilterOptions}
+                  selectedTags={tag}
+                />
                 <label className="grid gap-1">
                   <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
                     Status
@@ -546,7 +555,7 @@ export default async function PurchasingDecisionPage({
                   canBulkEdit={currentUser.role === "super_admin"}
                   filterSummary={[
                     supplier !== "all" ? `Supplier = ${supplier}` : "Supplier = all",
-                    tag !== "all" ? `Tag = ${tag}` : "",
+                    tag.includes("all") ? "" : `Tags = ${tag.join(", ")}`,
                     status !== "all" ? `Status = ${status}` : "",
                     visibility !== "active" ? `Visibility = ${visibility}` : "Visibility = active only",
                     `Round 10 = ${

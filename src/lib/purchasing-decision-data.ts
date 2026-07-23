@@ -993,7 +993,7 @@ export async function getPurchasingDecisionData({
   limit?: number | null;
   q?: string;
   supplier?: string;
-  tag?: string;
+  tag?: string | string[];
   itemStatus?: string;
   alert?: string | string[];
   capSelling?: string;
@@ -1072,7 +1072,14 @@ export async function getPurchasingDecisionData({
     .map((item) => item.trim())
     .filter(Boolean);
   const selectedSupplier = supplier.trim().toLowerCase();
-  const selectedTag = tag.trim().toLowerCase();
+  const selectedTags = (Array.isArray(tag) ? tag : [tag])
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const selectedTagSet =
+    !selectedTags.length || selectedTags.includes("all")
+      ? null
+      : new Set(selectedTags);
   const selectedItemStatus = itemStatus.trim().toLowerCase();
   const selectedAlerts = selectedAlertsFromParam(alert);
   const selectedStocks = selectedStocksFromParam(stock);
@@ -1325,9 +1332,9 @@ export async function getPurchasingDecisionData({
   function matchesFiltersExceptQuery(line: PurchasingDecisionLine) {
     const matchesSupplier = matchesSelectedSupplier(line, selectedSupplier);
     const matchesTag =
-      selectedTag === "all" ||
-      (selectedTag === "__untagged" && line.tags.length === 0) ||
-      line.tags.some((lineTag) => lineTag.toLowerCase() === selectedTag);
+      !selectedTagSet ||
+      (selectedTagSet.has("__untagged") && line.tags.length === 0) ||
+      line.tags.some((lineTag) => selectedTagSet.has(lineTag.toLowerCase()));
     const matchesItemStatus =
       selectedItemStatus === "all" ||
       line.itemStatus.toLowerCase() === selectedItemStatus;
