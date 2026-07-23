@@ -913,6 +913,116 @@ export function StockFilterSelect({
   );
 }
 
+export function TagFilterSelect({
+  options,
+  selectedTags,
+}: {
+  options: { label: string; value: string }[];
+  selectedTags: string[];
+}) {
+  const initialSelection = selectedTags.includes("all")
+    ? []
+    : selectedTags.filter((value) =>
+        options.some((option) => option.value.toLowerCase() === value.toLowerCase()),
+      );
+  const [selected, setSelected] = useState(initialSelection);
+  const [query, setQuery] = useState("");
+  const selectedSet = useMemo(
+    () => new Set(selected.map((value) => value.toLowerCase())),
+    [selected],
+  );
+  const visibleOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return options;
+    }
+
+    return options.filter((option) =>
+      option.label.toLowerCase().includes(normalizedQuery),
+    );
+  }, [options, query]);
+  const valuesForSubmit = selected.length ? selected : ["all"];
+  const label =
+    selected.length === 0
+      ? "All tags"
+      : selected.length === 1
+        ? options.find(
+            (option) => option.value.toLowerCase() === selected[0]?.toLowerCase(),
+          )?.label ?? selected[0]
+        : `${selected.length} tags selected`;
+
+  function toggle(value: string) {
+    setSelected((current) => {
+      const normalizedValue = value.toLowerCase();
+      if (current.some((item) => item.toLowerCase() === normalizedValue)) {
+        return current.filter((item) => item.toLowerCase() !== normalizedValue);
+      }
+
+      return [...current, value];
+    });
+  }
+
+  return (
+    <div className="grid gap-1">
+      {valuesForSubmit.map((value) => (
+        <input key={value} name="tag" type="hidden" value={value} />
+      ))}
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+        Tags
+      </span>
+      <details className="group relative z-[90]">
+        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+          <span className="truncate">{label}</span>
+          <span aria-hidden="true" className="text-xs text-[#65717f]">
+            v
+          </span>
+        </summary>
+        <div className="absolute right-0 z-[110] mt-1 grid w-72 gap-2 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+          <input
+            aria-label="Search tags"
+            className="h-9 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search tags"
+            type="search"
+            value={query}
+          />
+          <div className="flex items-center justify-between gap-2 border-b border-[#edf1f5] pb-2">
+            <span className="text-xs font-semibold text-[#65717f]">
+              {selected.length ? `${selected.length} selected` : "Showing all"}
+            </span>
+            <button
+              className="rounded-md px-2 py-1 text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
+              onClick={() => setSelected([])}
+              type="button"
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="grid max-h-64 gap-1 overflow-y-auto">
+            {visibleOptions.map((option) => (
+              <label
+                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-[#172026] hover:bg-[#f3f5f7]"
+                key={option.value}
+              >
+                <input
+                  checked={selectedSet.has(option.value.toLowerCase())}
+                  className="size-4 accent-[#172026]"
+                  onChange={() => toggle(option.value)}
+                  type="checkbox"
+                />
+                <span className="truncate">{option.label}</span>
+              </label>
+            ))}
+            {!visibleOptions.length ? (
+              <p className="px-2 py-3 text-sm text-[#667380]">No tags found.</p>
+            ) : null}
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export function DecisionPlanningCells({
   calculatedDemandIndexHm,
   comingQty,
