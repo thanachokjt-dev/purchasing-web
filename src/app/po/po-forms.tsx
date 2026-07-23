@@ -647,10 +647,105 @@ function useCatalogSearch({
   };
 }
 
-function editableQuoteMatrixRows(lines: DraftLineItem[]) {
+function matrixCatalogSearchQuery(productName: string) {
+  return productName.split(/\s+\/\s+/)[0]?.trim() || productName.trim();
+}
+
+function matrixProductMatchKey(productName: string) {
+  return productName
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function uniqueCatalogItems(items: CatalogItemOption[]) {
+  return Array.from(
+    items
+      .reduce((itemBySku, item) => {
+        if (item.sku.trim()) {
+          itemBySku.set(item.sku.trim(), item);
+        }
+        return itemBySku;
+      }, new Map<string, CatalogItemOption>())
+      .values(),
+  );
+}
+
+function useMatrixCatalogProducts(productNames: string[]) {
+  const queryKey = Array.from(
+    new Set(
+      productNames
+        .map(matrixCatalogSearchQuery)
+        .filter((query) => query.length >= 2),
+    ),
+  )
+    .sort()
+    .join("\n");
+  const [result, setResult] = useState<{
+    items: CatalogItemOption[];
+    queryKey: string;
+  }>({ items: [], queryKey: "" });
+
+  useEffect(() => {
+    const queries = queryKey.split("\n").filter(Boolean);
+    if (queries.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let stale = false;
+
+    Promise.all(
+      queries.map((query) => {
+        const params = new URLSearchParams({
+          limit: "50",
+          q: query,
+        });
+        return fetch(`/api/po/catalog-search?${params.toString()}`, {
+          signal: controller.signal,
+        })
+          .then((response) => (response.ok ? response.json() : { items: [] }))
+          .then((payload: { items?: CatalogItemOption[] }) =>
+            Array.isArray(payload.items) ? payload.items : [],
+          );
+      }),
+    )
+      .then((results) => {
+        if (!stale) {
+          setResult({
+            items: uniqueCatalogItems(results.flat()),
+            queryKey,
+          });
+        }
+      })
+      .catch((error) => {
+        if (!stale && !(error instanceof DOMException && error.name === "AbortError")) {
+          setResult({ items: [], queryKey });
+        }
+      });
+
+    return () => {
+      stale = true;
+      controller.abort();
+    };
+  }, [queryKey]);
+
+  return {
+    items: result.queryKey === queryKey ? result.items : [],
+    loading: Boolean(queryKey) && result.queryKey !== queryKey,
+  };
+}
+
+function editableQuoteMatrixRows(
+  lines: DraftLineItem[],
+  catalogItems: CatalogItemOption[] = [],
+) {
   const rows = new Map<
     string,
     {
+      availableSizes: Set<string>;
       family: MatrixFamily;
       groupTag: string;
       imageUrl: string | null;
@@ -676,6 +771,7 @@ function editableQuoteMatrixRows(lines: DraftLineItem[]) {
     const row =
       rows.get(key) ??
       {
+        availableSizes: new Set<string>(),
         family,
         groupTag,
         imageUrl: line.imageUrl ?? null,
@@ -684,6 +780,7 @@ function editableQuoteMatrixRows(lines: DraftLineItem[]) {
         totalQty: 0,
       };
     const size = matrixItemSize(line);
+    row.availableSizes.add(size);
     const cell =
       row.items.get(size) ??
       {
@@ -708,6 +805,27 @@ function editableQuoteMatrixRows(lines: DraftLineItem[]) {
     rows.set(key, row);
   });
 
+  const rowsByProduct = new Map<
+    string,
+    Array<(typeof rows extends Map<string, infer T> ? T : never)>
+  >();
+  for (const row of rows.values()) {
+    const productKey = `${row.family}::${matrixProductMatchKey(row.productName)}`;
+    rowsByProduct.set(productKey, [...(rowsByProduct.get(productKey) ?? []), row]);
+  }
+
+  for (const item of catalogItems) {
+    const productName = matrixProductName(item);
+    const productKey = `${matrixItemFamily(item)}::${matrixProductMatchKey(productName)}`;
+    const matchingRows = rowsByProduct.get(productKey) ?? [];
+    for (const row of matchingRows) {
+      row.availableSizes.add(matrixItemSize(item));
+      if (!row.imageUrl && item.imageUrl) {
+        row.imageUrl = item.imageUrl;
+      }
+    }
+  }
+
   const rowValues = Array.from(rows.values());
   return Array.from(
     rowValues
@@ -722,7 +840,7 @@ function editableQuoteMatrixRows(lines: DraftLineItem[]) {
       const family = groupRows[0]?.family ?? "unknown";
       const groupTag = groupRows[0]?.groupTag ?? "Untagged";
       const sizes = sortMatrixSizes(
-        groupRows.flatMap((row) => Array.from(row.items.keys())),
+        groupRows.flatMap((row) => Array.from(row.availableSizes)),
         family,
       );
       const maxQty = Math.max(
@@ -1726,8 +1844,8 @@ export function PoDraftLinesForm({
   const { items: matrixCatalogItems, loading: matrixCatalogLoading } = useCatalogSearch({
     limit: 50,
     query: matrixSearchQuery,
-    supplierCode,
-    supplierName,
+    supplierCode: matrixAddTarget ? undefined : supplierCode,
+    supplierName: matrixAddTarget ? undefined : supplierName,
   });
   const initialQtyByLine = useMemo(
     () =>
@@ -1745,17 +1863,38 @@ export function PoDraftLinesForm({
   const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
   const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
   const exchangeRateAverage = averageExchangeRate(exchangeRates);
-  const matrixGroups = useMemo(() => editableQuoteMatrixRows(lines), [lines]);
+  const baseMatrixGroups = useMemo(() => editableQuoteMatrixRows(lines), [lines]);
+  const matrixProductNames = useMemo(
+    () =>
+      baseMatrixGroups.flatMap((group) =>
+        group.rows.map((row) => row.productName),
+      ),
+    [baseMatrixGroups],
+  );
+  const {
+    items: matrixProductCatalogItems,
+    loading: matrixProductCatalogLoading,
+  } = useMatrixCatalogProducts(matrixProductNames);
+  const matrixGroups = useMemo(
+    () => editableQuoteMatrixRows(lines, matrixProductCatalogItems),
+    [lines, matrixProductCatalogItems],
+  );
   const visibleMatrixCatalogItems = useMemo(() => {
     if (!matrixAddTarget) {
       return matrixCatalogItems;
     }
-    return matrixCatalogItems.filter(
+    return uniqueCatalogItems([
+      ...matrixProductCatalogItems,
+      ...matrixCatalogItems,
+    ]).filter(
       (item) =>
         matrixItemSize(item) === matrixAddTarget.size &&
-        matrixProductName(item).toLowerCase() === matrixAddTarget.productName.toLowerCase(),
+        matrixProductMatchKey(matrixProductName(item)) ===
+          matrixProductMatchKey(matrixAddTarget.productName),
     );
-  }, [matrixAddTarget, matrixCatalogItems]);
+  }, [matrixAddTarget, matrixCatalogItems, matrixProductCatalogItems]);
+  const matrixTargetLoading =
+    matrixCatalogLoading || (matrixAddTarget ? matrixProductCatalogLoading : false);
   const existingSkus = useMemo(
     () => new Set(lines.map((line) => line.sku.trim()).filter(Boolean)),
     [lines],
@@ -1893,7 +2032,7 @@ export function PoDraftLinesForm({
 
   function openMatrixCellAdd(productName: string, size: string) {
     setMatrixAddTarget({ productName, size });
-    setMatrixSearchQuery(productName);
+    setMatrixSearchQuery(matrixCatalogSearchQuery(productName));
     setMatrixAddMessage(`Choose quantity for ${productName} / ${size}.`);
     window.setTimeout(() => {
       matrixAddRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2500,11 +2639,18 @@ export function PoDraftLinesForm({
                       </td>
                       {group.sizes.map((size) => {
                         const cell = row.items.get(size);
+                        const canAdd = row.availableSizes.has(size);
                         return (
                           <td
-                            className="min-w-24 border-l border-[#dfe4ea] px-2 py-2 text-right"
+                            className={`min-w-24 border-l border-[#dfe4ea] px-2 py-2 text-right ${
+                              !cell && !canAdd ? "bg-[#f3f5f7] text-[#9aa4af]" : ""
+                            }`}
                             key={size}
-                            style={editableQtyHeatStyle(cell?.orderedQty ?? 0, group.maxQty)}
+                            style={
+                              cell || canAdd
+                                ? editableQtyHeatStyle(cell?.orderedQty ?? 0, group.maxQty)
+                                : undefined
+                            }
                           >
                             {cell ? (
                               <>
@@ -2526,7 +2672,7 @@ export function PoDraftLinesForm({
                                   {formatQty(cell.onHand)}
                                 </p>
                               </>
-                            ) : (
+                            ) : canAdd ? (
                               <button
                                 className="h-9 rounded-md border border-white/30 px-2 text-xs font-semibold text-white transition hover:bg-white/10"
                                 onClick={() => openMatrixCellAdd(row.productName, size)}
@@ -2534,6 +2680,8 @@ export function PoDraftLinesForm({
                               >
                                 + Add
                               </button>
+                            ) : (
+                              <span aria-label={`${row.productName} ${size} is not available`}>—</span>
                             )}
                           </td>
                         );
@@ -2591,7 +2739,7 @@ export function PoDraftLinesForm({
             {matrixSearchQuery.trim().length > 0 && matrixSearchQuery.trim().length < 2 ? (
               <p className="mt-3 text-sm text-[#667380]">Type at least 2 characters to search.</p>
             ) : null}
-            {matrixCatalogLoading ? (
+            {matrixTargetLoading ? (
               <p className="mt-3 text-sm text-[#667380]">Searching catalog...</p>
             ) : null}
             {visibleMatrixCatalogItems.length > 0 ? (
@@ -2663,7 +2811,7 @@ export function PoDraftLinesForm({
               </div>
             ) : null}
             {matrixAddTarget &&
-            !matrixCatalogLoading &&
+            !matrixTargetLoading &&
             matrixSearchQuery.trim().length >= 2 &&
             visibleMatrixCatalogItems.length === 0 ? (
               <p className="mt-3 rounded-md bg-[#fff4e5] px-3 py-2 text-sm font-semibold text-[#946200]">
