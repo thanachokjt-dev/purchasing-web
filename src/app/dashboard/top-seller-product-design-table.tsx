@@ -216,7 +216,8 @@ export function TopSellerProductDesignTable({
             Sizes are combined into one design and colors stay separate. Every calendar day
             counts, including zero-sale days. New products divide only by days since first
             stock or first sale; All Time blends 35% lifetime demand with 65% recent 30-day
-            demand, matching Reorder Planning.
+            calculated demand. Manual SKU overrides in Reorder Planning do not distort this
+            ranking.
           </p>
         </div>
         <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">

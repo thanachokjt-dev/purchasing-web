@@ -89,6 +89,7 @@ type VariantMetadataRow = {
 type DemandSnapshotRow = {
   avg_daily_30: number | string | null;
   avg_daily_90: number | string | null;
+  demand_index_hm: number | string | null;
   sku: string | null;
   sold_30: number | string | null;
   sold_90: number | string | null;
@@ -337,18 +338,37 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
   }
 
   try {
-    const rows = await fetchAll<TopSellerSnapshotDbRow>(
-      "Top seller product-design snapshot",
-      (from, to) =>
-        supabase
-          .from(SNAPSHOT_TABLE)
-          .select(
-            "group_key,category,design_name,color,suppliers,tags,image_url,sku_count,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
-          )
-          .order("category", { ascending: true })
-          .order("demand_index_30", { ascending: false })
-          .range(from, to),
-    );
+    const readSnapshotRows = () =>
+      fetchAll<TopSellerSnapshotDbRow>(
+        "Top seller product-design snapshot",
+        (from, to) =>
+          supabase
+            .from(SNAPSHOT_TABLE)
+            .select(
+              "group_key,category,design_name,color,suppliers,tags,image_url,sku_count,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
+            )
+            .order("category", { ascending: true })
+            .order("demand_index_30", { ascending: false })
+            .range(from, to),
+      );
+    let rows = await readSnapshotRows();
+    const snapshotRefreshedAt =
+      rows.map((row) => row.refreshed_at).filter(Boolean).sort().at(-1) ?? null;
+    const latestDemandResult = await supabase
+      .from("demand_index_current")
+      .select("updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    const latestDemandAt = compactText(latestDemandResult.data?.[0]?.updated_at);
+    const snapshotIsStale =
+      !snapshotRefreshedAt ||
+      (latestDemandAt && new Date(latestDemandAt) > new Date(snapshotRefreshedAt));
+
+    if (!latestDemandResult.error && snapshotIsStale) {
+      await refreshTopSellerProductDesignSnapshot(supabase);
+      rows = await readSnapshotRows();
+    }
+
     return {
       refreshedAt:
         rows.map((row) => row.refreshed_at).filter(Boolean).sort().at(-1) ?? null,
@@ -394,7 +414,9 @@ export async function refreshTopSellerProductDesignSnapshot(
     fetchAll<DemandSnapshotRow>("Demand index snapshot", (from, to) =>
       supabase
         .from("demand_index_current")
-        .select("sku,sold_30,sold_90,total_sale,avg_daily_30,avg_daily_90")
+        .select(
+          "sku,sold_30,sold_90,total_sale,avg_daily_30,avg_daily_90,demand_index_hm",
+        )
         .order("sku", { ascending: true })
         .range(from, to),
     ),
@@ -460,7 +482,7 @@ export async function refreshTopSellerProductDesignSnapshot(
 
     group.demandIndex30 += numeric(demand?.avg_daily_30);
     group.demandIndex90 += numeric(demand?.avg_daily_90);
-    group.demandIndexLifetime += Math.max(0, line.demandIndexHm);
+    group.demandIndexLifetime += Math.max(0, numeric(demand?.demand_index_hm));
     group.sold30 += numeric(demand?.sold_30);
     group.sold90 += numeric(demand?.sold_90);
     group.totalSale += numeric(demand?.total_sale);
