@@ -660,6 +660,10 @@ function matrixProductMatchKey(productName: string) {
     .trim();
 }
 
+function matrixCatalogProductName(item: CatalogItemOption) {
+  return item.mainName.trim() || matrixProductName(item);
+}
+
 function uniqueCatalogItems(items: CatalogItemOption[]) {
   return Array.from(
     items
@@ -815,7 +819,7 @@ function editableQuoteMatrixRows(
   }
 
   for (const item of catalogItems) {
-    const productName = matrixProductName(item);
+    const productName = matrixCatalogProductName(item);
     const productKey = `${matrixItemFamily(item)}::${matrixProductMatchKey(productName)}`;
     const matchingRows = rowsByProduct.get(productKey) ?? [];
     for (const row of matchingRows) {
@@ -1889,7 +1893,7 @@ export function PoDraftLinesForm({
     ]).filter(
       (item) =>
         matrixItemSize(item) === matrixAddTarget.size &&
-        matrixProductMatchKey(matrixProductName(item)) ===
+        matrixProductMatchKey(matrixCatalogProductName(item)) ===
           matrixProductMatchKey(matrixAddTarget.productName),
     );
   }, [matrixAddTarget, matrixCatalogItems, matrixProductCatalogItems]);

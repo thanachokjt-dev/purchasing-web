@@ -6,6 +6,7 @@ import { parseDecisionTags } from "@/lib/purchasing-decision-data";
 import { requireUser } from "@/lib/auth";
 import { canCreatePo, canEditPo } from "@/lib/access-control";
 import { getPurchasingSetupData } from "@/lib/purchasing-setup";
+import { refreshTopSellerProductDesignSnapshot } from "@/lib/top-seller-snapshot";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
 import { getLatestClosedPoUnitCostBySkus } from "@/lib/latest-closed-po-cost";
 
@@ -318,7 +319,17 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     }
   }
 
+  try {
+    await refreshTopSellerProductDesignSnapshot(supabase);
+  } catch (snapshotError) {
+    console.error(
+      "[purchasing-decision] Top Seller snapshot refresh failed after save",
+      snapshotError instanceof Error ? snapshotError.message : snapshotError,
+    );
+  }
+
   revalidatePath("/purchasing-decision");
+  revalidatePath("/dashboard");
   revalidatePath("/");
   revalidatePath("/po");
   redirectWithDecisionSaved(formData, rows.length);

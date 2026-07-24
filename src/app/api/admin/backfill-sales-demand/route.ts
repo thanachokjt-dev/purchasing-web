@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { refreshTopSellerProductDesignSnapshot } from "@/lib/top-seller-snapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -36,5 +37,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  try {
+    const topSellerSnapshot = await refreshTopSellerProductDesignSnapshot(supabase);
+    return NextResponse.json({
+      salesDemand: data,
+      topSellerSnapshot,
+    });
+  } catch (snapshotError) {
+    return NextResponse.json(
+      {
+        error:
+          snapshotError instanceof Error
+            ? snapshotError.message
+            : "Top Seller snapshot refresh failed",
+        salesDemand: data,
+      },
+      { status: 500 },
+    );
+  }
 }

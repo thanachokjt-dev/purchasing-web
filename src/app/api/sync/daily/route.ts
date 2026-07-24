@@ -4,6 +4,7 @@ import { rollingLookbackWindow } from "@/lib/sync/window";
 import { syncShopifyOrdersSalesLines } from "@/lib/sync/shopify-orders";
 import { syncShopifyProductsAndInventory } from "@/lib/sync/shopify-products";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { refreshTopSellerProductDesignSnapshot } from "@/lib/top-seller-snapshot";
 
 function unauthorized(error: "Invalid cron authorization" | "Missing cron authorization" | "Unauthorized") {
   console.warn("[daily-sync] auth failed", { error });
@@ -98,12 +99,39 @@ async function runDailySync(request: NextRequest, modeOverride?: "manual" | "cro
       },
     });
 
+    let topSellerSnapshot:
+      | {
+          groupCount: number;
+          refreshedAt: string;
+          skuCount: number;
+          status: "completed";
+        }
+      | {
+          error: string;
+          status: "failed";
+        };
+    try {
+      topSellerSnapshot = {
+        ...(await refreshTopSellerProductDesignSnapshot(supabase)),
+        status: "completed",
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown Top Seller snapshot error";
+      console.error("[daily-sync] top seller snapshot failed", { error: message });
+      topSellerSnapshot = {
+        error: message,
+        status: "failed",
+      };
+    }
+
     return NextResponse.json({
       ok: true,
       mode,
       window,
       productsInventory,
       ordersSales,
+      topSellerSnapshot,
       note: "Daily sync completed. Inventory is a full current snapshot; sales lines use a rolling 7-day updated_at window.",
     });
   } catch (error) {

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { MissingCostSkuTable } from "@/app/dashboard/missing-cost-sku-table";
 import { SupplierTagSalesQtyComparisonTable } from "@/app/dashboard/supplier-tag-sales-qty-table";
+import { TopSellerProductDesignTable } from "@/app/dashboard/top-seller-product-design-table";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import {
@@ -30,6 +31,7 @@ import {
 import { canAccessDashboard, defaultLandingForUser } from "@/lib/role-nav";
 import { getDashboardStockValueData, type StockValueData } from "@/lib/stock-value-data";
 import { getSupplierTagSalesQtyComparisonData } from "@/lib/supplier-sales-qty-data";
+import { getTopSellerProductDesignData } from "@/lib/top-seller-snapshot";
 
 export const dynamic = "force-dynamic";
 
@@ -191,10 +193,11 @@ export default async function DashboardPage({
     );
   }
 
-  const [dashboard, stockValue, supplierTagSalesQty] = await Promise.all([
+  const [dashboard, stockValue, supplierTagSalesQty, topSellerProductDesign] = await Promise.all([
     getPoDashboardData(),
     getDashboardStockValueData(),
     getSupplierTagSalesQtyComparisonData(),
+    getTopSellerProductDesignData(),
   ]);
   const syncTone = statusTone(dashboard.sync.dataFreshness);
 
@@ -504,6 +507,8 @@ export default async function DashboardPage({
               <SummaryCard {...card} key={card.label} />
             ))}
           </DashboardSection>
+
+          <TopSellerProductDesignTable data={topSellerProductDesign} />
 
           <InventoryStockValueSection data={stockValue} stockCostStatus={params} />
 
