@@ -443,38 +443,30 @@ export function HideSelectionButtons() {
 }
 
 export function DemandFormulaHeaderButton({
-  capAtSellingDayAverage,
   lifetimeWeight,
-  recentFloorPercent,
   sellingDayWeight,
 }: {
-  capAtSellingDayAverage: boolean;
   lifetimeWeight: number;
-  recentFloorPercent: number;
   sellingDayWeight: number;
 }) {
   const [open, setOpen] = useState(false);
   const [life, setLife] = useState(String(lifetimeWeight));
-  const [selling, setSelling] = useState(String(sellingDayWeight));
-  const [floor, setFloor] = useState(String(recentFloorPercent));
-  const [cap, setCap] = useState(capAtSellingDayAverage);
+  const [recent, setRecent] = useState(String(sellingDayWeight));
   const [applying, setApplying] = useState(false);
 
   function applyFormula() {
     setApplying(true);
     const params = new URLSearchParams(window.location.search);
     params.set("lifetimeWeight", life || "35");
-    params.set("sellingWeight", selling || "65");
-    params.set("recentFloor", floor || "75");
-    params.set("capSelling", cap ? "true" : "false");
+    params.set("sellingWeight", recent || "65");
+    params.delete("recentFloor");
+    params.delete("capSelling");
     window.location.search = params.toString();
   }
 
   function resetFormula() {
     setLife("35");
-    setSelling("65");
-    setFloor("75");
-    setCap(true);
+    setRecent("65");
   }
 
   return (
@@ -493,8 +485,8 @@ export function DemandFormulaHeaderButton({
               <div>
                 <h3 className="text-lg font-semibold text-[#172026]">Demand HM Formula</h3>
                 <p className="mt-1 text-[#667380]">
-                  Weighted demand blends conservative lifetime sales with selling-day demand,
-                  then uses recent 30D momentum as a floor.
+                  Demand includes every calendar day the product could be sold, including
+                  days with zero sales.
                 </p>
               </div>
               <button
@@ -506,14 +498,13 @@ export function DemandFormulaHeaderButton({
               </button>
             </div>
             <div className="mt-4 grid gap-3 rounded-md bg-[#fbfcfd] p-3 font-mono text-xs text-[#42505c]">
-              <p>lifetimeAvg = total sold / days from first sale to last sale</p>
-              <p>sellingDayAvg = total sold / days that actually sold</p>
-              <p>base = lifetimeAvg x lifetime% + sellingDayAvg x selling-day%</p>
-              <p>slow movers reduce selling-day weight by sales reliability</p>
-              <p>floor = Demand 30D x recent floor%</p>
-              <p>Demand HM = max(base, floor), optionally capped at sellingDayAvg</p>
+              <p>calendarDays = availability start through today, including zero-sale days</p>
+              <p>lifetimeAvg = total sold / calendarDays</p>
+              <p>recent30Avg = sold in 30D / min(30, calendarDays)</p>
+              <p>Demand HM = lifetimeAvg x lifetime% + recent30Avg x recent%</p>
+              <p>New products start from first positive inventory or first sale.</p>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
                 Lifetime %
                 <input
@@ -526,37 +517,17 @@ export function DemandFormulaHeaderButton({
                 />
               </label>
               <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
-                Selling-day %
+                Recent 30D %
                 <input
                   className="h-10 rounded-md border border-[#cfd6df] px-3 font-mono text-sm"
                   min="0"
                   max="100"
-                  onChange={(event) => setSelling(event.target.value)}
+                  onChange={(event) => setRecent(event.target.value)}
                   type="number"
-                  value={selling}
-                />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.08em] text-[#64707d]">
-                30D floor %
-                <input
-                  className="h-10 rounded-md border border-[#cfd6df] px-3 font-mono text-sm"
-                  min="0"
-                  max="200"
-                  onChange={(event) => setFloor(event.target.value)}
-                  type="number"
-                  value={floor}
+                  value={recent}
                 />
               </label>
             </div>
-            <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-[#52606d]">
-              <input
-                checked={cap}
-                className="size-4 accent-[#172026]"
-                onChange={(event) => setCap(event.target.checked)}
-                type="checkbox"
-              />
-              Cap Demand HM at selling-day demand
-            </label>
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
               <button
                 className="h-10 rounded-md border border-[#cfd6df] px-4 text-sm font-semibold text-[#52606d]"
@@ -583,22 +554,16 @@ export function DemandFormulaHeaderButton({
 }
 
 export function DemandHmHeaderControls({
-  capAtSellingDayAverage,
   lifetimeWeight,
-  recentFloorPercent,
   sellingDayWeight,
 }: {
-  capAtSellingDayAverage: boolean;
   lifetimeWeight: number;
-  recentFloorPercent: number;
   sellingDayWeight: number;
 }) {
   return (
     <div className="grid justify-items-end gap-1">
       <DemandFormulaHeaderButton
-        capAtSellingDayAverage={capAtSellingDayAverage}
         lifetimeWeight={lifetimeWeight}
-        recentFloorPercent={recentFloorPercent}
         sellingDayWeight={sellingDayWeight}
       />
       <button
@@ -1028,12 +993,10 @@ export function DecisionPlanningCells({
   comingQty,
   createPoFormId,
   demandIndexOverride,
-  firstSaleDate,
   leadTimeDays,
   leadTimeIsManual,
   leadTimeSource,
   lifetimeDailyAverage,
-  lastSaleDate,
   orderCycleDays,
   orderCycleIsManual,
   orderQtyMode,
@@ -1054,12 +1017,10 @@ export function DecisionPlanningCells({
   comingQty: number;
   createPoFormId: string;
   demandIndexOverride: number | null;
-  firstSaleDate: string | null;
   leadTimeDays: number;
   leadTimeIsManual: boolean;
   leadTimeSource: "sku" | "supplier" | "default";
   lifetimeDailyAverage: number;
-  lastSaleDate: string | null;
   orderCycleDays: number;
   orderCycleIsManual: boolean;
   orderQtyMode: "raw" | "rounded";
@@ -1207,7 +1168,7 @@ export function DecisionPlanningCells({
           }}
           placeholder={formatDecimal(calculatedDemandIndexHm, 4)}
           step="0.0001"
-          title={`Calculated ${formatDecimal(calculatedDemandIndexHm, 4)} from ${firstSaleDate ?? "-"} to ${lastSaleDate ?? "-"} plus ${sellingDays} selling days`}
+          title={`Calculated ${formatDecimal(calculatedDemandIndexHm, 4)} through today, including zero-sale calendar days; ${sellingDays} days had sales`}
           type="number"
           value={demand}
         />
@@ -1221,7 +1182,10 @@ export function DecisionPlanningCells({
         >
           Fill calc {formatDecimal(calculatedDemandIndexHm, 2)}
         </button>
-        <p className="mt-1 text-right font-mono text-[10px] text-[#7a8794]">
+        <p
+          className="mt-1 text-right font-mono text-[10px] text-[#7a8794]"
+          title="Lifetime calendar average / Recent 30-day calendar average"
+        >
           {formatDecimal(lifetimeDailyAverage, 2)} / {formatDecimal(sellingDayAverage, 2)}
         </p>
       </td>

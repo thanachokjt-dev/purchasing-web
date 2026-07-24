@@ -213,9 +213,10 @@ export function TopSellerProductDesignTable({
             Top Seller Product by Design
           </h2>
           <p className="mt-2 max-w-4xl text-sm text-[#5c6875]">
-            Sizes are combined into one design and colors stay separate. Ranking uses daily
-            demand: 30/90-day sales averages and the same lifetime Demand Index used by
-            Reorder Planning.
+            Sizes are combined into one design and colors stay separate. Every calendar day
+            counts, including zero-sale days. New products divide only by days since first
+            stock or first sale; All Time blends 35% lifetime demand with 65% recent 30-day
+            demand, matching Reorder Planning.
           </p>
         </div>
         <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">

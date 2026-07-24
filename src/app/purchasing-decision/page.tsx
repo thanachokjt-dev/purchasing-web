@@ -585,9 +585,7 @@ export default async function PurchasingDecisionPage({
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Demand 30D</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>
                       <DemandHmHeaderControls
-                        capAtSellingDayAverage={data.demandFormula.capAtSellingDayAverage}
                         lifetimeWeight={data.demandFormula.lifetimeWeight}
-                        recentFloorPercent={data.demandFormula.recentFloorPercent}
                         sellingDayWeight={data.demandFormula.sellingDayWeight}
                       />
                     </th>
@@ -771,12 +769,10 @@ export default async function PurchasingDecisionPage({
                         comingQty={line.coming}
                         createPoFormId={createPoFormId}
                         demandIndexOverride={line.demandIndexOverride}
-                        firstSaleDate={line.firstSaleDate}
                         leadTimeDays={line.leadTimeDays}
                         leadTimeIsManual={line.leadTimeIsManual}
                         leadTimeSource={line.leadTimeSource}
                         lifetimeDailyAverage={line.lifetimeDailyAverage}
-                        lastSaleDate={line.lastSaleDate}
                         orderCycleDays={line.orderCycleDays}
                         orderCycleIsManual={line.orderCycleIsManual}
                         orderQtyMode={line.orderQtyMode}

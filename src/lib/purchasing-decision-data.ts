@@ -259,25 +259,25 @@ function roundUpToTen(value: number) {
   return Math.ceil(value / 10) * 10;
 }
 
-function saleSpanDays(firstDate: string | null, lastDate: string | null) {
-  if (!firstDate || !lastDate) {
+function calendarAgeDays(firstDate: string | null) {
+  if (!firstDate) {
     return 0;
   }
 
   const first = new Date(`${firstDate}T00:00:00Z`).getTime();
-  const last = new Date(`${lastDate}T00:00:00Z`).getTime();
-  if (!Number.isFinite(first) || !Number.isFinite(last) || last < first) {
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime();
+  if (!Number.isFinite(first) || !Number.isFinite(today) || today < first) {
     return 0;
   }
 
-  return Math.max(1, Math.floor((last - first) / (24 * 60 * 60 * 1000)) + 1);
+  return Math.max(1, Math.floor((today - first) / (24 * 60 * 60 * 1000)) + 1);
 }
 
 const DEFAULT_DEMAND_FORMULA: DemandFormulaSettings = {
   lifetimeWeight: 35,
   sellingDayWeight: 65,
-  recentFloorPercent: 75,
-  capAtSellingDayAverage: true,
+  recentFloorPercent: 100,
+  capAtSellingDayAverage: false,
 };
 
 function boundedNumber(
@@ -324,8 +324,21 @@ function demandFormulaFromParams({
       0,
       200,
     ),
-    capAtSellingDayAverage: capSelling !== "false",
+    capAtSellingDayAverage: capSelling === "true",
   };
+}
+
+function weightedCalendarDemand(
+  lifetimeDailyAverage: number,
+  recent30DailyAverage: number,
+  formula: DemandFormulaSettings,
+) {
+  const weightTotal = formula.lifetimeWeight + formula.sellingDayWeight;
+  return weightTotal > 0
+    ? (lifetimeDailyAverage * formula.lifetimeWeight +
+        recent30DailyAverage * formula.sellingDayWeight) /
+        weightTotal
+    : 0;
 }
 
 function averageDemandFromStats(stats: {
@@ -335,33 +348,16 @@ function averageDemandFromStats(stats: {
   sold30: number;
   sellingDays: number;
 }, formula: DemandFormulaSettings) {
-  const spanDays = saleSpanDays(stats.firstSaleDate, stats.lastSaleDate);
-  const lifetimeDailyAverage = spanDays > 0 ? stats.total / spanDays : 0;
+  const calendarDays = calendarAgeDays(stats.firstSaleDate);
+  const lifetimeDailyAverage =
+    calendarDays > 0 ? stats.total / calendarDays : 0;
   const sellingDayAverage =
-    stats.sellingDays > 0 ? stats.total / stats.sellingDays : 0;
-  const saleDensity = spanDays > 0 ? stats.sellingDays / spanDays : 0;
-  const slowMoverReliability = Math.min(
-    1,
-    saleDensity * 1.2,
-    stats.sellingDays > 0 ? stats.sellingDays / 180 : 0,
-    stats.total > 0 ? stats.total / 320 : 0,
+    calendarDays > 0 ? stats.sold30 / Math.min(30, calendarDays) : 0;
+  const demandIndex = weightedCalendarDemand(
+    lifetimeDailyAverage,
+    sellingDayAverage,
+    formula,
   );
-  const effectiveSellingWeight = formula.sellingDayWeight * slowMoverReliability;
-  const effectiveLifetimeWeight =
-    slowMoverReliability < 1 ? 100 - effectiveSellingWeight : formula.lifetimeWeight;
-  const weightTotal = effectiveLifetimeWeight + effectiveSellingWeight;
-  const weightedBase =
-    weightTotal > 0
-      ? (lifetimeDailyAverage * effectiveLifetimeWeight +
-          sellingDayAverage * effectiveSellingWeight) /
-        weightTotal
-      : lifetimeDailyAverage || sellingDayAverage;
-  const recentFloor = (stats.sold30 / 30) * (formula.recentFloorPercent / 100);
-  const uncappedDemand = Math.max(weightedBase, recentFloor);
-  const demandIndex =
-    formula.capAtSellingDayAverage && sellingDayAverage > 0
-      ? Math.min(uncappedDemand, sellingDayAverage)
-      : uncappedDemand;
 
   return {
     demandIndex,
@@ -678,13 +674,15 @@ function buildSalesBySkuFromDemandSnapshot(
           lifetimeDailyAverage: numeric(row.lifetime_daily_average),
           sellingDayAverage: numeric(row.selling_day_average),
         }
-      : averageDemandFromStats({
-          firstSaleDate,
-          lastSaleDate,
-          sellingDays,
-          sold30,
-          total,
-        }, formula);
+      : {
+          demandIndex: weightedCalendarDemand(
+            numeric(row.lifetime_daily_average),
+            numeric(row.selling_day_average),
+            formula,
+          ),
+          lifetimeDailyAverage: numeric(row.lifetime_daily_average),
+          sellingDayAverage: numeric(row.selling_day_average),
+        };
 
     bySku.set(sku, {
       total,

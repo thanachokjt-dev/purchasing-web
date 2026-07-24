@@ -40,57 +40,66 @@ function isCountableDemandLine(row) {
   );
 }
 
-function daysAgo(days) {
+function windowStartDate(days) {
   const date = new Date();
-  date.setDate(date.getDate() - days);
+  date.setUTCDate(date.getUTCDate() - (days - 1));
   return date.toISOString().slice(0, 10);
 }
 
-function saleSpanDays(firstDate, lastDate) {
-  if (!firstDate || !lastDate) {
+function calendarSpanDays(startDate, endDate) {
+  if (!startDate || !endDate) {
     return 0;
   }
-  const first = new Date(`${firstDate}T00:00:00Z`).getTime();
-  const last = new Date(`${lastDate}T00:00:00Z`).getTime();
+  const first = new Date(`${startDate}T00:00:00Z`).getTime();
+  const last = new Date(`${endDate}T00:00:00Z`).getTime();
   if (!Number.isFinite(first) || !Number.isFinite(last) || last < first) {
     return 0;
   }
   return Math.max(1, Math.floor((last - first) / (24 * 60 * 60 * 1000)) + 1);
 }
 
+function demandStartDate(firstSaleDate, firstStockDate, inventoryHistoryStart) {
+  if (
+    firstSaleDate &&
+    inventoryHistoryStart &&
+    firstSaleDate < inventoryHistoryStart
+  ) {
+    return firstSaleDate;
+  }
+  if (!firstSaleDate) {
+    return firstStockDate;
+  }
+  if (!firstStockDate) {
+    return firstSaleDate;
+  }
+  return firstSaleDate < firstStockDate ? firstSaleDate : firstStockDate;
+}
+
+function dailyAverage(qty, calendarDays, windowDays) {
+  const divisor = Math.min(windowDays, calendarDays);
+  return divisor > 0 ? qty / divisor : 0;
+}
+
 function demandFromStats(stats) {
-  const spanDays = saleSpanDays(stats.firstSaleDate, stats.lastSaleDate);
-  const lifetimeDailyAverage = spanDays > 0 ? stats.total / spanDays : 0;
-  const sellingDayAverage = stats.sellingDays > 0 ? stats.total / stats.sellingDays : 0;
-  const saleDensity = spanDays > 0 ? stats.sellingDays / spanDays : 0;
-  const slowMoverReliability = Math.min(
-    1,
-    saleDensity * 1.2,
-    stats.sellingDays > 0 ? stats.sellingDays / 180 : 0,
-    stats.total > 0 ? stats.total / 320 : 0,
-  );
-  const effectiveSellingWeight = 65 * slowMoverReliability;
-  const effectiveLifetimeWeight =
-    slowMoverReliability < 1 ? 100 - effectiveSellingWeight : 35;
-  const weightTotal = effectiveLifetimeWeight + effectiveSellingWeight;
-  const weightedBase =
-    weightTotal > 0
-      ? (lifetimeDailyAverage * effectiveLifetimeWeight +
-          sellingDayAverage * effectiveSellingWeight) /
-        weightTotal
-      : Math.max(lifetimeDailyAverage, sellingDayAverage);
-  const recentFloorDaily = (stats.sold30 / 30) * 0.75;
-  const uncappedDemand = Math.max(weightedBase, recentFloorDaily);
+  const calendarDays = calendarSpanDays(stats.startDate, stats.today);
+  const lifetimeDailyAverage =
+    calendarDays > 0 ? stats.total / calendarDays : 0;
+  const recent30DailyAverage = dailyAverage(stats.sold30, calendarDays, 30);
+  const slowMoverReliability =
+    calendarDays > 0 ? Math.min(1, stats.sellingDays / calendarDays) : 0;
+  const effectiveLifetimeWeight = 35;
+  const effectiveSellingWeight = 65;
   const demandIndexHm =
-    sellingDayAverage > 0 ? Math.min(uncappedDemand, sellingDayAverage) : uncappedDemand;
+    lifetimeDailyAverage * 0.35 + recent30DailyAverage * 0.65;
 
   return {
+    calendarDays,
     demandIndexHm,
     effectiveLifetimeWeight,
     effectiveSellingWeight,
     lifetimeDailyAverage,
-    recentFloorDaily,
-    sellingDayAverage,
+    recentFloorDaily: recent30DailyAverage,
+    sellingDayAverage: recent30DailyAverage,
     slowMoverReliability,
   };
 }
@@ -204,10 +213,38 @@ const allSkus = new Set(
   variantRows.map((row) => String(row.sku ?? "").trim()).filter(Boolean),
 );
 
-const d7 = daysAgo(7);
-const d30 = daysAgo(30);
-const d60 = daysAgo(60);
-const d90 = daysAgo(90);
+console.log("Reading inventory history for product availability dates...");
+const inventoryRows = await fetchAll(
+  supabase,
+  "inventory_snapshots",
+  "sku,snapshot_date,available,on_hand",
+  "snapshot_date",
+);
+let inventoryHistoryStart = null;
+const firstStockBySku = new Map();
+for (const row of inventoryRows) {
+  const sku = String(row.sku ?? "").trim();
+  const snapshotDate = String(row.snapshot_date ?? "").slice(0, 10);
+  if (!snapshotDate) {
+    continue;
+  }
+  inventoryHistoryStart =
+    inventoryHistoryStart && inventoryHistoryStart < snapshotDate
+      ? inventoryHistoryStart
+      : snapshotDate;
+  if (
+    sku &&
+    (numeric(row.on_hand) > 0 || numeric(row.available) > 0) &&
+    (!firstStockBySku.has(sku) || snapshotDate < firstStockBySku.get(sku))
+  ) {
+    firstStockBySku.set(sku, snapshotDate);
+  }
+}
+
+const d7 = windowStartDate(7);
+const d30 = windowStartDate(30);
+const d60 = windowStartDate(60);
+const d90 = windowStartDate(90);
 const demandStatsBySku = new Map();
 for (const row of salesSummaryRows) {
   allSkus.add(row.sku);
@@ -241,6 +278,7 @@ for (const row of salesSummaryRows) {
 }
 
 const now = new Date().toISOString();
+const today = now.slice(0, 10);
 const demandRows = Array.from(allSkus).map((sku) => {
   const stats = demandStatsBySku.get(sku) ?? {
     firstSaleDate: null,
@@ -253,11 +291,16 @@ const demandRows = Array.from(allSkus).map((sku) => {
     total: 0,
   };
   const sellingDays = stats.saleDates.size;
+  const startDate = demandStartDate(
+    stats.firstSaleDate,
+    firstStockBySku.get(sku) ?? null,
+    inventoryHistoryStart,
+  );
   const demand = demandFromStats({
-    firstSaleDate: stats.firstSaleDate,
-    lastSaleDate: stats.lastSaleDate,
     sellingDays,
     sold30: stats.sold30,
+    startDate,
+    today,
     total: stats.total,
   });
 
@@ -268,10 +311,10 @@ const demandRows = Array.from(allSkus).map((sku) => {
     sold_30: stats.sold30,
     sold_60: stats.sold60,
     sold_90: stats.sold90,
-    avg_daily_7: stats.sold7 / 7,
-    avg_daily_30: stats.sold30 / 30,
-    avg_daily_60: stats.sold60 / 60,
-    avg_daily_90: stats.sold90 / 90,
+    avg_daily_7: dailyAverage(stats.sold7, demand.calendarDays, 7),
+    avg_daily_30: dailyAverage(stats.sold30, demand.calendarDays, 30),
+    avg_daily_60: dailyAverage(stats.sold60, demand.calendarDays, 60),
+    avg_daily_90: dailyAverage(stats.sold90, demand.calendarDays, 90),
     first_sale_date: stats.firstSaleDate,
     last_sale_date: stats.lastSaleDate,
     selling_days: sellingDays,
