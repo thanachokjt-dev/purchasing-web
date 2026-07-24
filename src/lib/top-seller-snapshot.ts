@@ -67,11 +67,13 @@ const COLOR_CODE_TOKENS: Record<string, string> = {
   NV: "Navy",
   NVY: "Navy",
   OL: "Olive",
+  PNK: "Pink",
   RD: "Red",
   RED: "Red",
   WH: "White",
   WHT: "White",
   WT: "White",
+  WTE: "White",
   YEL: "Yellow",
 };
 
@@ -241,6 +243,21 @@ function normalizeColor(value: string): string {
   return codeMatch ? COLOR_CODE_TOKENS[codeMatch] : "";
 }
 
+function explicitVariantColor(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || /^default title$/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed.replace(/\s+/g, " ").replace(/\s*([/|])\s*/g, "$1");
+}
+
+function skuColor(value: string | null | undefined) {
+  const codeMatch = normalizedTokens(compactText(value).toUpperCase()).find(
+    (token) => COLOR_CODE_TOKENS[token],
+  );
+  return codeMatch ? COLOR_CODE_TOKENS[codeMatch] : "";
+}
+
 function variantColor(row: VariantMetadataRow | undefined, designName: string) {
   if (!row) {
     return normalizeColor(designName) || "No color";
@@ -252,8 +269,17 @@ function variantColor(row: VariantMetadataRow | undefined, designName: string) {
     { name: row.option3_name, value: row.option3_value },
   ];
   const explicit = options.find((option) => /colou?r/i.test(compactText(option.name)));
+  const explicitColor = explicitVariantColor(compactText(explicit?.value));
+  if (explicitColor) {
+    return explicitColor;
+  }
+
+  const colorFromSku = skuColor(row.sku);
+  if (colorFromSku) {
+    return colorFromSku;
+  }
+
   const candidates = [
-    explicit?.value,
     ...options.map((option) => option.value),
     row.variant_title,
     designName,
@@ -427,9 +453,9 @@ export async function refreshTopSellerProductDesignSnapshot(
     throw new Error("Reorder Planning data is unavailable; Top Seller snapshot was not replaced.");
   }
 
-  const activeLines = reorderData.lines.filter((line) => !line.hidden);
-  if (activeLines.length === 0) {
-    throw new Error("No active Reorder Planning lines were found; Top Seller snapshot was not replaced.");
+  const catalogLines = reorderData.lines;
+  if (catalogLines.length === 0) {
+    throw new Error("No Reorder Planning lines were found; Top Seller snapshot was not replaced.");
   }
 
   const variantsBySku = new Map(
@@ -449,7 +475,7 @@ export async function refreshTopSellerProductDesignSnapshot(
   );
   const groups = new Map<string, GroupAccumulator>();
 
-  for (const line of activeLines) {
+  for (const line of catalogLines) {
     const variant = variantsBySku.get(line.sku);
     const color = variantColor(variant, line.mainName);
     const designName = stripTrailingColor(line.mainName, color) || line.mainName;
@@ -544,6 +570,6 @@ export async function refreshTopSellerProductDesignSnapshot(
   return {
     groupCount: rows.length,
     refreshedAt,
-    skuCount: activeLines.length,
+    skuCount: catalogLines.length,
   };
 }
