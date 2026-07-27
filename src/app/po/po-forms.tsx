@@ -142,12 +142,18 @@ const standardPaymentTypes = [
   ["balance", "Balance"],
   ["freight", "Freight"],
   ["shipping", "Shipping"],
+  ["vat_import_vat", "VAT / IMPORT VAT"],
   ["fine", "Fine / penalty"],
   ["other", "Other"],
 ] as const;
 
-function readablePaymentType(value: string) {
+function paymentTypeIdentity(value: string) {
   const compact = value.trim().toLowerCase().replace(/[^a-z0-9%]+/g, "");
+  return compact === "vat" || compact === "importvat" ? "vatimportvat" : compact;
+}
+
+function readablePaymentType(value: string) {
+  const compact = paymentTypeIdentity(value);
   const labels: Record<string, string> = {
     afterreceived25: "After Received 25%",
     "afterreceived25%": "After Received 25%",
@@ -169,6 +175,7 @@ function readablePaymentType(value: string) {
     freight: "Freight",
     other: "Other",
     shipping: "Shipping",
+    vatimportvat: "VAT / IMPORT VAT",
   };
 
   return labels[compact] ?? (value.trim() || "-");
@@ -197,10 +204,11 @@ function paymentTypeOptions(paymentTerms?: string | null, savedTypes: string[] =
     ...fromTerms,
     ...standardPaymentTypes.map(([value, label]) => ({ label, value })),
   ].filter((option) => {
-    if (!option.value || seen.has(option.value)) {
+    const identity = paymentTypeIdentity(option.value);
+    if (!identity || seen.has(identity)) {
       return false;
     }
-    seen.add(option.value);
+    seen.add(identity);
     return true;
   });
 }
@@ -664,6 +672,10 @@ function matrixCatalogProductName(item: CatalogItemOption) {
   return item.mainName.trim() || matrixProductName(item);
 }
 
+function matrixDefaultAddQty(item: CatalogItemOption) {
+  return item.recommendedQty > 0 ? item.recommendedQty : 10;
+}
+
 function uniqueCatalogItems(items: CatalogItemOption[]) {
   return Array.from(
     items
@@ -750,6 +762,7 @@ function editableQuoteMatrixRows(
     string,
     {
       availableSizes: Set<string>;
+      estimatedValueThb: number;
       family: MatrixFamily;
       groupTag: string;
       imageUrl: string | null;
@@ -776,6 +789,7 @@ function editableQuoteMatrixRows(
       rows.get(key) ??
       {
         availableSizes: new Set<string>(),
+        estimatedValueThb: 0,
         family,
         groupTag,
         imageUrl: line.imageUrl ?? null,
@@ -801,6 +815,7 @@ function editableQuoteMatrixRows(
       cell.skus.add(line.sku);
     }
     row.totalQty += line.qty;
+    row.estimatedValueThb += line.qty * line.unitPrice;
     if (!row.imageUrl && line.imageUrl) {
       row.imageUrl = line.imageUrl;
     }
@@ -853,14 +868,29 @@ function editableQuoteMatrixRows(
           Array.from(row.items.values()).map((item) => item.orderedQty),
         ),
       );
+      const totalsBySize = new Map(
+        sizes.map((size) => [
+          size,
+          groupRows.reduce(
+            (sum, row) => sum + (row.items.get(size)?.orderedQty ?? 0),
+            0,
+          ),
+        ]),
+      );
 
       return {
+        estimatedValueThb: groupRows.reduce(
+          (sum, row) => sum + row.estimatedValueThb,
+          0,
+        ),
         family,
         groupTag,
         label: matrixSectionLabel(groupTag, family),
         maxQty,
         rows: groupRows.sort((a, b) => a.productName.localeCompare(b.productName)),
         sizes,
+        totalQty: groupRows.reduce((sum, row) => sum + row.totalQty, 0),
+        totalsBySize,
       };
     })
     .sort((a, b) => a.groupTag.localeCompare(b.groupTag) || a.label.localeCompare(b.label));
@@ -941,6 +971,74 @@ export function PoStatusFilterSelect({
             </label>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+export function PoSupplierFilterSelect({
+  options,
+  selected,
+}: {
+  options: SupplierOption[];
+  selected: string[];
+}) {
+  const supplierOptions = Array.from(
+    new Map(
+      options
+        .filter((option) => option.supplierCode.trim())
+        .map((option) => [
+          option.supplierCode.trim(),
+          {
+            label: option.supplierName.trim() || option.supplierCode.trim(),
+            value: option.supplierCode.trim(),
+          },
+        ]),
+    ).values(),
+  ).sort((a, b) => a.label.localeCompare(b.label));
+  const [selectedValues, setSelectedValues] = useState(selected);
+
+  function toggleSupplier(value: string, checked: boolean) {
+    setSelectedValues((current) =>
+      checked
+        ? Array.from(new Set([...current, value]))
+        : current.filter((item) => item !== value),
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-[#cfd6df] bg-white px-3 py-2">
+      <input name="supplier" type="hidden" value={selectedValues.join(",")} />
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
+          Supplier
+        </p>
+        {selectedValues.length > 0 ? (
+          <button
+            className="text-xs font-semibold text-[#255f85]"
+            onClick={() => setSelectedValues([])}
+            type="button"
+          >
+            All suppliers
+          </button>
+        ) : null}
+      </div>
+      <div className="grid max-h-24 gap-1 overflow-auto sm:grid-cols-2">
+        {supplierOptions.map((option) => (
+          <label
+            className="inline-flex min-w-0 items-center gap-2 rounded-md border border-[#dfe4ea] px-2 py-1 text-xs font-semibold text-[#364252]"
+            key={option.value}
+            title={option.label}
+          >
+            <input
+              checked={selectedValues.includes(option.value)}
+              className="size-3 shrink-0 accent-[#255f85]"
+              onChange={(event) => toggleSupplier(option.value, event.target.checked)}
+              type="checkbox"
+            />
+            <span className="truncate">{option.label}</span>
+          </label>
+        ))}
       </div>
     </div>
   );
@@ -1827,6 +1925,7 @@ export function PoDraftLinesForm({
   const [lines, setLines] = useState(items);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [adjustPercent, setAdjustPercent] = useState("");
+  const [bulkUnitPrice, setBulkUnitPrice] = useState("");
   const [logisticCost, setLogisticCost] = useState("");
   const [vatMode, setVatMode] = useState<"none" | "include" | "exclude">("none");
   const [exchangeRates, setExchangeRates] = useState(["", "", ""]);
@@ -1865,6 +1964,10 @@ export function PoDraftLinesForm({
       ),
   );
   const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
+  const totalEstimatedValueThb = lines.reduce(
+    (sum, line) => sum + line.qty * line.unitPrice,
+    0,
+  );
   const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
   const exchangeRateAverage = averageExchangeRate(exchangeRates);
   const baseMatrixGroups = useMemo(() => editableQuoteMatrixRows(lines), [lines]);
@@ -1990,7 +2093,7 @@ export function PoDraftLinesForm({
       return;
     }
     const requestedQty = Number(
-      matrixAddQtyBySku[item.sku] ?? item.recommendedQty ?? 0,
+      matrixAddQtyBySku[item.sku] ?? matrixDefaultAddQty(item),
     );
     if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
       setMatrixAddMessage(`Enter a quantity greater than 0 for ${item.sku}.`);
@@ -2055,6 +2158,31 @@ export function PoDraftLinesForm({
       [draftLineKey(line)]: value,
     }));
     updateLine(index, { unitPrice: value, unitPriceSource: "manual" });
+  }
+
+  function applyBulkUnitPrice() {
+    const normalizedValue = bulkUnitPrice.trim();
+    if (!normalizedValue) {
+      return;
+    }
+
+    const value = Number(normalizedValue);
+    if (!Number.isFinite(value) || value < 0) {
+      return;
+    }
+
+    setVatMode("none");
+    setExchangeMode("none");
+    setLines((current) =>
+      current.map((line) => ({
+        ...line,
+        unitPrice: value,
+        unitPriceSource: "manual",
+      })),
+    );
+    setBaseUnitPriceByLine(
+      Object.fromEntries(lines.map((line) => [draftLineKey(line), value])),
+    );
   }
 
   function updateFreightUnitCost(index: number, value: number) {
@@ -2288,6 +2416,37 @@ export function PoDraftLinesForm({
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={resetAdjustedQty} type="button">
           Reset Qty
         </button>
+        <div className="grid gap-1 rounded-md border border-[#dfe4ea] bg-[#fbfcfd] p-2">
+          <label className={labelClass}>
+            Unit price for all (optional)
+            <div className="flex items-center gap-2">
+              <input
+                className="h-10 w-36 rounded-md border border-[#cfd6df] bg-white px-3 text-right font-mono text-sm"
+                min="0"
+                onChange={(event) => setBulkUnitPrice(event.target.value)}
+                placeholder="Enter once"
+                step="0.0001"
+                type="number"
+                value={bulkUnitPrice}
+              />
+              <button
+                className="h-10 rounded-md border border-[#1f2933] bg-[#1f2933] px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={
+                  !bulkUnitPrice.trim() ||
+                  !Number.isFinite(Number(bulkUnitPrice)) ||
+                  Number(bulkUnitPrice) < 0
+                }
+                onClick={applyBulkUnitPrice}
+                type="button"
+              >
+                Apply to all
+              </button>
+            </div>
+          </label>
+          <p className="text-[11px] normal-case tracking-normal text-[#667380]">
+            Replaces Unit Price on every current draft line.
+          </p>
+        </div>
         <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold" onClick={() => applyVat("include")} type="button">
           Include VAT / net
         </button>
@@ -2584,7 +2743,9 @@ export function PoDraftLinesForm({
           <h2 className="text-lg font-semibold">Supplier Quote Matrix</h2>
           <p className="mt-1 text-sm text-[#667380]">
             Edit order quantities directly in the matrix. On-hand is read-only;
-            every quantity uses the same draft-line state shown above.
+            every quantity uses the same draft-line state shown above. Estimated Value
+            uses the current Draft Line Unit Price × Qty; apply average FX first when
+            converting a foreign-currency PO to THB.
           </p>
         </div>
 
@@ -2611,10 +2772,13 @@ export function PoDraftLinesForm({
                     <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
                       Total
                     </th>
+                    <th className="border-b border-l border-[#dfe4ea] px-3 py-3 text-right font-semibold">
+                      Estimated Value (THB)
+                    </th>
                   </tr>
                 </thead>
-                <tbody>
-                  {group.rows.map((row) => (
+                  <tbody>
+                    {group.rows.map((row) => (
                     <tr className="border-b border-[#edf1f5]" key={row.productName}>
                       <td className="min-w-[320px] px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -2693,12 +2857,68 @@ export function PoDraftLinesForm({
                       <td className="border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
                         {formatQty(row.totalQty)}
                       </td>
+                      <td className="min-w-40 border-l border-[#dfe4ea] px-3 py-3 text-right font-mono font-semibold">
+                        {formatMoney(row.estimatedValueThb)}
+                      </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-[#eef2f6]">
+                    <tr className="border-t-2 border-[#cbd3dc]">
+                      <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-[0.08em] text-[#364252]">
+                        {group.label} Total
+                      </th>
+                      {group.sizes.map((size) => (
+                        <td
+                          className="border-l border-[#d5dce4] px-3 py-3 text-right font-mono font-bold text-[#172026]"
+                          key={size}
+                        >
+                          {formatQty(group.totalsBySize.get(size) ?? 0)}
+                        </td>
+                      ))}
+                      <td className="border-l border-[#d5dce4] px-3 py-3 text-right font-mono font-bold text-[#172026]">
+                        {formatQty(group.totalQty)}
+                      </td>
+                      <td className="min-w-40 border-l border-[#d5dce4] px-3 py-3 text-right font-mono font-bold text-[#172026]">
+                        {formatMoney(group.estimatedValueThb)}
+                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </tfoot>
+                </table>
+              </div>
+            ))}
+
+          <div className="rounded-lg border-2 border-[#aeb9c5] bg-[#eef2f6] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.12em] text-[#586574]">
+                  Supplier Quote Grand Total
+                </p>
+                <p className="mt-1 text-xs text-[#667380]">
+                  Combined total across {matrixGroups.length}{" "}
+                  {matrixGroups.length === 1 ? "category" : "categories"}.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-6 text-right">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#65717f]">
+                    Total Qty
+                  </p>
+                  <p className="mt-1 font-mono text-lg font-bold text-[#172026]">
+                    {formatQty(totalOrderedQty)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[#65717f]">
+                    Estimated Value (THB)
+                  </p>
+                  <p className="mt-1 font-mono text-lg font-bold text-[#172026]">
+                    {formatMoney(totalEstimatedValueThb)}
+                  </p>
+                </div>
+              </div>
             </div>
-          ))}
+          </div>
 
           <div
             className="rounded-lg border border-[#dfe4ea] bg-[#fbfcfd] p-4"
@@ -2797,7 +3017,7 @@ export function PoDraftLinesForm({
                           type="number"
                           value={
                             matrixAddQtyBySku[item.sku] ??
-                            String(item.recommendedQty || "")
+                            String(matrixDefaultAddQty(item))
                           }
                         />
                       </label>
@@ -3152,6 +3372,7 @@ export function PaymentScheduleForm({
         .map((payment) =>
           [
             payment.id,
+            payment.payment_type,
             payment.payment_status,
             payment.xero_status,
             payment.payment_date,
@@ -3160,6 +3381,7 @@ export function PaymentScheduleForm({
             payment.exchange_rate,
             payment.amount_thb,
             payment.currency,
+            payment.paid_by,
             payment.reference,
             payment.note,
           ].join("|"),
@@ -3391,7 +3613,15 @@ export function PaymentScheduleForm({
                       Delete
                     </label>
                   ) : (
-                    <span className="text-xs text-[#8a96a3]">New</span>
+                    <button
+                      className="h-9 rounded-md border border-[#efcaca] bg-[#fff7f7] px-3 text-xs font-semibold text-[#9f2a2a]"
+                      onClick={() =>
+                        setDraftKeys((current) => current.filter((key) => key !== rowKey))
+                      }
+                      type="button"
+                    >
+                      Delete
+                    </button>
                   )}
                 </td>
               </tr>

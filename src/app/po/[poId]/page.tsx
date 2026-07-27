@@ -495,8 +495,11 @@ function readablePaymentType(value: string | null | undefined) {
     deposit50: "Deposit 50%",
     "deposit50%": "Deposit 50%",
     freight: "Freight",
+    importvat: "VAT / IMPORT VAT",
     other: "Other",
     shipping: "Shipping",
+    vat: "VAT / IMPORT VAT",
+    vatimportvat: "VAT / IMPORT VAT",
   };
 
   return labels[compact] ?? (raw || "Payment");

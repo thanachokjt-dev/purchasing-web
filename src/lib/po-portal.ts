@@ -501,6 +501,7 @@ export type PoPortalListOptions = {
   q?: string;
   sort?: string;
   status?: string[];
+  supplier?: string[];
 };
 
 const DEFAULT_LIST_PAGE_SIZE = 25;
@@ -2106,6 +2107,9 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
   const selectedStatuses = (options.status ?? [])
     .map((status) => normalizedStatus(status))
     .filter((status) => status && status !== "all");
+  const selectedSuppliers = Array.from(
+    new Set((options.supplier ?? []).map((supplier) => supplier.trim()).filter(Boolean)),
+  );
   const sort = options.sort ?? "date";
   const dir = options.dir === "asc" ? "asc" : "desc";
   const sortColumn =
@@ -2118,7 +2122,7 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
           : sort === "lines"
             ? "total_items"
             : sort === "incoming"
-              ? "active_incoming_qty"
+              ? "total_qty"
               : sort === "pending"
                 ? "pending_approval_qty"
                 : sort === "amount"
@@ -2180,6 +2184,10 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
       .is("closed_at", null)
       .is("cancelled_at", null)
       .not("work_status", "in", "(closed,cancelled,canceled)");
+  }
+
+  if (selectedSuppliers.length > 0) {
+    orderQuery = orderQuery.in("supplier_code", selectedSuppliers);
   }
 
   if (q) {
@@ -2299,9 +2307,35 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
     currency: supplier.currency ?? "",
     paymentTerms: supplier.payment_terms ?? "",
   }));
-  const mappedOrders = ((ordersResult.data ?? []) as unknown as PoOrderSummaryRow[])
+  const orderSummaryRows = (ordersResult.data ?? []) as unknown as PoOrderSummaryRow[];
+  const workbenchPoIds = orderSummaryRows
+    .map((order) => order.po_id ?? "")
+    .filter(Boolean);
+  const headerPurposeResult =
+    workbenchPoIds.length > 0
+      ? await supabase
+          .from("po_orders")
+          .select("po_id,header_purpose")
+          .in("po_id", workbenchPoIds)
+      : { data: [] as Array<{ header_purpose: string | null; po_id: string | null }>, error: null };
+  logPoPortalQueryError("po_orders workbench header purpose", headerPurposeResult.error);
+  const headerPurposeByPoId = new Map(
+    (
+      (headerPurposeResult.error ? [] : headerPurposeResult.data ?? []) as Array<{
+        header_purpose: string | null;
+        po_id: string | null;
+      }>
+    ).map((order) => [order.po_id ?? "", order.header_purpose ?? ""]),
+  );
+  const mappedOrders = orderSummaryRows
     .filter((order) => order.po_id)
-    .map(mapPoOrderSummary);
+    .map((order) => {
+      const mapped = mapPoOrderSummary(order);
+      return {
+        ...mapped,
+        headerPurpose: headerPurposeByPoId.get(mapped.poId) || mapped.headerPurpose,
+      };
+    });
   const metricsRow = metricsResult.data as PoPortalMetricsRow | null;
   const orderedTotal = numeric(metricsRow?.ordered_total);
   const receivedTotal = numeric(metricsRow?.received_total);

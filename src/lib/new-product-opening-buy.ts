@@ -1419,6 +1419,13 @@ export async function getEstimatedComparableDemand(planId: string): Promise<Esti
     groupMap.set(key, group);
   }
 
+  const hasMultiplePlanningSections =
+    new Set(
+      Array.from(groupMap.values()).map(
+        (group) => `${group.sectionName.toLowerCase()}::${group.family}`,
+      ),
+    ).size > 1;
+
   for (const detail of details) {
     const group = groupMap.get(detailGroupKey(detail));
     detail.finalWeightedIndex = detail.demandHm > 0 && group && group.weightTotal > 0
@@ -1439,7 +1446,9 @@ export async function getEstimatedComparableDemand(planId: string): Promise<Esti
         family: group.family,
         factorAdjustedIndex,
         imageUrl: group.imageUrl,
-        productName: group.productName,
+        productName: hasMultiplePlanningSections
+          ? [group.productName, group.sectionName].filter(Boolean).join(" / ")
+          : group.productName,
         sectionLabel: group.sectionLabel,
         sectionName: group.sectionName,
         size: group.size,

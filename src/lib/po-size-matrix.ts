@@ -75,15 +75,23 @@ export function normalizeMatrixSize(value: string) {
 }
 
 export function matrixItemSize(item: MatrixItemLike) {
-  const source = [
+  const sources = [
     item.variantTitle,
+    item.sku,
     item.fullName,
     item.productTitle,
     item.productName,
-    item.sku,
-  ].join(" ");
-  const match = source.match(new RegExp(`(?:^|[\\s/-])(${SIZE_PATTERN})(?:$|[\\s/-])`, "i"));
-  return normalizeMatrixSize(match?.[1] ?? "");
+  ];
+  const sizePattern = new RegExp(`(?:^|[\\s/-])(${SIZE_PATTERN})(?:$|[\\s/-])`, "i");
+
+  for (const source of sources) {
+    const match = String(source ?? "").match(sizePattern);
+    if (match?.[1]) {
+      return normalizeMatrixSize(match[1]);
+    }
+  }
+
+  return "OS";
 }
 
 export function matrixProductName(item: MatrixItemLike) {
@@ -95,9 +103,28 @@ export function matrixProductName(item: MatrixItemLike) {
 
 export function matrixSectionName(item: MatrixItemLike, fallback = "Untagged") {
   const tags = Array.isArray(item.tags) ? item.tags : [];
-  const explicit = tags.find((tag) => tag.trim())?.trim();
-  if (explicit) {
-    return explicit;
+  const rules: Array<[string, string[]]> = [
+    ["MUAY THAI GLOVES", ["glove", "boxing glove", "muay thai glove", "mma glove", "mtg"]],
+    ["SHIN GUARDS", ["shin guard", "shinguard"]],
+    ["RASH GUARDS & COMPRESSION", ["rash guard", "rashguard", "compression", "spats"]],
+    ["SPORT BRAS", ["sport bra", "sports bra", "bra"]],
+    ["T-SHIRTS & TOPS", ["t-shirt", "tshirt", "tee", "shirt", "top", "tank", "jersey"]],
+    ["MMA SHORTS", ["mma short", "grappling short", "hybrid short"]],
+    ["SHORTS & PANTS", ["short", "pants", "jogger", "legging"]],
+    ["ACCESSORIES", ["mouth guard", "hand wrap", "wrap", "bag", "cap"]],
+  ];
+  const categoryFor = (value: string) => {
+    const normalized = value.toLowerCase();
+    return rules.find(([, keywords]) =>
+      keywords.some((keyword) => normalized.includes(keyword)),
+    )?.[0];
+  };
+
+  for (const tag of tags) {
+    const category = categoryFor(tag);
+    if (category) {
+      return category;
+    }
   }
 
   const context = [
@@ -106,18 +133,13 @@ export function matrixSectionName(item: MatrixItemLike, fallback = "Untagged") {
     item.variantTitle,
     item.fullName,
     item.sku,
-  ].join(" ").toLowerCase();
-  const rules: Array<[string, string[]]> = [
-    ["MUAY THAI GLOVES", ["glove", "boxing glove", "muay thai glove", "mma glove", "mtg"]],
-    ["SHIN GUARDS", ["shin guard", "shinguard"]],
-    ["RASH GUARDS & COMPRESSION", ["rash guard", "compression", "spats"]],
-    ["SPORT BRAS", ["sport bra", "sports bra", "bra"]],
-    ["T-SHIRTS & TOPS", ["t-shirt", "tshirt", "tee", "shirt", "top", "tank", "jersey"]],
-    ["SHORTS & PANTS", ["short", "pants", "jogger", "legging"]],
-    ["ACCESSORIES", ["mouth guard", "hand wrap", "wrap", "bag", "cap"]],
-  ];
+  ].join(" ");
+  const inferredCategory = categoryFor(context);
+  if (inferredCategory) {
+    return inferredCategory;
+  }
 
-  return rules.find(([, keywords]) => keywords.some((keyword) => context.includes(keyword)))?.[0] || fallback;
+  return tags.find((tag) => tag.trim())?.trim() || fallback;
 }
 
 export function matrixFamilyLabel(family: MatrixFamily) {

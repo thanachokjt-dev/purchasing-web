@@ -107,6 +107,7 @@ type TopSellerSnapshotDbRow = {
   design_name: string | null;
   group_key: string | null;
   image_url: string | null;
+  item_statuses: string[] | null;
   refreshed_at: string | null;
   sku_count: number | string | null;
   sold_30: number | string | null;
@@ -114,6 +115,7 @@ type TopSellerSnapshotDbRow = {
   suppliers: string[] | null;
   tags: string[] | null;
   total_sale: number | string | null;
+  visibilities: string[] | null;
 };
 
 type GroupAccumulator = {
@@ -124,12 +126,14 @@ type GroupAccumulator = {
   demandIndexLifetime: number;
   designName: string;
   imageUrl: string | null;
+  itemStatuses: Set<string>;
   skus: Set<string>;
   sold30: number;
   sold90: number;
   suppliers: Set<string>;
   tags: Set<string>;
   totalSale: number;
+  visibilities: Set<string>;
 };
 
 export type TopSellerProductDesignRow = {
@@ -141,12 +145,14 @@ export type TopSellerProductDesignRow = {
   designName: string;
   groupKey: string;
   imageUrl: string | null;
+  itemStatuses: string[];
   skuCount: number;
   sold30: number;
   sold90: number;
   suppliers: string[];
   tags: string[];
   totalSale: number;
+  visibilities: Array<"active" | "hidden">;
 };
 
 export type TopSellerProductDesignData = {
@@ -343,12 +349,17 @@ function rowFromDb(row: TopSellerSnapshotDbRow): TopSellerProductDesignRow | nul
     designName,
     groupKey,
     imageUrl: compactText(row.image_url) || null,
+    itemStatuses: (row.item_statuses ?? []).map(compactText).filter(Boolean),
     skuCount: Math.max(0, Math.round(numeric(row.sku_count))),
     sold30: numeric(row.sold_30),
     sold90: numeric(row.sold_90),
     suppliers: (row.suppliers ?? []).map(compactText).filter(Boolean),
     tags: (row.tags ?? []).map(compactText).filter(Boolean),
     totalSale: numeric(row.total_sale),
+    visibilities: (row.visibilities ?? []).flatMap((value) => {
+      const normalized = compactText(value).toLowerCase();
+      return normalized === "active" || normalized === "hidden" ? [normalized] : [];
+    }),
   };
 }
 
@@ -371,7 +382,7 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
           supabase
             .from(SNAPSHOT_TABLE)
             .select(
-              "group_key,category,design_name,color,suppliers,tags,image_url,sku_count,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
+              "group_key,category,design_name,color,suppliers,tags,image_url,item_statuses,visibilities,sku_count,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
             )
             .order("category", { ascending: true })
             .order("demand_index_30", { ascending: false })
@@ -412,7 +423,7 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
       source: SNAPSHOT_TABLE,
       warnings: [
         error instanceof Error
-          ? `${error.message}. Apply migration 063 and run a sales-demand backfill once.`
+          ? `${error.message}. Apply migrations 063-065 and run a sales-demand backfill once.`
           : "Top seller snapshot could not be loaded.",
       ],
     };
@@ -498,12 +509,14 @@ export async function refreshTopSellerProductDesignSnapshot(
         demandIndexLifetime: 0,
         designName,
         imageUrl: line.imageUrl,
+        itemStatuses: new Set<string>(),
         skus: new Set<string>(),
         sold30: 0,
         sold90: 0,
         suppliers: new Set<string>(),
         tags: new Set<string>(),
         totalSale: 0,
+        visibilities: new Set<string>(),
       };
 
     group.demandIndex30 += numeric(demand?.avg_daily_30);
@@ -513,6 +526,10 @@ export async function refreshTopSellerProductDesignSnapshot(
     group.sold90 += numeric(demand?.sold_90);
     group.totalSale += numeric(demand?.total_sale);
     group.skus.add(line.sku);
+    if (line.itemStatus) {
+      group.itemStatuses.add(line.itemStatus);
+    }
+    group.visibilities.add(line.hidden ? "hidden" : "active");
     if (line.supplier) {
       group.suppliers.add(line.supplier);
     }
@@ -538,6 +555,7 @@ export async function refreshTopSellerProductDesignSnapshot(
     design_name: group.designName,
     group_key: groupKey,
     image_url: group.imageUrl,
+    item_statuses: Array.from(group.itemStatuses).sort((a, b) => a.localeCompare(b)),
     refreshed_at: refreshedAt,
     sku_count: group.skus.size,
     snapshot_token: snapshotToken,
@@ -546,6 +564,7 @@ export async function refreshTopSellerProductDesignSnapshot(
     suppliers: Array.from(group.suppliers).sort((a, b) => a.localeCompare(b)),
     tags: Array.from(group.tags).sort((a, b) => a.localeCompare(b)),
     total_sale: group.totalSale,
+    visibilities: Array.from(group.visibilities).sort((a, b) => a.localeCompare(b)),
   }));
 
   for (let index = 0; index < rows.length; index += UPSERT_SIZE) {
@@ -554,7 +573,7 @@ export async function refreshTopSellerProductDesignSnapshot(
       .upsert(rows.slice(index, index + UPSERT_SIZE), { onConflict: "group_key" });
     if (error) {
       throw new Error(
-        `Top Seller snapshot upsert failed. Apply migration 063 first: ${error.message}`,
+        `Top Seller snapshot upsert failed. Apply migrations 063-065 first: ${error.message}`,
       );
     }
   }
