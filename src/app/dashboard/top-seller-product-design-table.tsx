@@ -143,6 +143,8 @@ export function TopSellerProductDesignTable({
   const [activeWindow, setActiveWindow] = useState<WindowKey>("30d");
   const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedVisibilities, setSelectedVisibilities] = useState<string[]>([]);
 
   const supplierOptions = useMemo(
     () =>
@@ -162,10 +164,23 @@ export function TopSellerProductDesignTable({
       ...tags.map((value) => ({ label: value, value })),
     ];
   }, [data.rows]);
+  const statusOptions = useMemo(
+    () =>
+      Array.from(new Set(data.rows.flatMap((row) => row.itemStatuses)))
+        .sort((a, b) => a.localeCompare(b))
+        .map((value) => ({ label: value, value })),
+    [data.rows],
+  );
+  const visibilityOptions = [
+    { label: "Active", value: "active" },
+    { label: "Hidden", value: "hidden" },
+  ];
 
   const filteredRows = useMemo(() => {
     const supplierSet = new Set(selectedSuppliers);
     const tagSet = new Set(selectedTags);
+    const statusSet = new Set(selectedStatuses);
+    const visibilitySet = new Set(selectedVisibilities);
     return data.rows.filter((row) => {
       const matchesSupplier =
         supplierSet.size === 0 || row.suppliers.some((supplier) => supplierSet.has(supplier));
@@ -173,9 +188,20 @@ export function TopSellerProductDesignTable({
         tagSet.size === 0 ||
         (tagSet.has("__untagged") && row.tags.length === 0) ||
         row.tags.some((tag) => tagSet.has(tag));
-      return matchesSupplier && matchesTag;
+      const matchesStatus =
+        statusSet.size === 0 || row.itemStatuses.some((status) => statusSet.has(status));
+      const matchesVisibility =
+        visibilitySet.size === 0 ||
+        row.visibilities.some((visibility) => visibilitySet.has(visibility));
+      return matchesSupplier && matchesTag && matchesStatus && matchesVisibility;
     });
-  }, [data.rows, selectedSuppliers, selectedTags]);
+  }, [
+    data.rows,
+    selectedStatuses,
+    selectedSuppliers,
+    selectedTags,
+    selectedVisibilities,
+  ]);
 
   const categoryGroups = useMemo(() => {
     const groups = new Map<string, TopSellerProductDesignRow[]>();
@@ -200,7 +226,11 @@ export function TopSellerProductDesignTable({
 
   const activeWindowLabel =
     windowOptions.find((option) => option.key === activeWindow)?.shortLabel ?? "";
-  const hasActiveFilters = selectedSuppliers.length > 0 || selectedTags.length > 0;
+  const hasActiveFilters =
+    selectedSuppliers.length > 0 ||
+    selectedTags.length > 0 ||
+    selectedStatuses.length > 0 ||
+    selectedVisibilities.length > 0;
 
   return (
     <section className="rounded-lg border border-[#dfe4ea] bg-white p-5 shadow-sm">
@@ -217,7 +247,8 @@ export function TopSellerProductDesignTable({
             counts, including zero-sale days. New products divide only by days since first
             stock or first sale; All Time blends 35% lifetime demand with 65% recent 30-day
             calculated demand. Manual SKU overrides in Reorder Planning do not distort this
-            ranking.
+            ranking. Status and Visibility filters use the values saved in Purchasing
+            Decision.
           </p>
         </div>
         <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">
@@ -259,12 +290,32 @@ export function TopSellerProductDesignTable({
           options={tagOptions}
           selected={selectedTags}
         />
+        <MultiSelectFilter
+          label="Status"
+          onClear={() => setSelectedStatuses([])}
+          onToggle={(value) =>
+            setSelectedStatuses((current) => toggleSelection(current, value))
+          }
+          options={statusOptions}
+          selected={selectedStatuses}
+        />
+        <MultiSelectFilter
+          label="Visibility"
+          onClear={() => setSelectedVisibilities([])}
+          onToggle={(value) =>
+            setSelectedVisibilities((current) => toggleSelection(current, value))
+          }
+          options={visibilityOptions}
+          selected={selectedVisibilities}
+        />
         {hasActiveFilters ? (
           <button
             className="h-10 rounded-md border border-[#d5dbe2] bg-[#f9fafb] px-3 text-xs font-semibold text-[#44515f]"
             onClick={() => {
               setSelectedSuppliers([]);
               setSelectedTags([]);
+              setSelectedStatuses([]);
+              setSelectedVisibilities([]);
             }}
             type="button"
           >
@@ -401,8 +452,8 @@ export function TopSellerProductDesignTable({
         ) : (
           <div className="rounded-md border border-dashed border-[#cfd6df] bg-[#f9fafb] p-8 text-center text-sm text-[#667380]">
             {data.rows.length === 0
-              ? "No Top Seller snapshot yet. Apply migration 063 and run the sales-demand backfill once."
-              : "No product designs match the selected Supplier and Tags filters."}
+              ? "No Top Seller snapshot yet. Apply migrations 063-065 and run the sales-demand backfill once."
+              : "No product designs match the selected filters."}
           </div>
         )}
       </div>

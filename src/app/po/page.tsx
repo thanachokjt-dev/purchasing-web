@@ -27,6 +27,7 @@ import {
   AddPoItemForm,
   CreatePoForm,
   DeleteDraftPoForm,
+  PoSupplierFilterSelect,
   PoStatusFilterSelect,
   QuickPoCommentForm,
   StatusActionForm,
@@ -432,8 +433,11 @@ function humanPaymentType(value: string, fallback = "-") {
     "deposit50": "Deposit 50%",
     "deposit50%": "Deposit 50%",
     freight: "Freight",
+    importvat: "VAT / IMPORT VAT",
     other: "Other",
     shipping: "Shipping",
+    vat: "VAT / IMPORT VAT",
+    vatimportvat: "VAT / IMPORT VAT",
   };
 
   if (labels[normalized]) {
@@ -1194,6 +1198,17 @@ function normalizeSelectedStatuses(value?: string | string[]) {
   return statuses.length === 0 ? DEFAULT_ACTIVE_WORKBENCH_STATUSES : statuses;
 }
 
+function normalizeSelectedSuppliers(value?: string | string[]) {
+  return Array.from(
+    new Set(
+      (Array.isArray(value) ? value : value ? [value] : [])
+        .flatMap((item) => item.split(","))
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 function normalizeStatusLabel(value: string) {
   return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -1245,6 +1260,7 @@ export default async function PoPortalPage({
     q?: string;
     sort?: string;
     status?: string | string[];
+    supplier?: string | string[];
   }>;
 }) {
   const currentUser = await requireUser("/po");
@@ -1266,6 +1282,7 @@ export default async function PoPortalPage({
   const paymentRange = normalizePaymentRange(params.paymentRange);
   const selectedStatuses = normalizeSelectedStatuses(params.status);
   const selectedStatusSet = new Set(selectedStatuses);
+  const selectedSuppliers = normalizeSelectedSuppliers(params.supplier);
   const sortKey = SORT_KEYS.has(params.sort ?? "") ? params.sort ?? "date" : "date";
   const sortDir = params.dir === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(params.page ?? 1) || 1);
@@ -1277,6 +1294,7 @@ export default async function PoPortalPage({
     q,
     sort: sortKey,
     status: selectedStatuses,
+    supplier: selectedSuppliers,
   });
   const scheduledEtaRows = data.incomingEta.daily
     .map((row) => {
@@ -1808,7 +1826,8 @@ export default async function PoPortalPage({
       .filter((status) => !DEFAULT_PO_STATUS_OPTIONS.includes(status))
       .sort(),
   ];
-  const hasFilters = Boolean(q.trim()) || Boolean(params.status);
+  const hasFilters =
+    Boolean(q.trim()) || Boolean(params.status) || selectedSuppliers.length > 0;
   const buildSortHref = (key: string) => {
     const nextParams = new URLSearchParams();
     const nextDir = sortKey === key && sortDir === "asc" ? "desc" : "asc";
@@ -1818,6 +1837,9 @@ export default async function PoPortalPage({
     }
     if (!selectedStatusSet.has("all")) {
       nextParams.set("status", selectedStatuses.join(","));
+    }
+    if (selectedSuppliers.length > 0) {
+      nextParams.set("supplier", selectedSuppliers.join(","));
     }
     nextParams.set("sort", key);
     nextParams.set("dir", nextDir);
@@ -1832,6 +1854,9 @@ export default async function PoPortalPage({
     }
     if (!selectedStatusSet.has("all")) {
       nextParams.set("status", selectedStatuses.join(","));
+    }
+    if (selectedSuppliers.length > 0) {
+      nextParams.set("supplier", selectedSuppliers.join(","));
     }
     nextParams.set("sort", sortKey);
     nextParams.set("dir", sortDir);
@@ -1852,6 +1877,9 @@ export default async function PoPortalPage({
     if (!selectedStatusSet.has("all")) {
       nextParams.set("status", selectedStatuses.join(","));
     }
+    if (selectedSuppliers.length > 0) {
+      nextParams.set("supplier", selectedSuppliers.join(","));
+    }
     nextParams.set("sort", sortKey);
     nextParams.set("dir", sortDir);
     nextParams.set("page", String(page));
@@ -1867,6 +1895,9 @@ export default async function PoPortalPage({
     }
     if (!selectedStatusSet.has("all")) {
       nextParams.set("status", selectedStatuses.join(","));
+    }
+    if (selectedSuppliers.length > 0) {
+      nextParams.set("supplier", selectedSuppliers.join(","));
     }
     nextParams.set("sort", sortKey);
     nextParams.set("dir", sortDir);
@@ -3578,7 +3609,14 @@ export default async function PoPortalPage({
                 </div>
               ) : (
                 <div className="hidden">
-                  {unscheduledEtaRows.map((row) => {
+                  {unscheduledEtaRows.map((row, index) => {
+                    const rowKey = [
+                      row.poId,
+                      row.sku,
+                      row.lineStatus,
+                      row.poStatus,
+                      index,
+                    ].join("-");
                     const content = (
                       <>
                         <div className="flex items-start justify-between gap-3">
@@ -3613,7 +3651,7 @@ export default async function PoPortalPage({
                         data-incoming-no-eta-row
                         data-incoming-supplier={row.supplierName || ""}
                         href={row.poDetailHref}
-                        key={`${row.poId}-${row.sku}`}
+                        key={rowKey}
                       >
                         {content}
                       </Link>
@@ -3622,7 +3660,7 @@ export default async function PoPortalPage({
                         className="block px-3 py-3"
                         data-incoming-no-eta-row
                         data-incoming-supplier={row.supplierName || ""}
-                        key={`${row.poId}-${row.sku}`}
+                        key={rowKey}
                       >
                         {content}
                       </div>
@@ -4235,12 +4273,19 @@ export default async function PoPortalPage({
               <p className="mt-1 text-xs text-[#667380]">
                 POs with active incoming, waiting approval, draft, and open workflow statuses.
               </p>
-              <form className="mt-3 grid gap-3 lg:grid-cols-[minmax(280px,1fr)_minmax(300px,520px)_auto]" action="/po">
+              <form
+                action="/po"
+                className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,0.8fr)_minmax(280px,1fr)_minmax(300px,520px)_auto]"
+              >
                 <input
                   className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-sm outline-none focus:border-[#255f85]"
                   defaultValue={q}
                   name="q"
                   placeholder="Search PO, supplier, owner"
+                />
+                <PoSupplierFilterSelect
+                  options={data.suppliers}
+                  selected={selectedSuppliers}
                 />
                 <PoStatusFilterSelect options={statusOptions} selected={selectedStatuses} />
                 <PendingSubmitButton
@@ -4261,13 +4306,16 @@ export default async function PoPortalPage({
               ) : null}
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-[1500px] text-left text-sm">
+              <table className="min-w-[1740px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className="px-4 py-3 font-semibold">{sortHeader("po", "PO")}</th>
                     <th className="px-4 py-3 font-semibold">{sortHeader("date", "Date")}</th>
                     <th className="px-4 py-3 font-semibold">
                       {sortHeader("supplier", "Supplier")}
+                    </th>
+                    <th className="px-4 py-3 font-semibold">
+                      PO Purpose / Header Tag
                     </th>
                     <th className="px-4 py-3 font-semibold">Comment</th>
                     <th className="px-4 py-3 font-semibold">
@@ -4277,13 +4325,13 @@ export default async function PoPortalPage({
                       {sortHeader("lines", "Lines", "right")}
                     </th>
                     <th className="px-4 py-3 text-right font-semibold">
-                      {sortHeader("incoming", "Incoming", "right")}
+                      {sortHeader("incoming", "PO Qty", "right")}
                     </th>
                     <th className="px-4 py-3 text-right font-semibold">
                       {sortHeader("pending", "Pending", "right")}
                     </th>
                     <th className="px-4 py-3 text-right font-semibold">
-                      {sortHeader("amount", "Amount", "right")}
+                      {sortHeader("amount", "Amount (THB)", "right")}
                     </th>
                     <th className="px-4 py-3 font-semibold">Update</th>
                   </tr>
@@ -4312,6 +4360,9 @@ export default async function PoPortalPage({
                         <p className="mt-0.5 text-xs text-[#6b7785]">
                           Supplier INV: {order.supplierInvoiceNo || "-"}
                         </p>
+                      </td>
+                      <td className="min-w-[220px] px-4 py-3 align-top">
+                        <span className="line-clamp-3">{purposeText(order.headerPurpose)}</span>
                       </td>
                       <td className="min-w-[320px] px-4 py-3 align-top">
                         {data.source === "supabase" && allowEditPo ? (
@@ -4350,14 +4401,21 @@ export default async function PoPortalPage({
                       <td className="px-4 py-3 text-right font-mono">
                         {formatNumber(order.itemCount)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold text-[#1f6b3d]">
-                        {formatNumber(order.activeIncomingQty)}
+                      <td className="px-4 py-3 text-right">
+                        <p className="font-mono font-semibold text-[#172026]">
+                          {formatNumber(order.totalQty)}
+                        </p>
+                        {order.activeIncomingQty !== order.totalQty ? (
+                          <p className="mt-1 whitespace-nowrap text-[11px] font-medium text-[#1f6b3d]">
+                            Active incoming {formatNumber(order.activeIncomingQty)}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-[#946200]">
                         {formatNumber(order.pendingApprovalQty)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
-                        {formatCurrency(order.poAmountForeign, order.currency)}
+                        {formatCurrency(order.poAmountThb, "THB")}
                       </td>
                       <td className="px-4 py-3 align-top">
                         {data.source === "supabase" && allowEditPo ? (
@@ -4382,7 +4440,7 @@ export default async function PoPortalPage({
                   ))}
                   {filteredWorkbenchOrders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-6 text-sm text-[#667380]" colSpan={10}>
+                      <td className="px-4 py-6 text-sm text-[#667380]" colSpan={11}>
                         No purchase orders match this search.
                       </td>
                     </tr>
