@@ -94,6 +94,8 @@ export async function GET(request: NextRequest) {
     "Over Qty",
     "Over Days",
     "Note",
+    "Family SKU",
+    "SKU Factory",
   ];
   const rows = data.lines.map((line) =>
     csvRow([
@@ -128,6 +130,8 @@ export async function GET(request: NextRequest) {
       line.overstockUnits,
       line.overstockDays,
       line.note,
+      line.familySku,
+      line.skuFactory,
     ]),
   );
   const csv = [csvRow(headers), ...rows].join("\r\n");

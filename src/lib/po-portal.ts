@@ -269,6 +269,7 @@ type PoCatalogVariantRow = {
 
 type PoDecisionControlRow = {
   sku: string | null;
+  sku_factory?: string | null;
   product_name_override: string | null;
   main_name_override: string | null;
   supplier_override: string | null;
@@ -434,6 +435,7 @@ type PortalItem = PoPortalItem & {
   leadTimeDays?: number;
   onHand?: number;
   sortPosition?: number;
+  skuFactory?: string;
   tags?: string[];
   unitPriceSource?: string;
   unitPriceSourceDate?: string;
@@ -2566,36 +2568,47 @@ function roundUpToTen(value: number) {
 export async function searchPoCatalogItems({
   limit = 20,
   q,
+  skus: lookupSkus = [],
   supplierCode = "",
   supplierName = "",
 }: {
   limit?: number;
   q: string;
+  skus?: string[];
   supplierCode?: string;
   supplierName?: string;
 }) {
   const supabase = getSupabaseServiceClient();
   const term = q.trim();
-  if (!supabase || term.length < 2) {
+  const requestedSkus = Array.from(
+    new Set(lookupSkus.map((sku) => sku.trim()).filter(Boolean)),
+  ).slice(0, 500);
+  if (!supabase || (term.length < 2 && requestedSkus.length === 0)) {
     return [] as PoCatalogItemOption[];
   }
 
-  const maxResults = Math.min(50, Math.max(1, Math.round(limit)));
+  const maxResults = Math.min(
+    requestedSkus.length ? 500 : 50,
+    Math.max(1, Math.round(limit)),
+  );
   const escaped = term.replace(/[%_]/g, "\\$&");
-  const catalogQuery = await supabase
+  const catalogQueryBuilder = supabase
     .from("po_catalog_search")
     .select(
       "sku,variant_title,variant_image_url,product_title,product_image_url,vendor,tags",
     )
-    .or(
-      [
-        `sku.ilike.%${escaped}%`,
-        `variant_title.ilike.%${escaped}%`,
-        `product_title.ilike.%${escaped}%`,
-      ].join(","),
-    )
-    .order("sku", { ascending: true })
-    .limit(maxResults * 4);
+    .order("sku", { ascending: true });
+  const catalogQuery = requestedSkus.length
+    ? await catalogQueryBuilder.in("sku", requestedSkus).limit(maxResults)
+    : await catalogQueryBuilder
+        .or(
+          [
+            `sku.ilike.%${escaped}%`,
+            `variant_title.ilike.%${escaped}%`,
+            `product_title.ilike.%${escaped}%`,
+          ].join(","),
+        )
+        .limit(maxResults * 4);
 
   let rawRows = (catalogQuery.data ?? []) as Array<PoCatalogVariantRow & {
     product_image_url?: string | null;
@@ -2605,12 +2618,15 @@ export async function searchPoCatalogItems({
   }>;
 
   if (catalogQuery.error) {
-    const fallbackCatalogQuery = await supabase
+    const fallbackCatalogQueryBuilder = supabase
       .from("product_variants")
       .select("sku,variant_title,variant_image_url,products(product_title,product_image_url,vendor,tags)")
-      .or(`sku.ilike.%${escaped}%,variant_title.ilike.%${escaped}%`)
-      .order("sku", { ascending: true })
-      .limit(maxResults * 4);
+      .order("sku", { ascending: true });
+    const fallbackCatalogQuery = requestedSkus.length
+      ? await fallbackCatalogQueryBuilder.in("sku", requestedSkus).limit(maxResults)
+      : await fallbackCatalogQueryBuilder
+          .or(`sku.ilike.%${escaped}%,variant_title.ilike.%${escaped}%`)
+          .limit(maxResults * 4);
     rawRows = (fallbackCatalogQuery.data ?? []) as unknown as Array<PoCatalogVariantRow & {
       product_image_url?: string | null;
       product_title?: string | null;
@@ -2867,6 +2883,7 @@ export async function getPoPortalDetailData(poId: string) {
           itemUuid: undefined,
           landedUnitCost: item.unitPrice,
           onHand: 0,
+          skuFactory: "",
         })),
       marginRows: [] as PoMarginCheckRow[],
       payments: [],
@@ -3073,7 +3090,7 @@ export async function getPoPortalDetailData(poId: string) {
             .in("sku", skus),
           supabase
             .from("purchasing_decision_controls")
-            .select("sku,lead_time_days,tags_override")
+            .select("sku,sku_factory,lead_time_days,tags_override")
             .in("sku", skus),
         ])
       : [{ data: [] }, { data: [] }];
@@ -3107,6 +3124,7 @@ export async function getPoPortalDetailData(poId: string) {
       demandIndexHm: demandBySku.get(sku) ?? 0,
       leadTimeDays: numeric(control?.lead_time_days),
       onHand: onHandBySku.get(sku) ?? 0,
+      skuFactory: compactText(control?.sku_factory),
       tags: control?.tags_override?.length ? control.tags_override : tagsBySku.get(sku) ?? [],
     };
   });

@@ -700,6 +700,15 @@ body {
     width: 16mm;
   }
 
+  .print-factory-sku {
+    display: block;
+    font-size: 7px;
+    font-weight: 600;
+    line-height: 1.15;
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+  }
+
   .print-signatures {
     display: grid;
     gap: 18mm;

@@ -50,3 +50,10 @@ export function sortPoPayments<T extends PoPaymentDisplayRow>(payments: T[]) {
   // Planned rows sort by due date; paid rows sort by paid date. Undated rows stay at the bottom.
   return [...payments].sort(comparePoPayments);
 }
+
+// A stable snapshot for detecting stale forms, independent of display order.
+export function paymentSnapshot(payments: PoPaymentDisplayRow[]) {
+  return JSON.stringify([...payments].sort((a, b) => a.id.localeCompare(b.id)).map(
+    (payment) => Object.fromEntries(Object.entries(payment).sort(([a], [b]) => a.localeCompare(b))),
+  ));
+}

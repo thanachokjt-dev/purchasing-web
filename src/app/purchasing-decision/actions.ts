@@ -40,6 +40,7 @@ function manualOverrideNumber(value: string, intent: string) {
 
 type ExistingDecisionControl = {
   sku: string | null;
+  sku_factory: string | null;
   product_name_override: string | null;
   main_name_override: string | null;
   supplier_override: string | null;
@@ -156,6 +157,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
   const targetCoverageDays = formData.getAll("targetCoverageDays");
   const hideReasons = formData.getAll("hideReason");
   const notes = formData.getAll("note");
+  const skuFactories = formData.getAll("skuFactory");
   const now = new Date().toISOString();
   const submittedSkus = skus
     .map((value) => String(value ?? "").trim())
@@ -167,7 +169,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     const { data } = await supabase
       .from("purchasing_decision_controls")
       .select(
-        "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,hide_reason,note",
+        "sku,sku_factory,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,hide_reason,note",
       )
       .in("sku", chunk);
 
@@ -227,6 +229,7 @@ export async function savePurchasingDecisionAction(formData: FormData) {
     return [
       {
         sku,
+        sku_factory: nullableText(textAt(skuFactories, index)),
         product_name_override: nullableText(
           textOrExisting(textAt(productNames, index), existing?.product_name_override),
         ),

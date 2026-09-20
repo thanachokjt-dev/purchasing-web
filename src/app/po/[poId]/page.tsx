@@ -542,6 +542,7 @@ function quoteMatrixRows(items: DetailItem[]) {
     string,
     {
       family: MatrixFamily;
+      factorySkus: string[];
       groupTag: string;
       imageUrl: string | null;
       items: Map<
@@ -566,6 +567,7 @@ function quoteMatrixRows(items: DetailItem[]) {
       rows.get(key) ??
       {
         family,
+        factorySkus: [] as string[],
         groupTag,
         imageUrl: item.imageUrl ?? null,
         items: new Map(),
@@ -578,6 +580,10 @@ function quoteMatrixRows(items: DetailItem[]) {
     current.orderedQty += item.qty;
     current.onHand += item.onHand ?? 0;
     current.price = current.price || item.unitPrice;
+    const skuFactory = item.skuFactory?.trim();
+    if (skuFactory && !row.factorySkus.includes(skuFactory)) {
+      row.factorySkus.push(skuFactory);
+    }
     row.totalQty += item.qty;
     if (!row.imageUrl && item.imageUrl) {
       row.imageUrl = item.imageUrl;
@@ -1824,7 +1830,14 @@ function PrintMatrixDocument({
                 <tbody>
                   {group.rows.map((row) => (
                     <tr key={`${group.label}-${row.productName}`}>
-                      <td>{row.productName}</td>
+                      <td>
+                        <span>{row.productName}</span>
+                        {row.factorySkus.length ? (
+                          <span className="print-factory-sku">
+                            Factory: {row.factorySkus.join(" / ")}
+                          </span>
+                        ) : null}
+                      </td>
                       <td>
                         {row.imageUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element

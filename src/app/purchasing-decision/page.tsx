@@ -567,7 +567,7 @@ export default async function PurchasingDecisionPage({
             </div>
 
             <div className="max-h-[calc(100vh-260px)] max-w-full overflow-auto">
-              <table className="min-w-[2920px] text-left text-sm">
+              <table className="min-w-[3280px] text-left text-sm">
                 <thead className="bg-[#f3f5f7] text-xs uppercase tracking-[0.12em] text-[#65717f]">
                   <tr>
                     <th className={`${stickyHeaderBase} left-0 z-50 w-[52px] min-w-[52px]`}>Pick</th>
@@ -610,6 +610,8 @@ export default async function PurchasingDecisionPage({
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Coming</th>
                     <th className={`${stickyHeaderBase} z-40 text-right`}>Value</th>
                     <th className={`${stickyHeaderBase} z-40`}>Note</th>
+                    <th className={`${stickyHeaderBase} z-40`}>Family SKU</th>
+                    <th className={`${stickyHeaderBase} z-40`}>SKU Factory</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#edf1f5]">
@@ -814,6 +816,19 @@ export default async function PurchasingDecisionPage({
                           name="targetCoverageDays"
                           type="hidden"
                           value={line.targetCoverageDays ?? ""}
+                        />
+                      </td>
+                      <td className="min-w-[160px] px-3 py-3 align-top">
+                        <p className="font-mono text-xs font-semibold text-[#42505c]">
+                          {line.familySku}
+                        </p>
+                      </td>
+                      <td className="min-w-[200px] px-3 py-3 align-top">
+                        <input
+                          className={inputClass}
+                          defaultValue={line.skuFactory}
+                          name="skuFactory"
+                          placeholder="Factory SKU"
                         />
                       </td>
                       </tr>

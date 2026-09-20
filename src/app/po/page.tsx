@@ -11,6 +11,9 @@ import {
   WalletCards,
 } from "lucide-react";
 import { getPoPortalData } from "@/lib/po-portal";
+import { getPoUploadTasks } from "@/lib/po-upload-tasks";
+import { UploadWorkbench } from "@/app/po/upload-workbench";
+import { PoLiveSync } from "@/app/po/po-live-sync";
 import { poDurationFromDates } from "@/lib/po-duration";
 import { formatNumber } from "@/lib/baseline-data";
 import {
@@ -1286,7 +1289,7 @@ export default async function PoPortalPage({
   const sortKey = SORT_KEYS.has(params.sort ?? "") ? params.sort ?? "date" : "date";
   const sortDir = params.dir === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number(params.page ?? 1) || 1);
-  const data = await getPoPortalData({
+  const [data, uploadWork] = await Promise.all([getPoPortalData({
     dir: sortDir,
     includeReceivedHistory: incomingView === "all",
     page,
@@ -1295,7 +1298,7 @@ export default async function PoPortalPage({
     sort: sortKey,
     status: selectedStatuses,
     supplier: selectedSuppliers,
-  });
+  }), incomingEtaOnly ? Promise.resolve({ tasks: [], error: "" }) : getPoUploadTasks()]);
   const scheduledEtaRows = data.incomingEta.daily
     .map((row) => {
       const tooltipItems = row.tooltipItems.filter((item) =>
@@ -2294,6 +2297,8 @@ export default async function PoPortalPage({
             <h1 className="mt-1.5 text-2xl font-semibold tracking-normal">
               PO Portal
             </h1>
+            <PoLiveSync />
+            {!incomingEtaOnly ? <Link href="#upload-workbench" className="mt-2 inline-block text-sm font-semibold text-[#255f85] underline">งานติดตาม Upload ({uploadWork.tasks.length}) ↓</Link> : null}
             <span className="mt-2 inline-flex rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
               {data.source === "supabase"
                 ? "Live Supabase PO workflow"
@@ -4477,6 +4482,7 @@ export default async function PoPortalPage({
             </div>
           </div>
         </section>
+        <UploadWorkbench tasks={uploadWork.tasks} error={uploadWork.error} />
         </>
         ) : null}
       </div>

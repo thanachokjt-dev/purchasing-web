@@ -1,8 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useActionState, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { DragEvent, ReactNode } from "react";
 import {
   addPoItemAction,
@@ -23,6 +22,7 @@ import {
 } from "@/app/po/actions";
 import { LoadingLabel } from "@/app/loading-controls";
 import {
+  SIZE_PATTERN,
   matrixItemFamily,
   matrixItemSize,
   matrixProductName,
@@ -31,7 +31,8 @@ import {
   sortMatrixSizes,
   type MatrixFamily,
 } from "@/lib/po-size-matrix";
-import { sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
+import { paymentSnapshot, sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
+import { notifyPoChanged } from "@/app/po/po-live-sync";
 
 type SupplierOption = {
   supplierCode: string;
@@ -656,7 +657,7 @@ function useCatalogSearch({
 }
 
 function matrixCatalogSearchQuery(productName: string) {
-  return productName.split(/\s+\/\s+/)[0]?.trim() || productName.trim();
+  return productName.split(/\s+(?:\/|-)\s+/)[0]?.trim() || productName.trim();
 }
 
 function matrixProductMatchKey(productName: string) {
@@ -668,8 +669,32 @@ function matrixProductMatchKey(productName: string) {
     .trim();
 }
 
+function matrixVariantStyle(variantTitle = "") {
+  return variantTitle
+    .replace(new RegExp(`(?:\\s*[/|-]\\s*)?(${SIZE_PATTERN})\\s*$`, "i"), "")
+    .trim();
+}
+
+function matrixStyleAwareProductName(baseName: string, variantTitle = "") {
+  const variantStyle = matrixVariantStyle(variantTitle);
+  if (!variantStyle || variantStyle.toLowerCase() === "default title") {
+    return baseName;
+  }
+
+  const baseKey = matrixProductMatchKey(baseName);
+  const styleKey = matrixProductMatchKey(variantStyle);
+  const styleAlreadyInName =
+    baseKey === styleKey ||
+    baseKey.startsWith(`${styleKey} `) ||
+    baseKey.endsWith(` ${styleKey}`) ||
+    baseKey.includes(` ${styleKey} `);
+
+  return styleAlreadyInName ? baseName : `${baseName} - ${variantStyle}`;
+}
+
 function matrixCatalogProductName(item: CatalogItemOption) {
-  return item.mainName.trim() || matrixProductName(item);
+  const baseName = item.mainName.trim() || matrixProductName(item);
+  return matrixStyleAwareProductName(baseName, item.variantTitle);
 }
 
 function matrixDefaultAddQty(item: CatalogItemOption) {
@@ -749,8 +774,66 @@ function useMatrixCatalogProducts(productNames: string[]) {
   }, [queryKey]);
 
   return {
-    items: result.queryKey === queryKey ? result.items : [],
+    items: result.items,
     loading: Boolean(queryKey) && result.queryKey !== queryKey,
+  };
+}
+
+function useCatalogItemsBySkus(skus: string[]) {
+  const skuKey = Array.from(new Set(skus.map((sku) => sku.trim()).filter(Boolean)))
+    .sort()
+    .join("\n");
+  const [result, setResult] = useState<{
+    items: CatalogItemOption[];
+    skuKey: string;
+  }>({ items: [], skuKey: "" });
+
+  useEffect(() => {
+    const requestedSkus = skuKey.split("\n").filter(Boolean);
+    if (requestedSkus.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let stale = false;
+    const batches = Array.from(
+      { length: Math.ceil(requestedSkus.length / 100) },
+      (_, index) => requestedSkus.slice(index * 100, (index + 1) * 100),
+    );
+
+    Promise.all(
+      batches.map((batch) => {
+        const params = new URLSearchParams({ limit: String(batch.length) });
+        batch.forEach((sku) => params.append("sku", sku));
+        return fetch(`/api/po/catalog-search?${params.toString()}`, {
+          signal: controller.signal,
+        })
+          .then((response) => (response.ok ? response.json() : { items: [] }))
+          .then((payload: { items?: CatalogItemOption[] }) =>
+            Array.isArray(payload.items) ? payload.items : [],
+          );
+      }),
+    )
+      .then((results) => {
+        if (!stale) {
+          setResult({ items: uniqueCatalogItems(results.flat()), skuKey });
+        }
+      })
+      .catch((error) => {
+        if (!stale && !(error instanceof DOMException && error.name === "AbortError")) {
+          setResult({ items: [], skuKey });
+        }
+      });
+
+    return () => {
+      stale = true;
+      controller.abort();
+    };
+  }, [skuKey]);
+
+  return {
+    items: result.items,
+    loading: Boolean(skuKey) && result.skuKey !== skuKey,
   };
 }
 
@@ -758,6 +841,11 @@ function editableQuoteMatrixRows(
   lines: DraftLineItem[],
   catalogItems: CatalogItemOption[] = [],
 ) {
+  const catalogItemBySku = new Map(
+    catalogItems
+      .filter((item) => item.sku.trim())
+      .map((item) => [item.sku.trim(), item]),
+  );
   const rows = new Map<
     string,
     {
@@ -781,7 +869,10 @@ function editableQuoteMatrixRows(
   >();
 
   lines.forEach((line, lineIndex) => {
-    const productName = matrixProductName(line);
+    const catalogItem = catalogItemBySku.get(line.sku.trim());
+    const productName = catalogItem
+      ? matrixCatalogProductName(catalogItem)
+      : matrixStyleAwareProductName(matrixProductName(line), line.variantTitle);
     const groupTag = matrixSectionName(line);
     const family = matrixItemFamily(line);
     const key = `${groupTag.toLowerCase()}::${family}::${productName.toLowerCase()}`;
@@ -1547,12 +1638,42 @@ export function PoHeaderRefsForm({
   supplierDiscussionNote: string;
   supplierInvoiceNo: string;
 }) {
+  const [, startSave] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [headerBaseline, setHeaderBaseline] = useState(() => ({
+    headerPurpose, quotationReference, supplierInvoiceNo,
+    estimatedDeliveryDate, estimatedArrivedDate, actualReceivedDate,
+  }));
   const [state, formAction, pending] = useActionState(
-    updatePoHeaderRefsAction,
+    async (previous: PoActionState, formData: FormData) => {
+      const next = await updatePoHeaderRefsAction(previous, formData);
+      if (next.ok) {
+        if (next.header) setHeaderBaseline(next.header as typeof headerBaseline);
+        // Update defaults only after a confirmed save; errors keep every draft field.
+        for (const [name, value] of Object.entries(next.header ?? {})) {
+          const input = formRef.current?.elements.namedItem(name);
+          if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+            input.defaultValue = value;
+            input.value = value;
+          }
+        }
+        if (formRef.current) formRef.current.dataset.dirty = "false";
+        notifyPoChanged();
+      }
+      return next;
+    },
     initialState,
   );
   return (
-    <form action={formAction} className="grid gap-3">
+    <form ref={formRef} onChange={() => { if (formRef.current) formRef.current.dataset.dirty = "true"; }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (pending) return;
+        const data = new FormData(event.currentTarget);
+        startSave(() => formAction(data));
+      }} className="grid gap-3">
+      <fieldset disabled={pending} className="contents">
+      <input name="expectedHeader" type="hidden" value={JSON.stringify(headerBaseline)} />
       <input name="poId" type="hidden" value={poId} />
       <div className="grid gap-3 sm:grid-cols-2">
         <label className={`${labelClass} sm:col-span-2`}>
@@ -1634,18 +1755,14 @@ export function PoHeaderRefsForm({
         </LoadingLabel>
       </button>
       <ActionMessage state={state} />
+      </fieldset>
     </form>
   );
 }
 
 export function QuickPoCommentForm({
-  actualReceivedDate,
-  estimatedArrivedDate,
-  estimatedDeliveryDate,
   poId,
-  quotationReference,
   supplierDiscussionNote,
-  supplierInvoiceNo,
 }: {
   actualReceivedDate: string;
   estimatedArrivedDate: string;
@@ -1655,11 +1772,18 @@ export function QuickPoCommentForm({
   supplierDiscussionNote: string;
   supplierInvoiceNo: string;
 }) {
+  const [draftComment, setDraftComment] = useState("");
   const [state, formAction, pending] = useActionState(
-    updatePoHeaderRefsAction,
+    async (previous: PoActionState, data: FormData) => {
+      const next = await updatePoHeaderRefsAction(previous, data);
+      if (next.ok) {
+        setDraftComment("");
+        notifyPoChanged();
+      }
+      return next;
+    },
     initialState,
   );
-  const [draftComment, setDraftComment] = useState("");
   const noteBoxRef = useRef<HTMLParagraphElement>(null);
   const displayNote = state.supplierDiscussionNote ?? supplierDiscussionNote;
 
@@ -1679,14 +1803,9 @@ export function QuickPoCommentForm({
       >
         {displayNote || "-"}
       </p>
-      <form action={formAction} className="grid gap-2">
+      <form action={formAction} data-dirty={draftComment ? "true" : "false"} className="grid gap-2">
       <input name="poId" type="hidden" value={poId} />
       <input name="updateScope" type="hidden" value="quickComment" />
-      <input name="quotationReference" type="hidden" value={quotationReference} />
-      <input name="supplierInvoiceNo" type="hidden" value={supplierInvoiceNo} />
-      <input name="estimatedDeliveryDate" type="hidden" value={estimatedDeliveryDate} />
-      <input name="estimatedArrivedDate" type="hidden" value={estimatedArrivedDate} />
-      <input name="actualReceivedDate" type="hidden" value={actualReceivedDate} />
       <div className="flex gap-2">
         <input
           className="h-9 min-w-0 flex-1 rounded-md border border-[#cfd6df] bg-white px-3 text-xs text-[#172026] outline-none focus:border-[#255f85]"
@@ -1916,14 +2035,39 @@ export function PoDraftLinesForm({
   supplierCode: string;
   supplierName: string;
 }) {
+  const [lines, setLines] = useState(items);
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
+  const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction, pending] = useActionState(
-    updatePoDraftLinesAction,
+    async (previousState: PoActionState, formData: FormData) => {
+      const nextState = await updatePoDraftLinesAction(previousState, formData);
+      if (nextState.ok && nextState.draftLines) {
+        setLines((currentLines) => {
+          const currentById = new Map(
+            currentLines
+              .filter((line) => line.itemUuid)
+              .map((line) => [line.itemUuid!, line]),
+          );
+          const currentBySku = new Map(
+            currentLines.map((line) => [line.sku.trim().toLowerCase(), line]),
+          );
+          return nextState.draftLines!.map((savedLine) => ({
+            ...(currentById.get(savedLine.itemUuid) ??
+              currentBySku.get(savedLine.sku.trim().toLowerCase())),
+            ...savedLine,
+            tempId: undefined,
+          }));
+        });
+        setDeletedIds([]);
+        if (formRef.current) formRef.current.dataset.dirty = "false";
+        notifyPoChanged({ refreshCurrent: false });
+      }
+      return nextState;
+    },
     initialState,
   );
   const [repriceState, setRepriceState] = useState<PoActionState>(initialState);
   const [repricePending, startRepriceTransition] = useTransition();
-  const [lines, setLines] = useState(items);
-  const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [adjustPercent, setAdjustPercent] = useState("");
   const [bulkUnitPrice, setBulkUnitPrice] = useState("");
   const [logisticCost, setLogisticCost] = useState("");
@@ -1963,6 +2107,7 @@ export function PoDraftLinesForm({
         items.map((item) => [draftLineKey(item), item.unitPrice]),
       ),
   );
+  const deferredLines = useDeferredValue(lines);
   const totalOrderedQty = lines.reduce((sum, line) => sum + line.qty, 0);
   const totalEstimatedValueThb = lines.reduce(
     (sum, line) => sum + line.qty * line.unitPrice,
@@ -1970,7 +2115,10 @@ export function PoDraftLinesForm({
   );
   const logisticUnitCost = freightUnitFromTotal(logisticCost, lines);
   const exchangeRateAverage = averageExchangeRate(exchangeRates);
-  const baseMatrixGroups = useMemo(() => editableQuoteMatrixRows(lines), [lines]);
+  const baseMatrixGroups = useMemo(
+    () => editableQuoteMatrixRows(deferredLines),
+    [deferredLines],
+  );
   const matrixProductNames = useMemo(
     () =>
       baseMatrixGroups.flatMap((group) =>
@@ -1982,15 +2130,33 @@ export function PoDraftLinesForm({
     items: matrixProductCatalogItems,
     loading: matrixProductCatalogLoading,
   } = useMatrixCatalogProducts(matrixProductNames);
+  const matrixLineSkus = useMemo(
+    () => deferredLines.map((line) => line.sku),
+    [deferredLines],
+  );
+  const {
+    items: matrixLineCatalogItems,
+    loading: matrixLineCatalogLoading,
+  } = useCatalogItemsBySkus(matrixLineSkus);
+  const matrixCatalogContextItems = useMemo(
+    () =>
+      uniqueCatalogItems([
+        ...matrixLineCatalogItems,
+        ...matrixProductCatalogItems,
+        ...matrixCatalogItems,
+      ]),
+    [matrixCatalogItems, matrixLineCatalogItems, matrixProductCatalogItems],
+  );
   const matrixGroups = useMemo(
-    () => editableQuoteMatrixRows(lines, matrixProductCatalogItems),
-    [lines, matrixProductCatalogItems],
+    () => editableQuoteMatrixRows(deferredLines, matrixCatalogContextItems),
+    [deferredLines, matrixCatalogContextItems],
   );
   const visibleMatrixCatalogItems = useMemo(() => {
     if (!matrixAddTarget) {
       return matrixCatalogItems;
     }
     return uniqueCatalogItems([
+      ...matrixLineCatalogItems,
       ...matrixProductCatalogItems,
       ...matrixCatalogItems,
     ]).filter(
@@ -1999,9 +2165,11 @@ export function PoDraftLinesForm({
         matrixProductMatchKey(matrixCatalogProductName(item)) ===
           matrixProductMatchKey(matrixAddTarget.productName),
     );
-  }, [matrixAddTarget, matrixCatalogItems, matrixProductCatalogItems]);
+  }, [matrixAddTarget, matrixCatalogItems, matrixLineCatalogItems, matrixProductCatalogItems]);
   const matrixTargetLoading =
-    matrixCatalogLoading || (matrixAddTarget ? matrixProductCatalogLoading : false);
+    matrixCatalogLoading ||
+    matrixLineCatalogLoading ||
+    (matrixAddTarget ? matrixProductCatalogLoading : false);
   const existingSkus = useMemo(
     () => new Set(lines.map((line) => line.sku.trim()).filter(Boolean)),
     [lines],
@@ -2110,7 +2278,7 @@ export function PoDraftLinesForm({
       lineAmount: requestedQty * item.lastUnitPrice,
       lineNo: String(lines.length + 1),
       onHand: item.onHand,
-      productTitle: item.productTitle,
+      productTitle: matrixCatalogProductName(item),
       qty: requestedQty,
       remark: "Added from Supplier Quote Matrix",
       sku: item.sku,
@@ -2382,7 +2550,14 @@ export function PoDraftLinesForm({
   }
 
   return (
-    <form action={formAction} className="grid gap-5">
+    <form
+      action={formAction}
+      className="grid gap-5"
+      onChange={() => {
+        if (formRef.current) formRef.current.dataset.dirty = "true";
+      }}
+      ref={formRef}
+    >
       <input name="poId" type="hidden" value={poId} />
       {deletedIds.map((id) => (
         <input key={id} name="deleteItemUuid" type="hidden" value={id} />
@@ -2990,8 +3165,12 @@ export function PoDraftLinesForm({
                         )}
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate font-semibold">{item.productTitle}</p>
-                        <p className="mt-1 font-mono text-xs text-[#667380]">{item.sku}</p>
+                        <p className="truncate font-semibold">
+                          {matrixCatalogProductName(item)}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-[#667380]">
+                          {item.variantTitle || "Default"} · {item.sku}
+                        </p>
                       </div>
                       <div className="rounded-md bg-[#eef4f8] px-3 py-2 text-right">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#667380]">
@@ -3168,8 +3347,22 @@ function PaymentAmountFields({
           ? String(Number(inferredRate.toFixed(6)))
           : ""
       : String(exchangeRate);
-  const [amountValue, setAmountValue] = useState(nextAmountValue);
-  const [rateValue, setRateValue] = useState(nextRateValue);
+  const [amountState, setAmountState] = useState(() => ({
+    source: nextAmountValue,
+    value: nextAmountValue,
+  }));
+  const [rateState, setRateState] = useState(() => ({
+    source: nextRateValue,
+    value: nextRateValue,
+  }));
+  if (amountState.source !== nextAmountValue) {
+    setAmountState({ source: nextAmountValue, value: nextAmountValue });
+  }
+  if (rateState.source !== nextRateValue) {
+    setRateState({ source: nextRateValue, value: nextRateValue });
+  }
+  const amountValue = amountState.value;
+  const rateValue = rateState.value;
   const amountNumber = Number(amountValue || 0);
   const rateNumber = Number(rateValue || 0);
   const shouldValidateFx = !isDraftRow || amountNumber > 0;
@@ -3191,7 +3384,9 @@ function PaymentAmountFields({
           className={`${inputClass} text-right font-mono`}
           min="0"
           name={amountName}
-          onChange={(event) => setAmountValue(event.target.value)}
+          onChange={(event) =>
+            setAmountState((current) => ({ ...current, value: event.target.value }))
+          }
           step="0.0001"
           type="number"
           value={amountValue}
@@ -3202,7 +3397,9 @@ function PaymentAmountFields({
           className={`${inputClass} text-right font-mono ${hasInvalidForeignFx ? "border-[#d64545]" : ""}`}
           min="0.000001"
           name={exchangeRateName}
-          onChange={(event) => setRateValue(event.target.value)}
+          onChange={(event) =>
+            setRateState((current) => ({ ...current, value: event.target.value }))
+          }
           step="0.000001"
           type="number"
           value={rateValue}
@@ -3236,13 +3433,22 @@ function StyledPaymentSelect({
   name: string;
   options: Array<{ label: string; value: string }>;
 }) {
-  const [value, setValue] = useState(defaultValue);
+  const [selection, setSelection] = useState(() => ({
+    source: defaultValue,
+    value: defaultValue,
+  }));
+  if (selection.source !== defaultValue) {
+    setSelection({ source: defaultValue, value: defaultValue });
+  }
+  const value = selection.value;
 
   return (
     <select
       className={`${inputClass} appearance-none pr-8 shadow-sm transition ${classForValue(value)}`}
       name={name}
-      onChange={(event) => setValue(event.target.value)}
+      onChange={(event) =>
+        setSelection((current) => ({ ...current, value: event.target.value }))
+      }
       value={value}
     >
       {options.map((option) => (
@@ -3265,13 +3471,19 @@ function SyncedPaymentInput({
   type?: string;
   value: string;
 }) {
-  const [inputValue, setInputValue] = useState(value);
+  const [inputState, setInputState] = useState(() => ({ source: value, value }));
+  if (inputState.source !== value) {
+    setInputState({ source: value, value });
+  }
+  const inputValue = inputState.value;
 
   return (
     <input
       className={className}
       name={name}
-      onChange={(event) => setInputValue(event.target.value)}
+      onChange={(event) =>
+        setInputState((current) => ({ ...current, value: event.target.value }))
+      }
       type={type}
       value={inputValue}
     />
@@ -3361,55 +3573,44 @@ export function PaymentScheduleForm({
   poAmount: number;
   poId: string;
 }) {
-  const router = useRouter();
   const nextDraftKeyIndex = useRef(0);
   const [localPayments, setLocalPayments] = useState(() => sortPoPayments(payments));
   const [draftKeys, setDraftKeys] = useState(() => [initialPaymentDraftKey]);
-  const previousPaymentsSignature = useRef("");
-  const paymentsSignature = useMemo(
-    () =>
-      payments
-        .map((payment) =>
-          [
-            payment.id,
-            payment.payment_type,
-            payment.payment_status,
-            payment.xero_status,
-            payment.payment_date,
-            payment.due_date,
-            payment.amount,
-            payment.exchange_rate,
-            payment.amount_thb,
-            payment.currency,
-            payment.paid_by,
-            payment.reference,
-            payment.note,
-          ].join("|"),
-        )
-        .join("::"),
-    [payments],
-  );
+  const formRef = useRef<HTMLFormElement>(null);
+  const dirty = useRef(false);
+  const saving = useRef(false);
+  const [, startSave] = useTransition();
+  const previousPaymentsSignature = useRef(paymentSnapshot(payments));
+  const lastSavedSignature = useRef<string | null>(null);
+  const paymentsSignature = useMemo(() => paymentSnapshot(payments), [payments]);
   const sortedPaymentsFromProps = useMemo(() => sortPoPayments(payments), [payments]);
   const [state, formAction, pending] = useActionState(
     async (previousState: PoActionState, formData: FormData) => {
       const nextState = await updatePoPaymentsAction(previousState, formData);
       if (nextState.ok && nextState.payments) {
+        dirty.current = false;
+        if (formRef.current) formRef.current.dataset.dirty = "false";
+        lastSavedSignature.current = paymentSnapshot(nextState.payments);
         setLocalPayments(sortPoPayments(nextState.payments));
         nextDraftKeyIndex.current = 0;
         setDraftKeys([initialPaymentDraftKey]);
-        router.refresh();
+        notifyPoChanged({ refreshCurrent: false });
       }
+      saving.current = false;
       return nextState;
     },
     initialState,
   );
   useEffect(() => {
+    if (saving.current || dirty.current) return;
+    if (lastSavedSignature.current && paymentsSignature !== lastSavedSignature.current) return;
+    lastSavedSignature.current = null;
     if (previousPaymentsSignature.current === paymentsSignature) {
       return;
     }
     previousPaymentsSignature.current = paymentsSignature;
     setLocalPayments(sortedPaymentsFromProps);
-  }, [paymentsSignature, sortedPaymentsFromProps]);
+  }, [paymentsSignature, sortedPaymentsFromProps, pending]);
 
   const sortedPayments = sortPoPayments(localPayments);
   const rows = [
@@ -3447,8 +3648,19 @@ export function PaymentScheduleForm({
   );
 
   return (
-    <form action={formAction} className="grid gap-4">
+    <form ref={formRef} onChange={() => {
+      dirty.current = true;
+      if (formRef.current) formRef.current.dataset.dirty = "true";
+    }} onSubmit={(event) => {
+      event.preventDefault();
+      if (saving.current || pending) return;
+      const data = new FormData(event.currentTarget);
+      saving.current = true;
+      startSave(() => formAction(data));
+    }} className="grid gap-4">
+      <fieldset className="contents" disabled={pending}>
       <input name="poId" type="hidden" value={poId} />
+      <input name="expectedPayments" type="hidden" value={paymentSnapshot(localPayments)} />
       <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Paid", paidTotal],
@@ -3505,7 +3717,7 @@ export function PaymentScheduleForm({
               const rowError = state.paymentErrors?.[rowKey];
 
               return (
-              <tr key={rowKey}>
+              <tr id={payment ? `payment-${payment.id}` : undefined} key={rowKey}>
                 <td className="px-3 py-3 font-semibold">
                   Payment {index + 1}
                   {rowError ? (
@@ -3518,7 +3730,6 @@ export function PaymentScheduleForm({
                   <StyledPaymentSelect
                     classForValue={getPaymentStatusSelectClass}
                     defaultValue={payment?.payment_status ?? "planned"}
-                    key={`${rowKey}:status:${payment?.payment_status ?? "planned"}`}
                     name={`paymentStatus:${rowKey}`}
                     options={[
                       { label: "Paid", value: "paid" },
@@ -3534,7 +3745,6 @@ export function PaymentScheduleForm({
                         ? payment.xero_status
                         : "pending"
                     }
-                    key={`${rowKey}:xero:${payment?.xero_status ?? "pending"}`}
                     name={`xeroStatus:${rowKey}`}
                     options={[
                       { label: "pending", value: "pending" },
@@ -3545,7 +3755,6 @@ export function PaymentScheduleForm({
                 </td>
                 <td className="px-3 py-3">
                   <SyncedPaymentInput
-                    key={`${rowKey}:payment-date:${payment?.payment_date ?? ""}`}
                     name={`paymentDate:${rowKey}`}
                     type="date"
                     value={dateInputValue(payment?.payment_date)}
@@ -3553,7 +3762,6 @@ export function PaymentScheduleForm({
                 </td>
                 <td className="px-3 py-3">
                   <SyncedPaymentInput
-                    key={`${rowKey}:due-date:${payment?.due_date ?? ""}`}
                     name={`dueDate:${rowKey}`}
                     type="date"
                     value={dateInputValue(payment?.due_date)}
@@ -3563,7 +3771,6 @@ export function PaymentScheduleForm({
                   <StyledPaymentSelect
                     classForValue={getPaymentTypeSelectClass}
                     defaultValue={payment?.payment_type ?? ""}
-                    key={`${rowKey}:type:${payment?.payment_type ?? ""}`}
                     name={`paymentType:${rowKey}`}
                     options={rowOptions}
                   />
@@ -3579,11 +3786,9 @@ export function PaymentScheduleForm({
                   }
                   exchangeRateName={`exchangeRate:${rowKey}`}
                   isDraftRow={!payment?.id}
-                  key={`${rowKey}:amount:${payment?.amount ?? ""}:${payment?.exchange_rate ?? ""}:${payment?.amount_thb ?? ""}:${payment?.currency ?? currency}`}
                 />
                 <td className="px-3 py-3">
                   <SyncedPaymentInput
-                    key={`${rowKey}:currency:${payment?.currency ?? currency}`}
                     name={`currency:${rowKey}`}
                     value={payment?.currency ?? currency}
                   />
@@ -3593,7 +3798,6 @@ export function PaymentScheduleForm({
                 </td>
                 <td className="px-3 py-3">
                   <SyncedPaymentInput
-                    key={`${rowKey}:reference:${payment?.reference ?? ""}`}
                     name={`reference:${rowKey}`}
                     value={payment?.reference ?? ""}
                   />
@@ -3601,7 +3805,6 @@ export function PaymentScheduleForm({
                 </td>
                 <td className="px-3 py-3">
                   <SyncedPaymentInput
-                    key={`${rowKey}:note:${payment?.note ?? ""}`}
                     name={`note:${rowKey}`}
                     value={payment?.note ?? ""}
                   />
@@ -3638,6 +3841,7 @@ export function PaymentScheduleForm({
           </LoadingLabel>
         </button>
       </div>
+      </fieldset>
     </form>
   );
 }

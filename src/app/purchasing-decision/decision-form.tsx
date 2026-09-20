@@ -736,6 +736,7 @@ export function AlertFilterSelect({
       ? selectedAlerts
       : options.map((option) => option.value);
   const [selected, setSelected] = useState(initialSelection);
+  const [isOpen, setIsOpen] = useState(false);
   const allSelected = selected.length === options.length;
   const valuesForSubmit = allSelected ? ["all"] : selected;
   const label = allSelected
@@ -766,14 +767,21 @@ export function AlertFilterSelect({
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
         Alert
       </span>
-      <details className="group relative z-[90]">
-        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+      <div className="relative z-[90]">
+        <button
+          aria-expanded={isOpen}
+          className={`flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-md border bg-white px-2 text-sm text-[#172026] outline-none ${
+            isOpen ? "border-[#255f85]" : "border-[#cfd6df]"
+          }`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
           <span className="truncate">{label}</span>
           <span aria-hidden="true" className="text-xs text-[#65717f]">
             v
           </span>
-        </summary>
-        <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+        </button>
+        {isOpen ? <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
           <button
             className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
             onClick={() => setSelected(options.map((option) => option.value))}
@@ -795,8 +803,8 @@ export function AlertFilterSelect({
               {option.label}
             </label>
           ))}
-        </div>
-      </details>
+        </div> : null}
+      </div>
     </div>
   );
 }
@@ -813,6 +821,7 @@ export function StockFilterSelect({
       ? selectedStock
       : options.map((option) => option.value);
   const [selected, setSelected] = useState(initialSelection);
+  const [isOpen, setIsOpen] = useState(false);
   const allSelected = selected.length === options.length;
   const valuesForSubmit = allSelected ? ["all"] : selected;
   const label = allSelected
@@ -843,14 +852,21 @@ export function StockFilterSelect({
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
         Stock
       </span>
-      <details className="group relative z-[90]">
-        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+      <div className="relative z-[90]">
+        <button
+          aria-expanded={isOpen}
+          className={`flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-md border bg-white px-2 text-sm text-[#172026] outline-none ${
+            isOpen ? "border-[#255f85]" : "border-[#cfd6df]"
+          }`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
           <span className="truncate">{label}</span>
           <span aria-hidden="true" className="text-xs text-[#65717f]">
             v
           </span>
-        </summary>
-        <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+        </button>
+        {isOpen ? <div className="absolute right-0 z-[110] mt-1 grid w-56 gap-1 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
           <button
             className="rounded-md px-2 py-1 text-left text-xs font-semibold text-[#255f85] hover:bg-[#eef4f8]"
             onClick={() => setSelected(options.map((option) => option.value))}
@@ -872,8 +888,8 @@ export function StockFilterSelect({
               {option.label}
             </label>
           ))}
-        </div>
-      </details>
+        </div> : null}
+      </div>
     </div>
   );
 }
@@ -892,6 +908,7 @@ export function TagFilterSelect({
       );
   const [selected, setSelected] = useState(initialSelection);
   const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
   const selectedSet = useMemo(
     () => new Set(selected.map((value) => value.toLowerCase())),
     [selected],
@@ -935,14 +952,21 @@ export function TagFilterSelect({
       <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#65717f]">
         Tags
       </span>
-      <details className="group relative z-[90]">
-        <summary className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none group-open:border-[#255f85]">
+      <div className="relative z-[90]">
+        <button
+          aria-expanded={isOpen}
+          className={`flex h-9 w-full cursor-pointer items-center justify-between gap-2 rounded-md border bg-white px-2 text-sm text-[#172026] outline-none ${
+            isOpen ? "border-[#255f85]" : "border-[#cfd6df]"
+          }`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
           <span className="truncate">{label}</span>
           <span aria-hidden="true" className="text-xs text-[#65717f]">
             v
           </span>
-        </summary>
-        <div className="absolute right-0 z-[110] mt-1 grid w-72 gap-2 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
+        </button>
+        {isOpen ? <div className="absolute right-0 z-[110] mt-1 grid w-72 gap-2 rounded-md border border-[#cfd6df] bg-white p-2 shadow-xl">
           <input
             aria-label="Search tags"
             className="h-9 rounded-md border border-[#cfd6df] bg-white px-2 text-sm text-[#172026] outline-none focus:border-[#255f85]"
@@ -982,8 +1006,8 @@ export function TagFilterSelect({
               <p className="px-2 py-3 text-sm text-[#667380]">No tags found.</p>
             ) : null}
           </div>
-        </div>
-      </details>
+        </div> : null}
+      </div>
     </div>
   );
 }

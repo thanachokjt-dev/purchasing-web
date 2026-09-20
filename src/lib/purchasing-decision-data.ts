@@ -81,6 +81,7 @@ type ManualSupplierRow = {
 
 type DecisionControlRow = {
   sku: string | null;
+  sku_factory: string | null;
   product_name_override: string | null;
   main_name_override: string | null;
   supplier_override: string | null;
@@ -103,6 +104,8 @@ type DecisionControlRow = {
 
 export type PurchasingDecisionLine = {
   sku: string;
+  familySku: string;
+  skuFactory: string;
   productName: string;
   shopifyProductName: string;
   mainName: string;
@@ -195,6 +198,17 @@ export type PurchasingDecisionData = {
     overallInventoryValue: number;
   };
 };
+
+export function familySkuFromSku(value: string) {
+  const sku = value.trim();
+  const firstSeparator = sku.indexOf("-");
+  if (firstSeparator < 0) {
+    return sku;
+  }
+
+  const secondSeparator = sku.indexOf("-", firstSeparator + 1);
+  return secondSeparator < 0 ? sku : sku.slice(0, secondSeparator);
+}
 
 const PAGE_SIZE = 1000;
 const FETCH_RETRY_ATTEMPTS = 2;
@@ -495,7 +509,7 @@ async function fetchControls(supabase: SupabaseClient) {
       supabase
         .from("purchasing_decision_controls")
         .select(
-          "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note,updated_by,planning_override_source,planning_override_note",
+          "sku,sku_factory,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,order_qty_mode,target_coverage_days,hide_from_purchasing,hide_reason,note,updated_by,planning_override_source,planning_override_note",
         )
         .order("sku", { ascending: true })
         .range(from, to),
@@ -506,7 +520,7 @@ async function fetchControls(supabase: SupabaseClient) {
         supabase
           .from("purchasing_decision_controls")
           .select(
-            "sku,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
+            "sku,sku_factory,product_name_override,main_name_override,supplier_override,item_status_override,tags_override,demand_index_override,safety_days,lead_time_days,order_cycle_days,manual_rop_units,target_coverage_days,hide_from_purchasing,hide_reason,note",
           )
           .order("sku", { ascending: true })
           .range(from, to),
@@ -983,7 +997,7 @@ function selectedTagsFromParam(tag: string | string[]) {
 }
 
 export async function getPurchasingDecisionData({
-  limit = 120,
+  limit = 300,
   q = "",
   supplier = "all",
   tag = "all",
@@ -1210,6 +1224,8 @@ export async function getPurchasingDecisionData({
     return [
       {
         sku,
+        familySku: familySkuFromSku(sku),
+        skuFactory: compactText(control?.sku_factory),
         productName: resolvedProductName,
         shopifyProductName,
         mainName: resolvedMainName,

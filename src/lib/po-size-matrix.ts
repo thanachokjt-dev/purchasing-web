@@ -46,6 +46,37 @@ export type MatrixItemLike = {
   variantTitle?: string | null;
 };
 
+const GLOVE_OUNCE_SIZES = new Set([4, 6, 8, 10, 12, 14, 16, 18]);
+
+function matrixItemContext(item: MatrixItemLike) {
+  const tags = Array.isArray(item.tags) ? item.tags.join(" ") : "";
+  return [
+    item.productName,
+    item.productTitle,
+    item.variantTitle,
+    item.fullName,
+    item.sku,
+    tags,
+  ].join(" ").toLowerCase();
+}
+
+function hasGloveContext(item: MatrixItemLike) {
+  return /\b(?:gloves?|boxing gloves?|muay thai gloves?|mma gloves?|mtg)\b/.test(
+    matrixItemContext(item),
+  );
+}
+
+function normalizeMatrixItemSize(value: string, item: MatrixItemLike) {
+  const normalized = normalizeMatrixSize(value);
+  if (/^\d{1,2}$/.test(normalized) && hasGloveContext(item)) {
+    const ounceSize = Number(normalized);
+    if (GLOVE_OUNCE_SIZES.has(ounceSize)) {
+      return `${ounceSize} Oz`;
+    }
+  }
+  return normalized;
+}
+
 export function normalizeMatrixSize(value: string) {
   const clean = value.trim();
   if (!clean) {
@@ -87,7 +118,7 @@ export function matrixItemSize(item: MatrixItemLike) {
   for (const source of sources) {
     const match = String(source ?? "").match(sizePattern);
     if (match?.[1]) {
-      return normalizeMatrixSize(match[1]);
+      return normalizeMatrixItemSize(match[1], item);
     }
   }
 
@@ -157,18 +188,12 @@ export function matrixFamilyLabel(family: MatrixFamily) {
 
 export function matrixItemFamily(item: MatrixItemLike): MatrixFamily {
   const size = matrixItemSize(item);
-  const tags = Array.isArray(item.tags) ? item.tags.join(" ") : "";
   const context = [
-    item.productName,
-    item.productTitle,
-    item.variantTitle,
-    item.fullName,
-    item.sku,
+    matrixItemContext(item),
     matrixSectionName(item, ""),
-    tags,
   ].join(" ").toLowerCase();
 
-  if (/\b(glove|boxing glove|muay thai glove|mma glove|mtg)\b/.test(context) || /^\d+\s*Oz$/i.test(size)) {
+  if (hasGloveContext(item) || /^\d+\s*Oz$/i.test(size)) {
     return "glove";
   }
   if (/\b(shin guard|shinguard|protective|sg)\b/.test(context) && PROTECTIVE_SIZE_ORDER.includes(size)) {

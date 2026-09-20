@@ -17,8 +17,28 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 export type PoActionState = {
   ok: boolean;
   message: string;
+  draftLines?: Array<{
+    currency: string;
+    freightUnitCost: number;
+    fullName: string;
+    itemUuid: string;
+    landedUnitCost: number;
+    lineAmount: number;
+    lineNo: string;
+    productTitle: string;
+    qty: number;
+    remark: string;
+    sku: string;
+    sortPosition: number;
+    unitPrice: number;
+    unitPriceSource: string;
+    unitPriceSourceDate: string;
+    unitPriceSourcePoReference: string;
+    variantTitle: string;
+  }>;
   poId?: string;
   headerPurpose?: string;
+  header?: Record<string, string>;
   paymentErrors?: Record<string, string>;
   payments?: PoPaymentDisplayRow[];
   repricedLines?: Array<{
@@ -375,39 +395,6 @@ function xeroStatus(value: string) {
   return value === "draft" || value === "uploaded" ? value : "pending";
 }
 
-async function paymentRowsForPo(
-  supabase: ReturnType<typeof actionClient>,
-  poId: string,
-) {
-  const columns =
-    "id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at,updated_at";
-  const query = await supabase
-    .from("po_payments")
-    .select(columns)
-    .eq("po_id", poId);
-
-  if (!query.error) {
-    return sortPoPayments((query.data ?? []) as PoPaymentDisplayRow[]);
-  }
-
-  if (!schemaColumnMiss(query.error.message)) {
-    throw new Error(query.error.message);
-  }
-
-  const fallbackQuery = await supabase
-    .from("po_payments")
-    .select(
-      "id,po_id,payment_date,payment_type,payment_status,xero_status,due_date,amount,exchange_rate,amount_thb,currency,paid_by,reference,note,created_at",
-    )
-    .eq("po_id", poId);
-
-  if (fallbackQuery.error) {
-    throw new Error(fallbackQuery.error.message);
-  }
-
-  return sortPoPayments((fallbackQuery.data ?? []) as PoPaymentDisplayRow[]);
-}
-
 function normalizedCurrency(value: string | null | undefined) {
   return String(value || "THB").trim().toUpperCase();
 }
@@ -494,10 +481,13 @@ function actionClient() {
   return supabase;
 }
 
-function refreshPoViews(poId?: string | null) {
+function refreshPoViews(
+  poId?: string | null,
+  { detail = true }: { detail?: boolean } = {},
+) {
   revalidatePath("/po");
   revalidatePath("/");
-  if (poId) {
+  if (poId && detail) {
     revalidatePath(`/po/${encodeURIComponent(poId)}`);
   }
 }
@@ -941,6 +931,7 @@ export async function updatePoHeaderRefsAction(
       .select(
         [
           "work_status",
+          "updated_at",
           "source_payload",
           "header_purpose",
           "quotation_reference",
@@ -960,6 +951,7 @@ export async function updatePoHeaderRefsAction(
         .select(
           [
             "work_status",
+            "updated_at",
             "source_payload",
             "quotation_reference",
             "supplier_invoice_no",
@@ -982,6 +974,7 @@ export async function updatePoHeaderRefsAction(
       throw new Error(`PO ${poId} does not exist`);
     }
     const currentOrderRow = currentOrder as {
+      updated_at?: string;
       actual_received_date?: string | null;
       estimated_arrived_date?: string | null;
       estimated_delivery_date?: string | null;
@@ -1029,31 +1022,46 @@ export async function updatePoHeaderRefsAction(
       String(currentOrderRow.actual_received_date ?? "").trim() ||
       headerText("actualReceivedDate");
     const submittedHeaderPurpose = optionalText(formData, "headerPurpose");
+    const baseline = optionalText(formData, "expectedHeader");
+    if (!quickCommentOnly && baseline) {
+      const expected = JSON.parse(baseline) as Record<string, string>;
+      const current = {
+        headerPurpose: preservedHeaderPurpose,
+        quotationReference: preservedQuotationReference,
+        supplierInvoiceNo: preservedSupplierInvoiceNo,
+        estimatedDeliveryDate: preservedEstimatedDeliveryDate,
+        estimatedArrivedDate: preservedEstimatedArrivedDate,
+        actualReceivedDate: preservedActualReceivedDate,
+      };
+      if (Object.entries(current).some(([key, value]) => value !== (expected[key] ?? "").trim())) {
+        throw new Error("Header changed in another session. Your edits are still here. Reload this PO and review the latest header before saving again.");
+      }
+    }
     const submittedQuotationReference = optionalText(formData, "quotationReference");
     const submittedSupplierInvoiceNo = optionalText(formData, "supplierInvoiceNo");
     const updatePayload: Record<string, string | null> = {
       header_purpose:
-        quickCommentOnly && !submittedHeaderPurpose
+        quickCommentOnly
           ? preservedHeaderPurpose || null
           : submittedHeaderPurpose,
       quotation_reference:
-        quickCommentOnly && !submittedQuotationReference
+        quickCommentOnly
           ? preservedQuotationReference || null
           : submittedQuotationReference,
       supplier_invoice_no:
-        quickCommentOnly && !submittedSupplierInvoiceNo
+        quickCommentOnly
           ? preservedSupplierInvoiceNo || null
           : submittedSupplierInvoiceNo,
       estimated_delivery_date:
-        quickCommentOnly && !estimatedDeliveryDate
+        quickCommentOnly
           ? preservedEstimatedDeliveryDate || null
           : estimatedDeliveryDate,
       estimated_arrived_date:
-        quickCommentOnly && !estimatedArrivedDate
+        quickCommentOnly
           ? preservedEstimatedArrivedDate || null
           : estimatedArrivedDate,
       actual_received_date:
-        quickCommentOnly && !actualReceivedDate
+        quickCommentOnly
           ? preservedActualReceivedDate || null
           : actualReceivedDate,
       updated_at: new Date().toISOString(),
@@ -1062,10 +1070,13 @@ export async function updatePoHeaderRefsAction(
       updatePayload.supplier_discussion_note = appendedSupplierNote;
     }
 
-    const { error } = await supabase
+    const { data: updatedOrder, error } = await supabase
       .from("po_orders")
       .update(updatePayload)
-      .eq("po_id", poId);
+      .eq("po_id", poId)
+      .eq("updated_at", currentOrderRow.updated_at!)
+      .select("po_id")
+      .single();
     if (error) {
       if (!schemaColumnMiss(error.message)) {
         throw new Error(error.message);
@@ -1101,11 +1112,15 @@ export async function updatePoHeaderRefsAction(
           },
           updated_at: updatePayload.updated_at,
         })
-        .eq("po_id", poId);
+        .eq("po_id", poId)
+        .eq("updated_at", currentOrderRow.updated_at!)
+        .select("po_id")
+        .single();
       if (fallbackUpdate.error) {
         throw new Error(fallbackUpdate.error.message);
       }
     }
+    if (!error && !updatedOrder) throw new Error("PO changed while saving. Please try again.");
 
     if (supplierDiscussionNote) {
       await supabase.from("po_status_events").insert({
@@ -1120,6 +1135,15 @@ export async function updatePoHeaderRefsAction(
     return {
       ...success("Saved PO header"),
       headerPurpose: updatePayload.header_purpose ?? "",
+      header: {
+        headerPurpose: updatePayload.header_purpose ?? "",
+        quotationReference: updatePayload.quotation_reference ?? "",
+        supplierInvoiceNo: updatePayload.supplier_invoice_no ?? "",
+        estimatedDeliveryDate: updatePayload.estimated_delivery_date ?? "",
+        estimatedArrivedDate: updatePayload.estimated_arrived_date ?? "",
+        actualReceivedDate: updatePayload.actual_received_date ?? "",
+        supplierDiscussionNote: "",
+      },
       supplierDiscussionNote: appendedSupplierNote ?? "",
     };
   } catch (error) {
@@ -1651,20 +1675,6 @@ export async function updatePoDraftLinesAction(
       throw new Error("No PO lines to update");
     }
 
-    const existingItemIds = itemUuids.filter(Boolean);
-    const existingItemsResult = existingItemIds.length
-      ? await supabase
-          .from("po_items")
-          .select("id,unit_price,source_payload")
-          .eq("po_id", poId)
-          .in("id", existingItemIds)
-      : { data: [], error: null };
-    if (existingItemsResult.error) {
-      throw new Error(existingItemsResult.error.message);
-    }
-    const existingItemById = new Map(
-      (existingItemsResult.data ?? []).map((item) => [String(item.id), item]),
-    );
     const draftSkus = new Set(
       itemUuids.flatMap((itemUuid, index) => {
         const sku = skus[index]?.toLowerCase();
@@ -1686,19 +1696,8 @@ export async function updatePoDraftLinesAction(
       draftSkus.add(normalizedSku);
     });
 
-    if (deleteItemUuids.size > 0) {
-      const { error } = await supabase
-        .from("po_items")
-        .delete()
-        .eq("po_id", poId)
-        .in("id", Array.from(deleteItemUuids));
-      if (error) {
-        throw new Error(error.message);
-      }
-    }
-
     let nextLineNo = 1;
-    const batchStamp = new Date().toISOString().replace(/\D/g, "").slice(0, 17);
+    const rows: Array<Record<string, unknown>> = [];
     for (const [index, itemUuid] of itemUuids.entries()) {
       if (deleteItemUuids.has(itemUuid)) {
         continue;
@@ -1717,92 +1716,69 @@ export async function updatePoDraftLinesAction(
       );
       const currency = (currencyValues[index] || "THB").toUpperCase();
       const landedUnitCost = unitPrice + freightUnitCost;
-
-      if (!itemUuid) {
-        const lineNo = String(nextLineNo);
-        const { error } = await supabase.from("po_items").insert({
-          po_item_id: `${poId}-${batchStamp}-${index + 1}`,
-          po_id: poId,
-          line_no: lineNo,
-          sort_position: nextLineNo,
-          sku,
-          product_title_snapshot: productTitles[index] || sku,
-          variant_title_snapshot: variantTitles[index] || null,
-          ordered_qty: orderedQty,
-          unit_price: unitPrice,
-          freight_unit_cost: freightUnitCost,
-          landed_unit_cost: landedUnitCost,
-          line_amount: orderedQty * unitPrice,
-          currency,
-          remark: remarkValues[index] || null,
-          full_name: productTitles[index] || sku,
-          line_status: "draft",
-          source: "web_app",
-          source_payload: {
-            unitPriceSource: "manual",
-            unitPriceSourceDate: null,
-            unitPriceSourcePoId: null,
-            unitPriceSourcePoReference: null,
-          },
-          updated_at: new Date().toISOString(),
-        });
-        if (error) {
-          throw new Error(error.message);
-        }
-        nextLineNo += 1;
-        continue;
-      }
-
-      const existingItem = existingItemById.get(itemUuid);
-      const existingUnitPrice = Number(existingItem?.unit_price ?? 0);
-      const sourcePayload =
-        existingItem?.source_payload &&
-        typeof existingItem.source_payload === "object" &&
-        !Array.isArray(existingItem.source_payload)
-          ? (existingItem.source_payload as Record<string, unknown>)
-          : {};
-      const nextSourcePayload =
-        Math.abs(existingUnitPrice - unitPrice) > 0.0000001
-          ? {
-              ...sourcePayload,
-              unitPriceSource: "manual",
-              unitPriceSourceDate: null,
-              unitPriceSourcePoId: null,
-              unitPriceSourcePoReference: null,
-            }
-          : sourcePayload;
-
-      const { error } = await supabase
-        .from("po_items")
-        .update({
-          sku,
-          product_title_snapshot: productTitles[index] || sku,
-          variant_title_snapshot: variantTitles[index] || null,
-          full_name: productTitles[index] || sku,
-          line_no: String(nextLineNo),
-          sort_position: nextLineNo,
-          ordered_qty: orderedQty,
-          unit_price: unitPrice,
-          freight_unit_cost: freightUnitCost,
-          landed_unit_cost: landedUnitCost,
-          line_amount: orderedQty * unitPrice,
-          currency,
-          remark: remarkValues[index] || null,
-          source_payload: nextSourcePayload,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", itemUuid)
-        .eq("po_id", poId);
-
-      if (error) {
-        throw new Error(error.message);
-      }
+      rows.push({
+        id: itemUuid || null,
+        po_id: poId,
+        line_no: String(nextLineNo),
+        sort_position: nextLineNo,
+        sku,
+        product_title_snapshot: productTitles[index] || sku,
+        variant_title_snapshot: variantTitles[index] || null,
+        ordered_qty: orderedQty,
+        unit_price: unitPrice,
+        freight_unit_cost: freightUnitCost,
+        landed_unit_cost: landedUnitCost,
+        line_amount: orderedQty * unitPrice,
+        currency,
+        remark: remarkValues[index] || null,
+        full_name: productTitles[index] || sku,
+      });
       nextLineNo += 1;
     }
 
-    await recalculatePoAmount(poId);
-    refreshPoViews(poId);
-    return success(`Saved draft details for ${nextLineNo - 1} lines`);
+    const { data: savedRows, error: saveError } = await supabase.rpc(
+      "save_po_draft_lines",
+      {
+        p_delete_ids: Array.from(deleteItemUuids),
+        p_po_id: poId,
+        p_rows: rows,
+      },
+    );
+    if (saveError) {
+      throw new Error(saveError.message);
+    }
+
+    const draftLines = ((savedRows ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const sourcePayload =
+        row.source_payload && typeof row.source_payload === "object" && !Array.isArray(row.source_payload)
+          ? (row.source_payload as Record<string, unknown>)
+          : {};
+      return {
+        currency: String(row.currency ?? "THB"),
+        freightUnitCost: Number(row.freight_unit_cost ?? 0),
+        fullName: String(row.full_name ?? ""),
+        itemUuid: String(row.id ?? ""),
+        landedUnitCost: Number(row.landed_unit_cost ?? 0),
+        lineAmount: Number(row.line_amount ?? 0),
+        lineNo: String(row.line_no ?? ""),
+        productTitle: String(row.product_title_snapshot ?? row.sku ?? ""),
+        qty: Number(row.ordered_qty ?? 0),
+        remark: String(row.remark ?? ""),
+        sku: String(row.sku ?? ""),
+        sortPosition: Number(row.sort_position ?? 0),
+        unitPrice: Number(row.unit_price ?? 0),
+        unitPriceSource: String(sourcePayload.unitPriceSource ?? ""),
+        unitPriceSourceDate: String(sourcePayload.unitPriceSourceDate ?? ""),
+        unitPriceSourcePoReference: String(sourcePayload.unitPriceSourcePoReference ?? ""),
+        variantTitle: String(row.variant_title_snapshot ?? ""),
+      };
+    });
+
+    refreshPoViews(poId, { detail: false });
+    return {
+      ...success(`Saved draft details for ${draftLines.length} lines`),
+      draftLines,
+    };
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Save draft failed");
   }
@@ -2258,14 +2234,9 @@ export async function updatePoPaymentsAction(
         paymentErrors[rowKey] = message;
         throw Object.assign(new Error(message), { paymentErrors });
       }
-      const paymentDate =
-        submittedPaymentDate ||
-        existingPayment?.paymentDate ||
-        (status === "paid" ? today : null);
-      const dueDate = submittedDueDate || existingPayment?.dueDate || null;
-      const hasContent =
-        Boolean(rawId) ||
-        amount > 0;
+      const paymentDate = submittedPaymentDate || (status === "paid" ? today : null);
+      const dueDate = submittedDueDate || null;
+      const hasContent = Boolean(rawId) || amount > 0 || Boolean(rowInput.type);
 
       if (!hasContent) {
         continue;
@@ -2289,31 +2260,17 @@ export async function updatePoPaymentsAction(
       paymentRowsToSave.push({ rawId, row });
     }
 
-    if (deleteIds.size > 0) {
-      const { error } = await supabase
-        .from("po_payments")
-        .delete()
-        .eq("po_id", poId)
-        .in("id", Array.from(deleteIds));
-      if (error) {
-        throw new Error(error.message);
-      }
-    }
-
-    // TODO: move this multi-row delete/update/insert flow into a DB transaction/RPC for stronger all-or-nothing guarantees.
-    for (const { rawId, row } of paymentRowsToSave) {
-      const { error } = rawId
-        ? await supabase.from("po_payments").update(row).eq("id", rawId).eq("po_id", poId)
-        : await supabase.from("po_payments").insert(row);
-      if (error) {
-        throw new Error(error.message);
-      }
-      savedCount += 1;
-    }
-
-    await recalculatePoAmount(poId);
-    const payments = await paymentRowsForPo(supabase, poId);
-    refreshPoViews(poId);
+    const expected = formText(formData, "expectedPayments");
+    const { data: savedPayments, error: saveError } = await supabase.rpc("save_po_payments", {
+      p_po_id: poId,
+      p_rows: paymentRowsToSave.map(({ rawId, row }) => ({ ...row, id: rawId || null })),
+      p_delete_ids: Array.from(deleteIds),
+      p_expected: expected ? JSON.parse(expected) : null,
+    });
+    if (saveError) throw new Error(saveError.message);
+    savedCount = paymentRowsToSave.length;
+    const payments = sortPoPayments((savedPayments ?? []) as PoPaymentDisplayRow[]);
+    refreshPoViews(poId, { detail: false });
     return { ...success(`Saved ${savedCount} payment rows`), payments };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Save payments failed";
