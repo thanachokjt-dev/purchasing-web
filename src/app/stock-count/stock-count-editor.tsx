@@ -165,6 +165,9 @@ export function StockCountEditor({
           <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export`}>
             <Download size={16} /> Export CSV
           </a>
+          <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export-pdf`}>
+            <Download size={16} /> Export PDF
+          </a>
           <a
             className={`${buttonClass} border border-[#8bc6a2] bg-[#edf8f1] text-[#1f6b3d]`}
             href={`/api/stock-count/${session.id}/export-shopify`}
