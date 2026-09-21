@@ -41,3 +41,15 @@ test("numeric non-glove variants remain numeric child sizes", () => {
   assert.equal(matrixItemSize(childItem), "6");
   assert.equal(matrixItemFamily(childItem), "child-numeric");
 });
+
+test("4XL is recognized as an apparel size", () => {
+  const item = {
+    productTitle: "Training Shirt",
+    variantTitle: "Black / 4XL",
+    sku: "SHIRT-BLK-4XL",
+    tags: ["T-Shirts"],
+  };
+
+  assert.equal(matrixItemSize(item), "4XL");
+  assert.equal(matrixItemFamily(item), "apparel");
+});

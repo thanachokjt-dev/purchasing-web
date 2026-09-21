@@ -31,6 +31,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
     { href: "/payment-requests?view=history", key: "approval-history", label: "Approval History" },
   ],
   retail_manager: [
+    { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
     { href: "/payment-requests?view=retail-review", key: "retail-review", label: "Retail Review" },
     { href: "/payment-requests?view=history", key: "review-history", label: "Review History" },
   ],
@@ -43,6 +44,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
     { href: "/po", key: "po", label: "PO Portal" },
     { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
     { href: "/purchasing-decision", key: "reorder", label: "Reorder Planning" },
+    { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
     {
       href: "/new-product-opening-buy-planner",
       key: "new-product-planner",
@@ -75,13 +77,20 @@ export function navItemsForRole(role: UserRole) {
 
 export function navItemsForUser(profile: CurrentUserProfile) {
   if (canViewIncomingEtaOnly(profile.email)) {
-    return [{ href: "/po", key: "po", label: "PO Portal" }];
+    return getProfileAccessRole(profile) === "warehouse_staff"
+      ? [
+          { href: "/po", key: "po", label: "PO Portal" },
+          { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
+        ]
+      : [{ href: "/po", key: "po", label: "PO Portal" }];
   }
   if (getProfileAccessRole(profile) === "dashboard_only") {
     return [{ href: "/dashboard", key: "dashboard", label: "Dashboard" }];
   }
   if (getProfileAccessRole(profile) === "executive_readonly") {
-    return navByRole.super_admin.filter((item) => item.key !== "cost-price-monitor");
+    return navByRole.super_admin.filter(
+      (item) => item.key !== "cost-price-monitor" && item.key !== "stock-count",
+    );
   }
 
   return navByRole[profile.role];

@@ -12,6 +12,7 @@ export const SIZE_PATTERN = [
   "6\\s*Oz",
   "4\\s*Oz",
   "One\\s*Size",
+  "4XL",
   "3XL",
   "2XL",
   "XXL",
@@ -252,7 +253,7 @@ export function sizeSortRank(size: string, family: MatrixFamily) {
 
 export function sortMatrixSizes(sizes: string[], family: MatrixFamily) {
   return Array.from(new Set(sizes.filter(Boolean))).sort(
-    (a, b) => sizeSortRank(a, family) - sizeSortRank(b, family) || a.localeCompare(b),
+    (a, b) => sizeSortRank(a, family) - sizeSortRank(b, family) || (a < b ? -1 : a > b ? 1 : 0),
   );
 }
 
