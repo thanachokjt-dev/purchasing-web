@@ -41,12 +41,34 @@ const lines = [
     tags: ["training", "shirt"],
     countedQty: 0,
   },
+  {
+    id: "line-glove",
+    family: "glove",
+    productGroupKey: "muay-thai-gloves::glove::origin",
+    productName: "Origin Gloves",
+    sectionName: "MUAY THAI GLOVES",
+    size: "12 OZ",
+    sku: "ORIGIN-12",
+    tags: ["muay thai gloves"],
+    countedQty: 7,
+  },
 ];
 
-test("CSV round-trip preserves blank as null and zero as counted", () => {
+test("CSV uses PO-style section blocks and section-specific size columns", () => {
+  const csv = serializeStockCountCsv(lines);
+  const rows = parseCsv(csv);
+  assert.deepEqual(rows[0], ["MUAY THAI GLOVES · GLOVES"]);
+  assert.deepEqual(rows[1], ["PRODUCT", "12 OZ", "TOTAL", "GROUP KEY"]);
+  assert.ok(rows.some((row) => row[0] === "MUAY THAI GLOVES · GLOVES TOTAL"));
+  assert.ok(rows.some((row) => row[0] === "TOPS · APPAREL"));
+  assert.ok(rows.some((row) => row.join("|") === "PRODUCT|S|M|TOTAL|GROUP KEY"));
+});
+
+test("CSV round-trip preserves blank, zero, and positive counts", () => {
   const csv = serializeStockCountCsv(lines);
   const values = stockCountValuesFromCsv(csv, lines);
   assert.deepEqual(values, [
+    { lineId: "line-glove", countedQty: 7 },
     { lineId: "line-s", countedQty: null },
     { lineId: "line-m", countedQty: 0 },
   ]);
@@ -61,6 +83,21 @@ test("CSV parser handles quoted commas, quotes, and newlines", () => {
 });
 
 test("CSV import rejects negative and fractional counts", () => {
-  const csv = serializeStockCountCsv(lines).replace(',"","0"', ',"-1","1.5"');
+  const csv = [
+    '"TOPS · APPAREL"',
+    '"PRODUCT","S","M","TOTAL","GROUP KEY"',
+    '"Alpha, Training Shirt","-1","1.5","","tops::apparel::alpha"',
+  ].join("\r\n");
   assert.throws(() => stockCountValuesFromCsv(csv, lines), /whole number 0 or greater/);
+});
+
+test("CSV import remains compatible with the original flat export", () => {
+  const csv = [
+    '"Section","Family","Product","Tags","Group Key","S","M"',
+    '"TOPS","apparel","Alpha, Training Shirt","training; shirt","tops::apparel::alpha","3",""',
+  ].join("\r\n");
+  assert.deepEqual(stockCountValuesFromCsv(csv, lines), [
+    { lineId: "line-s", countedQty: 3 },
+    { lineId: "line-m", countedQty: null },
+  ]);
 });
