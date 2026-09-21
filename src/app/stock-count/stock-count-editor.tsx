@@ -148,6 +148,12 @@ export function StockCountEditor({
     });
   }
 
+  function requireSavedExport(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (!dirty.size) return;
+    event.preventDefault();
+    setMessage(`Save ${dirty.size} pending count cell${dirty.size === 1 ? "" : "s"} before exporting to Shopify.`);
+  }
+
   return (
     <div className="grid gap-4">
       <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#d7dee7] bg-white/95 p-3 shadow-sm backdrop-blur">
@@ -158,6 +164,13 @@ export function StockCountEditor({
         <div className="flex flex-wrap gap-2">
           <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export`}>
             <Download size={16} /> Export CSV
+          </a>
+          <a
+            className={`${buttonClass} border border-[#8bc6a2] bg-[#edf8f1] text-[#1f6b3d]`}
+            href={`/api/stock-count/${session.id}/export-shopify`}
+            onClick={requireSavedExport}
+          >
+            <Download size={16} /> Export to Shopify
           </a>
           {isEditable ? (
             <>

@@ -149,6 +149,14 @@ export function serializeStockCountCsv(lines: StockCountCsvLine[]) {
   return `\uFEFF${rows.join("\r\n")}`;
 }
 
+export function serializeShopifyStockCountCsv(lines: StockCountCsvLine[]) {
+  const countedLines = lines.filter((line) => line.countedQty !== null);
+  return `\uFEFF${[
+    csvRow(["SKU", "Quantity"]),
+    ...countedLines.map((line) => csvRow([line.sku, line.countedQty])),
+  ].join("\r\n")}`;
+}
+
 export function parseCsv(text: string) {
   const rows: string[][] = [];
   let row: string[] = [];

@@ -16,7 +16,12 @@ const sizeMatrixUrl = await moduleFromTypeScript("./po-size-matrix.ts");
 const csvUrl = await moduleFromTypeScript("./stock-count-csv.ts", [
   ["@/lib/po-size-matrix", sizeMatrixUrl],
 ]);
-const { parseCsv, serializeStockCountCsv, stockCountValuesFromCsv } = await import(csvUrl);
+const {
+  parseCsv,
+  serializeShopifyStockCountCsv,
+  serializeStockCountCsv,
+  stockCountValuesFromCsv,
+} = await import(csvUrl);
 
 const lines = [
   {
@@ -99,5 +104,13 @@ test("CSV import remains compatible with the original flat export", () => {
   assert.deepEqual(stockCountValuesFromCsv(csv, lines), [
     { lineId: "line-s", countedQty: 3 },
     { lineId: "line-m", countedQty: null },
+  ]);
+});
+
+test("Shopify CSV contains only counted SKU quantities and preserves zero", () => {
+  assert.deepEqual(parseCsv(serializeShopifyStockCountCsv(lines)), [
+    ["SKU", "Quantity"],
+    ["ALPHA-M", "0"],
+    ["ORIGIN-12", "7"],
   ]);
 });
