@@ -74,3 +74,33 @@ test("duplicate product and size combinations keep every SKU", () => {
   assert.equal(lines[0].product_name, "Training Shirt");
   assert.match(lines[1].product_name, /\[SHIRT-S-NEW\]/);
 });
+
+test("explicit coded and package sizes stay in columns instead of becoming duplicate one-size rows", () => {
+  const belt = { product_title: "BT - BJJ Belt", product_type: "", tags: ["Training Tops"], status: "active" };
+  const supplement = { product_title: "Fruiting Body", product_type: "", tags: ["Supplement"], status: "active" };
+  const protein = { product_title: "ISO - PRO Banana", product_type: "Supplement", tags: ["Supplement"], status: "active" };
+  const lines = buildStockCountCatalogSnapshot([
+    row({ sku: "BT-BELT-BLK-A0", variant_title: "Black / A0", option1_name: "Color", option1_value: "Black", option2_name: "Size", option2_value: "A0", products: belt }),
+    row({ sku: "BT-BELT-BLK-A1", variant_title: "Black / A1", option1_name: "Color", option1_value: "Black", option2_name: "Size", option2_value: "A1", products: belt }),
+    row({ sku: "FB-CHAG-60", variant_title: "Chaga / 60 Caps", option1_name: "Type", option1_value: "Chaga", option2_name: "Size", option2_value: "60 Caps", products: supplement }),
+    row({ sku: "FB-CHAG-90", variant_title: "Chaga / 90 Caps", option1_name: "Type", option1_value: "Chaga", option2_name: "Size", option2_value: "90 Caps", products: supplement }),
+    row({ sku: "FB-CHAG-120", variant_title: "Chaga / 120 Caps", option1_name: "Type", option1_value: "Chaga", option2_name: "Size", option2_value: "120 Caps", products: supplement }),
+    row({ sku: "ISOP-BANANA-2LB", variant_title: "2LB", option1_name: "Size", option1_value: "2LB", products: protein }),
+    row({ sku: "ISOP-BANANA-5LB", variant_title: "5LB", option1_name: "Size", option1_value: "5LB", products: protein }),
+  ]);
+
+  assert.deepEqual(lines.map((line) => [line.product_name, line.size, line.family]), [
+    ["Fruiting Body - Chaga", "60 CAPS", "unknown"],
+    ["Fruiting Body - Chaga", "90 CAPS", "unknown"],
+    ["Fruiting Body - Chaga", "120 CAPS", "unknown"],
+    ["ISO - PRO Banana", "2 LB", "unknown"],
+    ["ISO - PRO Banana", "5 LB", "unknown"],
+    ["BT - BJJ Belt - Black", "A0", "unknown"],
+    ["BT - BJJ Belt - Black", "A1", "unknown"],
+  ]);
+  assert.equal(new Set(lines.slice(0, 3).map((line) => line.product_group_key)).size, 1);
+  assert.ok(lines.slice(0, 5).every((line) => line.section_name === "Supplement"));
+  assert.equal(new Set(lines.slice(3, 5).map((line) => line.product_group_key)).size, 1);
+  assert.equal(new Set(lines.slice(5).map((line) => line.product_group_key)).size, 1);
+  assert.ok(lines.every((line) => !line.product_name.includes("[")));
+});

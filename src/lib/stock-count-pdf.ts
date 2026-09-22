@@ -93,6 +93,13 @@ function fitText(font: PDFFont, value: string, size: number, maxWidth: number) {
   return `${result}${suffix}`;
 }
 
+function fittingFontSize(font: PDFFont, value: string, preferred: number, minimum: number, maxWidth: number) {
+  const clean = supportedText(font, value);
+  let size = preferred;
+  while (size > minimum && font.widthOfTextAtSize(clean, size) > maxWidth) size -= 0.25;
+  return Math.max(minimum, size);
+}
+
 function drawCell(
   page: PDFPage,
   x: number,
@@ -165,7 +172,8 @@ export async function createStockCountPdf({
     section.sizes.forEach((size, index) => {
       const x = MARGIN + productWidth + sizeWidth * index;
       drawCell(page, x, cursorY, sizeWidth, HEADER_HEIGHT, headerFill);
-      drawCenteredText(page, bold, size, Math.max(5.5, Math.min(7, sizeWidth / 7)), x, cursorY - 16, sizeWidth);
+      const headerSize = fittingFontSize(bold, size, Math.min(7, sizeWidth / 7), 4.25, sizeWidth - 6);
+      drawCenteredText(page, bold, size, headerSize, x, cursorY - 16, sizeWidth);
     });
     cursorY -= HEADER_HEIGHT;
     return { productWidth, sizeWidth };
@@ -201,7 +209,8 @@ export async function createStockCountPdf({
         const line = product.linesBySize.get(size);
         drawCell(page, x, cursorY, dimensions.sizeWidth, ROW_HEIGHT, line ? rowFill : unavailableFill);
         if (line) {
-          drawCenteredText(page, regular, line.sku, Math.max(4, Math.min(5.2, dimensions.sizeWidth / 9)), x, cursorY - ROW_HEIGHT + 5, dimensions.sizeWidth);
+          const skuSize = fittingFontSize(regular, line.sku, Math.min(5.2, dimensions.sizeWidth / 9), 3.25, dimensions.sizeWidth - 6);
+          drawCenteredText(page, regular, line.sku, skuSize, x, cursorY - ROW_HEIGHT + 5, dimensions.sizeWidth);
         } else {
           drawCenteredText(page, regular, "-", 7, x, cursorY - 21, dimensions.sizeWidth);
         }

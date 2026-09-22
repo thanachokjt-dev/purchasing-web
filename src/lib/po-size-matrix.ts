@@ -11,6 +11,7 @@ export const SIZE_PATTERN = [
   "8\\s*Oz",
   "6\\s*Oz",
   "4\\s*Oz",
+  "\\d+(?:\\.\\d+)?\\s*(?:Caps?|Tablets?|Softgels?|Servings?|KG|LB|ML|G)",
   "One\\s*Size",
   "4XL",
   "3XL",
@@ -20,6 +21,7 @@ export const SIZE_PATTERN = [
   "XXS",
   "XS",
   "XL",
+  "[AFM]\\d+(?:[LH])?",
   "K\\d+",
   "\\d{1,2}",
   "Kid",
@@ -94,6 +96,13 @@ export function normalizeMatrixSize(value: string) {
   if (ounce) {
     return `${Number(ounce[1])} Oz`;
   }
+  const packaged = compact.match(/^(\d+(?:\.\d+)?)(CAPS?|TABLETS?|SOFTGELS?|SERVINGS?|KG|LB|ML|G)$/);
+  if (packaged) {
+    return `${packaged[1]} ${packaged[2].toUpperCase()}`;
+  }
+  if (/^[AFM]\d+(?:[LH])?$/i.test(compact)) {
+    return compact;
+  }
   if (/^K\d+$/i.test(compact)) {
     return compact;
   }
@@ -148,7 +157,7 @@ export function matrixSectionName(item: MatrixItemLike, fallback = "Untagged") {
   const categoryFor = (value: string) => {
     const normalized = value.toLowerCase();
     return rules.find(([, keywords]) =>
-      keywords.some((keyword) => normalized.includes(keyword)),
+      keywords.some((keyword) => keyword === "cap" ? /\bcap\b/.test(normalized) : normalized.includes(keyword)),
     )?.[0];
   };
 
@@ -243,6 +252,31 @@ export function sizeSortRank(size: string, family: MatrixFamily) {
   }
   if (family === "child-numeric" || /^\d+$/.test(size)) {
     return Number(size);
+  }
+  const coded = size.match(/^([AFM])(\d+)([LH])?$/i);
+  if (coded) {
+    const prefixRank = { A: 0, F: 1, M: 2 }[coded[1].toUpperCase() as "A" | "F" | "M"];
+    const suffixRank = coded[3]?.toUpperCase() === "L" ? 0.2 : coded[3]?.toUpperCase() === "H" ? 0.4 : 0;
+    return 100 + prefixRank * 20 + Number(coded[2]) + suffixRank;
+  }
+  const packaged = size.match(/^(\d+(?:\.\d+)?)\s*(CAPS?|TABLETS?|SOFTGELS?|SERVINGS?|KG|LB|ML|G)$/i);
+  if (packaged) {
+    const unitRank: Record<string, number> = {
+      CAP: 0,
+      CAPS: 0,
+      TABLET: 1_000,
+      TABLETS: 1_000,
+      SOFTGEL: 2_000,
+      SOFTGELS: 2_000,
+      SERVING: 3_000,
+      SERVINGS: 3_000,
+      G: 4_000,
+      KG: 5_000,
+      ML: 6_000,
+      L: 7_000,
+      LB: 8_000,
+    };
+    return 1_000 + (unitRank[packaged[2].toUpperCase()] ?? 9_000) + Number(packaged[1]);
   }
   const ounce = size.match(/^(\d+)\s*Oz$/i);
   if (ounce) {
