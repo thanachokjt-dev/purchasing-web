@@ -44,7 +44,13 @@ const documentHtml = renderToStaticMarkup(React.createElement(PrintMatrixDocumen
         { label: "Ordered", isManual: false, values: new Map([["S", 731], ["M", 268]]) },
         { label: "Receive round 1", isManual: false, values: new Map([["S", 17], ["M", 23]]) },
         { label: "Receive round 2", isManual: true, values: new Map() },
-      ] }],
+      ] }, {
+        productName: "Second Shorts - White", imageUrl: null, lines: [
+          { label: "Ordered", isManual: false, values: new Map([["M", 431], ["L", 568]]) },
+          { label: "Receive round 1", isManual: false, values: new Map([["M", 29]]) },
+          { label: "Receive round 2", isManual: true, values: new Map() },
+        ],
+      }],
     }],
   },
 }));
@@ -54,32 +60,41 @@ test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ media: "print" });
 });
 
-test("hidden quantities keep the same worksheet, with no ordered values or heat colours", async ({ page }) => {
+test("hidden quantity worksheets have one blank row per product and no receipt rounds", async ({ page }) => {
   const ordered = page.locator('[data-receipt-line="ordered"] .print-receipt-qty');
-  await expect(ordered).toHaveText(["731", "268", "", "999"]);
-  const before = await page.locator("table").boundingBox();
+  await expect(ordered).toHaveText(["731", "268", "", "999", "", "431", "568", "999"]);
   await page.evaluate(() => { document.documentElement.dataset.printHideOrderedQty = "true"; });
   for (const cell of await ordered.all()) await expect(cell).toBeHidden();
   const visibleText = await page.locator("table").innerText();
-  for (const value of ["731", "268", "999"]) expect(visibleText).not.toContain(value);
+  for (const value of ["731", "268", "999", "431", "568", "17", "23", "40", "29"]) {
+    expect(visibleText).not.toContain(value);
+  }
   expect(visibleText).toContain("Test Shorts - Black");
-  expect(visibleText).toContain("Receive round 2");
-  await expect(page.locator("thead th")).toHaveText(["Product", "Image", "Round", "S", "M", "L", "Total"]);
-  for (const cell of await page.locator(".print-receipt-active-size").all()) {
+  expect(visibleText).toContain("Second Shorts - White");
+  expect(visibleText).not.toMatch(/Ordered|Round|Receive round/);
+  await expect(page.locator("thead th:visible")).toHaveText(["Product", "Image", "S", "M", "L", "Total"]);
+  await expect(page.locator("tbody tr:visible")).toHaveCount(2);
+  for (const cell of await page.locator(".print-receipt-size:visible").all()) {
     await expect(cell).toHaveCSS("background-color", "rgb(255, 255, 255)");
   }
-  await expect(page.locator('[data-receipt-line="received"]').first().locator(".print-receipt-qty"))
-    .toHaveText(["17", "23", "", "40"]);
-  await expect(page.locator('[data-receipt-line="received"]').last().locator(".print-receipt-qty"))
-    .toHaveText(["", "", "", ""]);
-  expect(await page.locator("table").boundingBox()).toEqual(before);
+  const rows = await page.locator("tbody tr:visible").all();
+  const [first, second] = await Promise.all(rows.map((row) => row.boundingBox()));
+  expect(first.height).toBeGreaterThanOrEqual(67);
+  expect(second.y).toBeCloseTo(first.y + first.height, 0);
+  expect(second.height).toBeCloseTo(first.height, 0);
   if (process.env.PO_PRINT_QA_DIR) {
     await page.pdf({ path: join(process.env.PO_PRINT_QA_DIR, "goods-receipt-hidden-qty.pdf"), preferCSSPageSize: true, printBackground: true });
   }
   await page.evaluate(() => { delete document.documentElement.dataset.printHideOrderedQty; });
   await expect(ordered.first()).toBeVisible();
+  await expect(page.locator("tbody tr:visible")).toHaveCount(6);
+  await expect(page.locator("thead th:visible")).toHaveText(["Product", "Image", "Round", "S", "M", "L", "Total"]);
+  await expect(page.locator('[data-receipt-line="received"]').first().locator(".print-receipt-qty"))
+    .toHaveText(["17", "23", "", "40"]);
+  await expect(page.locator('[data-receipt-line="received"]').last().locator(".print-receipt-qty"))
+    .toHaveText(["", "", "", ""]);
   expect(await page.locator("table").innerText()).toContain("731");
-  await expect(page.locator(".print-receipt-active-size").first()).not.toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(page.locator(".print-receipt-size").first()).not.toHaveCSS("background-color", "rgb(255, 255, 255)");
 });
 
 test("the print button isolates hidden mode, filenames and cleanup from the normal receipt", async ({ page }) => {

@@ -1773,7 +1773,7 @@ function PrintMatrixDocument({
                     <tr>
                       <th>Product</th>
                       <th>Image</th>
-                      <th>Round</th>
+                      <th className="print-round-label">Round</th>
                       {group.sizes.map((size) => (
                         <th key={size}>{size}</th>
                       ))}
@@ -1819,7 +1819,7 @@ function PrintMatrixDocument({
                                 : qty;
                               return (
                                 <td
-                                  className={styleQty > 0 ? "print-receipt-active-size" : undefined}
+                                  className="print-receipt-size"
                                   key={size}
                                   style={qtyHeatStyle(styleQty, group.maxQty)}
                                 >

@@ -4173,7 +4173,7 @@ export function PrintDocumentButton({
         window.print();
         window.setTimeout(cleanupPrintState, 500);
       }}
-      title={hideOrderedQty ? "Print goods receipt with ordered quantities and totals hidden" : undefined}
+      title={hideOrderedQty ? "Print a blank goods receipt worksheet without quantities or receipt rounds" : undefined}
       type="button"
     >
       <LoadingLabel loading={printing} loadingText="Preparing...">

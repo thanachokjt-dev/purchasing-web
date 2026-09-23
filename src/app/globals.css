@@ -692,13 +692,22 @@ body {
     white-space: nowrap;
   }
 
-  /* Omit the text from PDF output, while keeping the same worksheet cells. */
+  /* Blind counting uses one blank row per product, without receipt history. */
+  html[data-print-hide-ordered-qty="true"] .print-receiving [data-receipt-line="received"],
+  html[data-print-hide-ordered-qty="true"] .print-receiving .print-round-label {
+    display: none;
+  }
+
   html[data-print-hide-ordered-qty="true"] .print-receiving [data-receipt-line="ordered"] .print-receipt-qty {
     visibility: hidden;
   }
 
-  /* Heat colours also reveal ordered quantities. Keep active sizes neutral. */
-  html[data-print-hide-ordered-qty="true"] .print-receiving .print-receipt-active-size {
+  html[data-print-hide-ordered-qty="true"] .print-receiving [data-receipt-line="ordered"] {
+    height: 18mm;
+  }
+
+  /* Keep every counting cell white, without hints from ordered quantities. */
+  html[data-print-hide-ordered-qty="true"] .print-receiving .print-receipt-size {
     background-color: #ffffff !important;
     color: #172026 !important;
   }
