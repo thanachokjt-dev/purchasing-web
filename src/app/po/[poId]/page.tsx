@@ -284,6 +284,13 @@ function WarehouseReceivingPoDetail({
                 poId={order.poId}
                 supplierName={order.supplierName}
               />
+              <PrintDocumentButton
+                hideOrderedQty
+                label="Hidden Qty"
+                mode="receiving"
+                poId={order.poId}
+                supplierName={order.supplierName}
+              />
             </div>
           </div>
         </header>
@@ -1458,12 +1465,21 @@ export default async function PoDetailPage({
                 Receive against active lines and keep status changes line-level.
               </p>
             </div>
-            <PrintDocumentButton
-              label="Goods Receipt"
-              mode="receiving"
-              poId={order.poId}
-              supplierName={order.supplierName}
-            />
+            <div className="flex flex-wrap gap-2">
+              <PrintDocumentButton
+                label="Goods Receipt"
+                mode="receiving"
+                poId={order.poId}
+                supplierName={order.supplierName}
+              />
+              <PrintDocumentButton
+                hideOrderedQty
+                label="Hidden Qty"
+                mode="receiving"
+                poId={order.poId}
+                supplierName={order.supplierName}
+              />
+            </div>
           </div>
           {data.source === "supabase" && allowReceivePo ? (
             <BatchReceiveFormBar
@@ -1774,7 +1790,10 @@ function PrintMatrixDocument({
                         );
 
                         return (
-                          <tr key={`${group.label}-${row.productName}-${line.label}`}>
+                          <tr
+                            data-receipt-line={line.label === "Ordered" ? "ordered" : "received"}
+                            key={`${group.label}-${row.productName}-${line.label}`}
+                          >
                             {lineIndex === 0 ? (
                               <>
                                 <td rowSpan={rowSpan}>{row.productName}</td>
@@ -1799,12 +1818,18 @@ function PrintMatrixDocument({
                                 ? row.lines[0]?.values.get(size) ?? 0
                                 : qty;
                               return (
-                                <td key={size} style={qtyHeatStyle(styleQty, group.maxQty)}>
-                                  {line.isManual ? "" : qty || ""}
+                                <td
+                                  className={styleQty > 0 ? "print-receipt-active-size" : undefined}
+                                  key={size}
+                                  style={qtyHeatStyle(styleQty, group.maxQty)}
+                                >
+                                  <span className="print-receipt-qty">{line.isManual ? "" : qty || ""}</span>
                                 </td>
                               );
                             })}
-                            <td>{line.isManual ? "" : lineTotal || ""}</td>
+                            <td>
+                              <span className="print-receipt-qty">{line.isManual ? "" : lineTotal || ""}</span>
+                            </td>
                           </tr>
                         );
                       })}

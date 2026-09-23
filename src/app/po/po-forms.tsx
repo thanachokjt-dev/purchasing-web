@@ -4122,11 +4122,13 @@ export function BatchReceiveLineFields({
 }
 
 export function PrintDocumentButton({
+  hideOrderedQty = false,
   label,
   mode,
   poId,
   supplierName,
 }: {
+  hideOrderedQty?: boolean;
   label: string;
   mode: "quote" | "receiving";
   poId: string;
@@ -4137,9 +4139,12 @@ export function PrintDocumentButton({
   return (
     <button
       className="inline-flex h-10 items-center justify-center rounded-md bg-[#172026] px-4 text-sm font-semibold text-white"
+      disabled={printing}
       onClick={async () => {
+        if (document.documentElement.dataset.printMode) return;
         const originalTitle = document.title;
-        const printTitle = buildPrintFilename(mode, supplierName, poId);
+        const hideQty = mode === "receiving" && hideOrderedQty;
+        const printTitle = buildPrintFilename(mode, supplierName, poId, hideQty);
         let cleanedUp = false;
         let fallbackTimer: number | null = null;
         const cleanupPrintState = () => {
@@ -4152,12 +4157,14 @@ export function PrintDocumentButton({
           }
           document.title = originalTitle;
           delete document.documentElement.dataset.printMode;
+          delete document.documentElement.dataset.printHideOrderedQty;
           setPrinting(false);
           window.removeEventListener("afterprint", cleanupPrintState);
         };
 
         setPrinting(true);
         document.documentElement.dataset.printMode = mode;
+        document.documentElement.dataset.printHideOrderedQty = String(hideQty);
         document.title = printTitle;
         window.dispatchEvent(new CustomEvent(printIntentEvent));
         window.addEventListener("afterprint", cleanupPrintState, { once: true });
@@ -4166,6 +4173,7 @@ export function PrintDocumentButton({
         window.print();
         window.setTimeout(cleanupPrintState, 500);
       }}
+      title={hideOrderedQty ? "Print goods receipt with ordered quantities and totals hidden" : undefined}
       type="button"
     >
       <LoadingLabel loading={printing} loadingText="Preparing...">
@@ -4220,6 +4228,7 @@ function buildPrintFilename(
   mode: "quote" | "receiving",
   supplierName: string,
   poId: string,
+  hideOrderedQty = false,
 ) {
   const prefix = mode === "quote" ? "PQ" : "GR";
   const supplierShortName =
@@ -4242,7 +4251,8 @@ function buildPrintFilename(
       ?.slice(-4)
       .join("") || "PO";
 
-  return `${prefix}-${supplierShortName}-${last4Po}.pdf`;
+  const suffix = mode === "receiving" && hideOrderedQty ? "-Hidden-Qty" : "";
+  return `${prefix}-${supplierShortName}-${last4Po}${suffix}.pdf`;
 }
 
 export function DraftApprovalEmailButton({ emailText }: { emailText: string }) {

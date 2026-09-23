@@ -692,6 +692,17 @@ body {
     white-space: nowrap;
   }
 
+  /* Omit the text from PDF output, while keeping the same worksheet cells. */
+  html[data-print-hide-ordered-qty="true"] .print-receiving [data-receipt-line="ordered"] .print-receipt-qty {
+    visibility: hidden;
+  }
+
+  /* Heat colours also reveal ordered quantities. Keep active sizes neutral. */
+  html[data-print-hide-ordered-qty="true"] .print-receiving .print-receipt-active-size {
+    background-color: #ffffff !important;
+    color: #172026 !important;
+  }
+
   .print-product-image {
     display: block;
     height: 16mm;
