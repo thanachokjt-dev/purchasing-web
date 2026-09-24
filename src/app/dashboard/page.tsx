@@ -406,6 +406,12 @@ export default async function DashboardPage({
             <div className="flex flex-wrap gap-2">
               <Link
                 className="inline-flex h-10 items-center rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 text-sm font-semibold text-[#364252]"
+                href="/sku-dashboard"
+              >
+                SKU Sales Dashboard
+              </Link>
+              <Link
+                className="inline-flex h-10 items-center rounded-md border border-[#cfd6df] bg-[#f9fafb] px-3 text-sm font-semibold text-[#364252]"
                 href="/po"
               >
                 PO Portal

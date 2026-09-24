@@ -41,6 +41,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
   ],
   super_admin: [
     { href: "/dashboard", key: "dashboard", label: "Dashboard" },
+    { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
     { href: "/po", key: "po", label: "PO Portal" },
     { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
     { href: "/purchasing-decision", key: "reorder", label: "Reorder Planning" },
@@ -85,7 +86,10 @@ export function navItemsForUser(profile: CurrentUserProfile) {
       : [{ href: "/po", key: "po", label: "PO Portal" }];
   }
   if (getProfileAccessRole(profile) === "dashboard_only") {
-    return [{ href: "/dashboard", key: "dashboard", label: "Dashboard" }];
+    return [
+      { href: "/dashboard", key: "dashboard", label: "Dashboard" },
+      { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
+    ];
   }
   if (getProfileAccessRole(profile) === "executive_readonly") {
     return navByRole.super_admin.filter(

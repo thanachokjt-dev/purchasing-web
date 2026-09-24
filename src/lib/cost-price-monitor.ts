@@ -80,6 +80,7 @@ type OverrideRow = {
 type PoLineRow = {
   cancelled_qty: number | string | null;
   created_at: string | null;
+  currency?: string | null;
   landed_unit_cost?: number | string | null;
   line_status: string | null;
   ordered_qty: number | string | null;
@@ -87,6 +88,7 @@ type PoLineRow = {
   po_orders:
     | {
         cancelled_at: string | null;
+        currency?: string | null;
         created_at: string | null;
         po_date: string | null;
         po_id: string | null;
@@ -99,6 +101,7 @@ type PoLineRow = {
       }
     | {
         cancelled_at: string | null;
+        currency?: string | null;
         created_at: string | null;
         po_date: string | null;
         po_id: string | null;
@@ -170,6 +173,7 @@ type ManualOverride = {
 };
 
 export type CostPriceMonitorSkuDetail = {
+  costCurrencySafe: boolean;
   currentQty: number;
   effectiveLandedCost: number;
   effectiveLandedCostSource: "actual" | "manual" | "missing";
@@ -1319,6 +1323,11 @@ function buildRows({
     const landedStockValue = currentQty > 0 && effectiveLandedCost > 0 ? currentQty * effectiveLandedCost : 0;
     const sellingValue = currentQty > 0 && effectiveSellingPrice > 0 ? currentQty * effectiveSellingPrice : 0;
     const skuDetail: CostPriceMonitorSkuDetail = {
+      costCurrencySafe: skuAccumulator.lines.length > 0 && skuAccumulator.lines.every(({ line }) => {
+        const order = Array.isArray(line.po_orders) ? line.po_orders[0] : line.po_orders;
+        return (line.currency ?? order?.currency ?? "").toUpperCase() === "THB" &&
+          (order?.currency ?? "").toUpperCase() === "THB";
+      }),
       currentQty,
       effectiveLandedCost,
       effectiveLandedCostSource,
@@ -1520,11 +1529,12 @@ export async function getCostPriceMonitorData(filters: CostPriceMonitorFilters =
               "ordered_qty",
               "cancelled_qty",
               "unit_price",
+              "currency",
               "landed_unit_cost",
               "line_status",
               "created_at",
               "updated_at",
-              "po_orders!inner(po_id,po_title,po_date,quotation_reference,supplier_invoice_no,rqq_id,work_status,cancelled_at,created_at,updated_at)",
+              "po_orders!inner(po_id,po_title,po_date,quotation_reference,supplier_invoice_no,rqq_id,work_status,cancelled_at,currency,created_at,updated_at)",
             ].join(","),
           )
           .order("created_at", { ascending: false })
