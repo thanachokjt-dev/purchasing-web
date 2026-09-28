@@ -2,9 +2,10 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Download, Save, Upload } from "lucide-react";
+import { CheckCircle2, Download, Eye, EyeOff, Save, Trash2, Upload } from "lucide-react";
 import {
   completeStockCountSessionAction,
+  deleteStockCountDraftAction,
   importStockCountCsvAction,
   saveStockCountValuesAction,
 } from "@/app/stock-count/actions";
@@ -75,10 +76,43 @@ export function StockCountEditor({
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [isQtyLoading, setIsQtyLoading] = useState(false);
+  const [systemQty, setSystemQty] = useState<{ quantities: Record<string, number | null>; snapshotDate: string; syncedAt: string | null } | null>(null);
   const [isPending, startTransition] = useTransition();
   const sections = useMemo(() => buildSections(lines), [lines]);
   const isEditable = canEdit && session.status === "draft";
   const counted = Object.values(values).filter((value) => value !== "").length;
+
+  async function toggleSystemQty() {
+    if (systemQty) {
+      setSystemQty(null);
+      return;
+    }
+    setIsQtyLoading(true);
+    try {
+      const response = await fetch(`/api/stock-count/${session.id}/system-qty`, { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to load system quantities.");
+      setSystemQty(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load system quantities.");
+    } finally {
+      setIsQtyLoading(false);
+    }
+  }
+
+  function deleteDraft() {
+    if (!window.confirm(`Permanently delete this ${session.locationType} draft for week ${session.weekStart} and all its saved counts? Unsaved changes will also be lost. This cannot be undone.`)) return;
+    startTransition(async () => {
+      try {
+        await deleteStockCountDraftAction(session.id);
+        router.replace("/stock-count");
+        router.refresh();
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Unable to delete draft.");
+      }
+    });
+  }
 
   function setCount(lineId: string, raw: string) {
     if (raw && (!/^\d+$/.test(raw) || Number(raw) < 0)) return;
@@ -162,6 +196,9 @@ export function StockCountEditor({
           <p className="text-xs text-[#667380]">Blank = not counted · 0 = counted, no stock</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canEdit ? <button aria-pressed={Boolean(systemQty)} className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} disabled={isQtyLoading || isPending || isUploading} onClick={() => void toggleSystemQty()} type="button">
+            {systemQty ? <EyeOff size={16} /> : <Eye size={16} />} {isQtyLoading ? "Loading Qty..." : systemQty ? "Hidden Qty" : "Show Qty"}
+          </button> : null}
           <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export`}>
             <Download size={16} /> Export CSV
           </a>
@@ -187,16 +224,20 @@ export function StockCountEditor({
               <button className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} disabled={isPending || isUploading} onClick={() => uploadRef.current?.click()} type="button">
                 <Upload size={16} /> {isUploading ? "Importing..." : "Import CSV"}
               </button>
-              <button className={`${buttonClass} bg-[#172026] text-white`} disabled={isPending || !dirty.size} onClick={save} type="button">
+              <button className={`${buttonClass} bg-[#172026] text-white`} disabled={isPending || isUploading || !dirty.size} onClick={save} type="button">
                 <Save size={16} /> {isPending ? "Saving..." : `Save${dirty.size ? ` (${dirty.size})` : ""}`}
               </button>
-              <button className={`${buttonClass} bg-[#1f6b3d] text-white`} disabled={isPending} onClick={complete} type="button">
+              <button className={`${buttonClass} bg-[#1f6b3d] text-white`} disabled={isPending || isUploading} onClick={complete} type="button">
                 <CheckCircle2 size={16} /> Complete
+              </button>
+              <button className={`${buttonClass} border border-rose-200 bg-rose-50 text-rose-700`} disabled={isPending || isUploading || isQtyLoading} onClick={deleteDraft} type="button">
+                <Trash2 size={16} /> Delete Draft
               </button>
             </>
           ) : null}
         </div>
         {message ? <p className="w-full whitespace-pre-line rounded-md bg-[#f3f6f8] px-3 py-2 text-sm text-[#364252]">{message}</p> : null}
+        {systemQty ? <p className="w-full text-xs text-[#667380]">Current system on-hand · {session.locationType === "warehouse" ? "Warehouse" : "Retail"} only · Snapshot {systemQty.snapshotDate}{systemQty.syncedAt ? ` · Synced ${new Date(systemQty.syncedAt).toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} ICT` : ""}. This is current stock, not the historical week balance. — means unavailable. CSV/PDF remain blank counting sheets.</p> : null}
       </div>
 
       {sections.map((section) => (
@@ -224,7 +265,7 @@ export function StockCountEditor({
                       const line = row.linesBySize.get(size);
                       return (
                         <td className={`px-2 py-2 text-right ${line ? "bg-[#fffdf8]" : "bg-[#f3f5f7]"}`} key={size}>
-                          {line ? (
+                          {line ? <>
                             <input
                               aria-label={`${row.productName} ${size}`}
                               className="h-10 w-20 rounded-md border border-[#c9d1da] bg-white px-2 text-right font-mono font-semibold outline-none focus:border-[#255f85] focus:ring-2 focus:ring-[#255f85]/15 disabled:bg-[#eef1f4]"
@@ -236,7 +277,8 @@ export function StockCountEditor({
                               type="number"
                               value={values[line.id] ?? ""}
                             />
-                          ) : <span className="text-[#b8c0c8]">—</span>}
+                            {systemQty ? <p className="mt-1 text-xs text-[#667380]">System: {systemQty.quantities[line.sku] ?? "—"}</p> : null}
+                          </> : <span className="text-[#b8c0c8]">—</span>}
                         </td>
                       );
                     })}

@@ -8,6 +8,7 @@ import {
   type StockCountCatalogRow,
 } from "@/lib/stock-count-catalog";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
+import { stockCountLocationIds, summarizeStockCountInventory } from "@/lib/stock-count-inventory";
 
 export type StockCountLocation = "warehouse" | "retail";
 export type StockCountStatus = "draft" | "completed";
@@ -245,4 +246,35 @@ export async function completeStockCountSession(profile: CurrentUserProfile, ses
     p_completed_by: profile.authUserId,
   });
   if (error) throw new Error(error.message);
+}
+
+export async function deleteStockCountDraft(profile: CurrentUserProfile, session: StockCountSession) {
+  if (!canEditStockCountLocation(profile, session.locationType)) throw new Error("You cannot delete this stock count.");
+  if (session.status !== "draft") throw new Error("Completed stock counts cannot be deleted.");
+  // Check status in the DELETE itself, protecting against concurrent completion.
+  const { data, error } = await requireSupabase().from("weekly_stock_count_sessions")
+    .delete().eq("id", session.id).eq("status", "draft").eq("location_type", session.locationType).select("id");
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error("Draft no longer exists or has already been completed.");
+}
+
+export async function getStockCountSystemQty(profile: CurrentUserProfile, session: StockCountSession) {
+  if (!canEditStockCountLocation(profile, session.locationType)) throw new Error("You cannot view quantities for this location.");
+  const supabase = requireSupabase();
+  const locationId = stockCountLocationIds[session.locationType];
+  const { data: latest, error: latestError } = await supabase.from("inventory_snapshots")
+    .select("snapshot_date,synced_at").eq("location_id", locationId)
+    .order("snapshot_date", { ascending: false }).order("synced_at", { ascending: false }).limit(1).maybeSingle();
+  if (latestError) throw new Error(latestError.message);
+  if (!latest) throw new Error("No inventory snapshot is available for this location.");
+  const rows: Array<{ sku: string | null; on_hand: number | string | null }> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("inventory_snapshots").select("sku,on_hand")
+      .eq("location_id", locationId).eq("snapshot_date", latest.snapshot_date)
+      .order("sku").order("shopify_variant_id").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    rows.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return { quantities: summarizeStockCountInventory(rows), snapshotDate: String(latest.snapshot_date), syncedAt: latest.synced_at as string | null };
 }

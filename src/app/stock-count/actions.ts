@@ -7,6 +7,7 @@ import { stockCountValuesFromCsv } from "@/lib/stock-count-csv";
 import {
   completeStockCountSession,
   createStockCountSession,
+  deleteStockCountDraft,
   getStockCountSession,
   saveStockCountValues,
   type StockCountLocation,
@@ -56,4 +57,12 @@ export async function completeStockCountSessionAction(sessionId: string) {
   const data = await requiredSession(sessionId);
   await completeStockCountSession(profile, data.session);
   revalidatePath("/stock-count");
+}
+
+export async function deleteStockCountDraftAction(sessionId: string) {
+  const profile = await requireUser("/stock-count");
+  const data = await requiredSession(sessionId);
+  await deleteStockCountDraft(profile, data.session);
+  revalidatePath("/stock-count");
+  return { deleted: true };
 }

@@ -50,7 +50,7 @@ export default async function StockCountPage({ searchParams }: PageProps) {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#64707d]">Weekly Inventory Control</p>
               <h1 className="mt-2 text-3xl font-semibold">Weekly Stock Count</h1>
-              <p className="mt-2 text-sm text-[#52606d]">Separate warehouse and retail counts. Catalog only—no current system quantity is shown or loaded.</p>
+              <p className="mt-2 text-sm text-[#52606d]">Separate warehouse and retail counts. System quantities stay hidden and are loaded only when you choose Show Qty.</p>
             </div>
             <Link className="inline-flex h-10 items-center justify-center rounded-md border border-[#cfd6df] bg-white px-4 text-sm font-semibold text-[#364252]" href="/po">
               Back to PO Portal
@@ -118,6 +118,7 @@ export default async function StockCountPage({ searchParams }: PageProps) {
                 <span className={`rounded-md px-3 py-1.5 text-xs font-bold uppercase ${statusClass(selected.session.status)}`}>{selected.session.status}</span>
               </div>
               <StockCountEditor
+                key={selected.session.id}
                 canEdit={canEditStockCountLocation(profile, selected.session.locationType)}
                 lines={selected.lines}
                 session={selected.session}
