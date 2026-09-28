@@ -380,7 +380,7 @@ export default async function CostPriceMonitorPage({
               </SelectionActionLink>
               <SelectionActionLink className={secondaryButtonClass} baseHref={exportHref}>
                 <Download size={16} />
-                Export Excel
+                Export SKU / PO Excel
               </SelectionActionLink>
               <Link className={secondaryButtonClass} href="/po">
                 PO Portal
@@ -390,6 +390,9 @@ export default async function CostPriceMonitorPage({
               </Link>
             </div>
           </div>
+          <p className="mt-3 text-xs leading-5 text-[#52606d]">
+            SKU / PO Excel: actual cost and shipping / freight per unit in THB. Missing land cost is 0; catalog estimates are separate.
+          </p>
         </header>
 
         <div className="grid gap-5 px-4 py-5 sm:px-6">

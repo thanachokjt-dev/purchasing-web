@@ -1,5 +1,6 @@
 import "server-only";
 
+import { poCosts, type PoCost } from "@/lib/cost-price-po-costs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { excelSupplierMap } from "@/lib/excel-supplier-map";
 import { getPurchasingSetupData } from "@/lib/purchasing-setup";
@@ -82,11 +83,15 @@ type PoLineRow = {
   created_at: string | null;
   currency?: string | null;
   landed_unit_cost?: number | string | null;
+  freight_unit_cost?: number | string | null;
+  payment_freight_amount_thb?: number | string | null;
+  source_payload?: Record<string, unknown> | null;
   line_status: string | null;
   ordered_qty: number | string | null;
   po_id: string | null;
   po_orders:
     | {
+        po_payments?: Array<{ currency: string; amount: number; payment_type: string; exchange_rate: number }>;
         cancelled_at: string | null;
         currency?: string | null;
         created_at: string | null;
@@ -100,6 +105,7 @@ type PoLineRow = {
         work_status: string | null;
       }
     | {
+        po_payments?: Array<{ currency: string; amount: number; payment_type: string; exchange_rate: number }>;
         cancelled_at: string | null;
         currency?: string | null;
         created_at: string | null;
@@ -173,6 +179,7 @@ type ManualOverride = {
 };
 
 export type CostPriceMonitorSkuDetail = {
+  poCosts?: PoCost[];
   costCurrencySafe: boolean;
   currentQty: number;
   effectiveLandedCost: number;
@@ -1073,6 +1080,7 @@ function latestPoWeightedCostFromEntries(
 }
 
 function buildRows({
+  includePoCosts,
   controls,
   inventoryRows,
   manualSupplierRows,
@@ -1081,6 +1089,7 @@ function buildRows({
   setupData,
   variantRows,
 }: {
+  includePoCosts: boolean;
   controls: Map<string, DecisionControlRow>;
   inventoryRows: InventoryRow[];
   manualSupplierRows: ManualSupplierRow[];
@@ -1323,6 +1332,7 @@ function buildRows({
     const landedStockValue = currentQty > 0 && effectiveLandedCost > 0 ? currentQty * effectiveLandedCost : 0;
     const sellingValue = currentQty > 0 && effectiveSellingPrice > 0 ? currentQty * effectiveSellingPrice : 0;
     const skuDetail: CostPriceMonitorSkuDetail = {
+      ...(includePoCosts ? { poCosts: poCosts(skuAccumulator.lines.map(({ line, qty, timestamp }) => ({ line, qty, timestamp, order: Array.isArray(line.po_orders) ? line.po_orders[0] ?? null : line.po_orders }))) } : {}),
       costCurrencySafe: skuAccumulator.lines.length > 0 && skuAccumulator.lines.every(({ line }) => {
         const order = Array.isArray(line.po_orders) ? line.po_orders[0] : line.po_orders;
         return (line.currency ?? order?.currency ?? "").toUpperCase() === "THB" &&
@@ -1531,10 +1541,11 @@ export async function getCostPriceMonitorData(filters: CostPriceMonitorFilters =
               "unit_price",
               "currency",
               "landed_unit_cost",
+              ...(clean.exportAll ? ["freight_unit_cost", "payment_freight_amount_thb", "source_payload"] : []),
               "line_status",
               "created_at",
               "updated_at",
-              "po_orders!inner(po_id,po_title,po_date,quotation_reference,supplier_invoice_no,rqq_id,work_status,cancelled_at,currency,created_at,updated_at)",
+              `po_orders!inner(po_id,po_title,po_date,quotation_reference,supplier_invoice_no,rqq_id,work_status,cancelled_at,currency,created_at,updated_at${clean.exportAll ? ",po_payments(currency,amount,payment_type,exchange_rate)" : ""})`,
             ].join(","),
           )
           .order("created_at", { ascending: false })
@@ -1614,6 +1625,7 @@ export async function getCostPriceMonitorData(filters: CostPriceMonitorFilters =
   }
 
   const { debugCounts: rowDebugCounts, rows: allRows } = buildRows({
+    includePoCosts: clean.exportAll,
     controls,
     inventoryRows,
     manualSupplierRows,
