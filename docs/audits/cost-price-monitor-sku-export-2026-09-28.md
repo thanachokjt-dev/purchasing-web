@@ -13,3 +13,11 @@ The workbook freezes its title / note / headings and identity columns, includes 
 Validation: five regression tests cover PO pairing, repeated SKU lines, missing freight, USD FX, partial cancellations, hierarchy and XLSX structure. Existing FX tests, typecheck, lint and production build pass. A read-only query of PO `PO-20260528012110353` returned 30 lines and 5 saved payments. Exported freight reconciled to exactly 361,688.66 THB before display rounding; sample SKU `BTSS-MTG-BLK-6` shows 478.4690 + 128.4348 = 606.9038 THB/unit. The generated XLSX ZIP entries all parse as XML. Authenticated production download requires the user's existing login and was not exercised from an unauthenticated browser.
 
 No migration or business data mutation is needed for this change.
+
+## SKU Dashboard sheet
+
+The workbook now opens on an additional `SKU Dashboard` sheet, with exactly one row per SKU. The original `Cost Price Monitor` detail sheet and web page retain their behavior. The dashboard averages purchase and freight unit costs across all eligible PO history, weighted by remaining PO quantity. A PO without freight contributes zero freight and its full quantity to the denominator. Both THB averages use the same set of POs with complete THB costs, so their sum remains comparable.
+
+Dashboard columns include stock quantity, PO count, purchased quantity, average merchandise / freight / combined THB unit costs, known USD unit cost average, coverage percentage, current selling price, margin based on the combined average, covered quantity and PO date range. Missing FX is reported with coverage and a note, rather than silently treating unknown THB costs as zero. Source USD averages use only POs that have a saved USD price. Current stock does not weight historical cost averages.
+
+Seven export regression tests pass, including unequal PO quantities, zero freight, partial FX coverage, all missing FX, dashboard sheet relationships and preservation of the original detail sheet.

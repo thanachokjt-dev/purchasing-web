@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { poCosts } from "../src/lib/cost-price-po-costs.ts";
-import { costPriceMonitorExportRows, costPriceMonitorXlsx } from "../src/lib/cost-price-monitor-export.ts";
+import { costPriceMonitorDashboardRows, costPriceMonitorExportRows, costPriceMonitorXlsx } from "../src/lib/cost-price-monitor-export.ts";
 
 const entry = (id, qty, unit, freight, currency = "THB", extra = {}) => ({
   line: { po_id: id, ordered_qty: qty, unit_price: unit, freight_unit_cost: freight, currency, ...extra },
@@ -88,7 +88,7 @@ function unzipStored(buffer) {
 
 test("XLSX has styles, frozen headings, filter and expandable SKU / PO rows; cells are literal", () => {
   const files = unzipStored(costPriceMonitorXlsx([group()]));
-  const sheet = files.get("xl/worksheets/sheet1.xml");
+  const sheet = files.get("xl/worksheets/sheet2.xml");
   assert.match(sheet, /ySplit="3"/);
   assert.match(sheet, /autoFilter ref="A3:T7"/);
   assert.match(sheet, /outlineLevel="2"/);
@@ -99,4 +99,49 @@ test("XLSX has styles, frozen headings, filter and expandable SKU / PO rows; cel
   assert.match(files.get("xl/_rels/workbook.xml.rels"), /Target="styles.xml"/);
   assert.match(files.get("[Content_Types].xml"), /PartName="\/xl\/styles.xml"/);
   assert.match(unzipStored(costPriceMonitorXlsx([])).get("xl/worksheets/sheet1.xml"), /autoFilter ref="A3:T3"/);
+  assert.match(files.get("xl/workbook.xml"), /sheet name="SKU Dashboard" sheetId="1"/);
+  assert.match(files.get("xl/workbook.xml"), /sheet name="Cost Price Monitor" sheetId="2"/);
+  assert.match(files.get("xl/_rels/workbook.xml.rels"), /Target="worksheets\/sheet2.xml"/);
+  assert.match(files.get("[Content_Types].xml"), /PartName="\/xl\/worksheets\/sheet2.xml"/);
+  const dashboard = files.get("xl/worksheets/sheet1.xml");
+  assert.match(dashboard, /autoFilter ref="A3:T5"/);
+  assert.doesNotMatch(dashboard, /outlineLevel="[12]"/);
+});
+
+test("SKU dashboard quantity-weights PO costs and zero freight together into one SKU", () => {
+  const data = group();
+  data.skuDetails[0].poCosts = poCosts([entry("old", 10, 100, 20), entry("new", 30, 200, 0)]);
+  const rows = costPriceMonitorDashboardRows([data]);
+  assert.equal(rows.length, 5); // Headers plus exactly two SKUs; no group or PO rows.
+  const sku = rows[3].values;
+  assert.equal(sku[3], "SKU-1");
+  assert.equal(sku[5], 5); // Stock does not weight historical unit costs.
+  assert.equal(sku[6], 2);
+  assert.equal(sku[7], 40);
+  assert.equal(sku[8], 175);
+  assert.equal(sku[9], 5); // (10 × 20 + 30 × 0) / 40.
+  assert.equal(sku[10], 180);
+  assert.equal(sku[12], 1);
+  assert.equal(sku[14], 0.82);
+  assert.equal(sku[16], 40);
+  assert.deepEqual(rows[4].values.slice(8, 11), [0, 0, 0]);
+  // Detail sheet still shows the latest PO cost, rather than this dashboard average.
+  assert.equal(costPriceMonitorExportRows([data])[4].values[8], 200);
+});
+
+test("dashboard excludes missing-FX POs from both THB averages and reports coverage", () => {
+  const data = group();
+  data.skuDetails[0].poCosts = poCosts([entry("old", 10, 100, 20), entry("new", 30, 15, 0, "USD")]);
+  let values = costPriceMonitorDashboardRows([data])[3].values;
+  assert.equal(values[8], 100);
+  assert.equal(values[9], 20);
+  assert.equal(values[10], 120);
+  assert.equal(values[11], 15);
+  assert.equal(values[12], 0.25);
+  assert.equal(values[16], 10);
+  assert.match(values[19], /1 PO\(s\) excluded/);
+  data.skuDetails[0].poCosts = poCosts([entry("new", 30, 15, 0, "USD")]);
+  values = costPriceMonitorDashboardRows([data])[3].values;
+  assert.deepEqual(values.slice(8, 11), [null, null, null]);
+  assert.equal(values[12], 0);
 });

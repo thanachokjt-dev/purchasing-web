@@ -30,9 +30,9 @@ function sheetCell(value: CellValue, rowIndex: number, columnIndex: number, styl
 }
 
 type ExportRow = { values: CellValue[]; level?: number; kind?: "title" | "note" | "header" | "group" };
-function sheetRow(row: ExportRow, rowIndex: number) {
+function sheetRow(row: ExportRow, rowIndex: number, dashboard = false) {
   const base = row.kind === "header" || row.kind === "title" ? 1 : row.kind === "group" ? 2 : row.kind === "note" ? 5 : 0;
-  return `<row r="${rowIndex}" outlineLevel="${row.level ?? 0}" ht="${row.kind === "header" ? 34 : row.kind === "note" ? 42 : 23}" customHeight="1">${row.values.map((value, index) => sheetCell(value, rowIndex, index, base || (index === 14 ? 4 : [8,9,10,11,12,13].includes(index) ? 3 : 0))).join("")}</row>`;
+  return `<row r="${rowIndex}" outlineLevel="${row.level ?? 0}" ht="${row.kind === "header" ? 34 : row.kind === "note" ? 42 : 23}" customHeight="1">${row.values.map((value, index) => sheetCell(value, rowIndex, index, base || (index === 14 || (dashboard && index === 12) ? 4 : [8,9,10,11,12,13].includes(index) ? 3 : 0))).join("")}</row>`;
 }
 
 function crc32(buffer: Buffer) {
@@ -114,21 +114,21 @@ function zipStore(files: Array<{ name: string; content: string }>) {
 
 function workbookXml() {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Cost Price Monitor" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="SKU Dashboard" sheetId="1" r:id="rId1"/><sheet name="Cost Price Monitor" sheetId="2" r:id="rId2"/></sheets></workbook>`;
 }
 
-function worksheetXml(rows: ExportRow[]) {
+function worksheetXml(rows: ExportRow[], dashboard = false) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><outlinePr summaryBelow="0"/></sheetPr><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane xSplit="4" ySplit="3" topLeftCell="E4" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="23" outlineLevelRow="2"/><cols>${[12,36,18,26,24,14,26,14,20,20,24,18,14,18,14,25,16,18,28,36].map((width,index) => `<col min="${index+1}" max="${index+1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows
-    .map((row, index) => sheetRow(row, index + 1))
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><outlinePr summaryBelow="0"/></sheetPr><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane xSplit="4" ySplit="3" topLeftCell="E4" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="23" outlineLevelRow="2"/><cols>${(dashboard ? [12,36,18,26,24,14,14,18,20,20,24,20,16,18,14,25,20,18,18,40] : [12,36,18,26,24,14,26,14,20,20,24,18,14,18,14,25,16,18,28,36]).map((width,index) => `<col min="${index+1}" max="${index+1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${rows
+    .map((row, index) => sheetRow(row, index + 1, dashboard))
     .join("")}</sheetData><autoFilter ref="A3:T${Math.max(rows.length,3)}"/><mergeCells count="2"><mergeCell ref="A1:T1"/><mergeCell ref="A2:T2"/></mergeCells><pageSetup orientation="landscape" paperSize="9"/></worksheet>`;
 }
 
-function xlsx(rows: ExportRow[]) {
+function xlsx(rows: ExportRow[], dashboardRows: ExportRow[]) {
   return zipStore([
     {
       name: "[Content_Types].xml",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
     },
     {
       name: "_rels/.rels",
@@ -136,11 +136,12 @@ function xlsx(rows: ExportRow[]) {
     },
     {
       name: "xl/_rels/workbook.xml.rels",
-      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
     },
     { name: "xl/workbook.xml", content: workbookXml() },
     { name: "xl/styles.xml", content: stylesXml },
-    { name: "xl/worksheets/sheet1.xml", content: worksheetXml(rows) },
+    { name: "xl/worksheets/sheet1.xml", content: worksheetXml(dashboardRows, true) },
+    { name: "xl/worksheets/sheet2.xml", content: worksheetXml(rows) },
   ]);
 }
 
@@ -171,6 +172,39 @@ export function costPriceMonitorExportRows(groups: CostPriceMonitorRow[], warnin
   return rows;
 }
 
+/** One SKU row, with merchandise and freight averaged over the same PO quantities. */
+export function costPriceMonitorDashboardRows(groups: CostPriceMonitorRow[], warnings: string[] = []): ExportRow[] {
+  const rows: ExportRow[] = [
+    { kind: "title", values: ["SKU Dashboard — average unit costs (THB)"] },
+    { kind: "note", values: ["One row per SKU. THB averages = sum(PO unit cost × remaining PO quantity) / covered quantity, across all non-cancelled PO history. Missing land cost = 0. POs missing FX are excluded from both THB averages; coverage shows the included quantity. USD average uses only POs with saved USD cost." + (warnings.length ? " Data warnings: " + warnings.join("; ") : "")] },
+    { kind: "header", values: ["Row type", "Product family", "Color", "SKU", "Variant", "Stock qty", "PO count", "Purchased qty", "Avg cost / unit THB", "Avg land cost / unit THB", "Avg cost + land / unit THB", "Avg USD (known POs)", "Cost coverage %", "Selling / unit THB", "Margin incl. land %", "Supplier", "Qty with THB cost", "First PO date", "Latest PO date", "Note"] },
+  ];
+  for (const group of groups) {
+    for (const sku of group.skuDetails) {
+      const history = (sku.poCosts ?? []).filter(cost => cost.qty > 0);
+      const covered = history.filter(cost => cost.unitThb != null && cost.landThb != null && cost.totalThb != null);
+      const totalQty = history.reduce((sum, cost) => sum + cost.qty, 0);
+      const coveredQty = covered.reduce((sum, cost) => sum + cost.qty, 0);
+      const base = coveredQty > 0 ? covered.reduce((sum, cost) => sum + cost.unitThb! * cost.qty, 0) / coveredQty : history.length ? null : 0;
+      const land = coveredQty > 0 ? covered.reduce((sum, cost) => sum + cost.landThb! * cost.qty, 0) / coveredQty : history.length ? null : 0;
+      const total = base != null && land != null ? base + land : null;
+      const usdHistory = history.filter(cost => cost.unitUsd != null);
+      const usdQty = usdHistory.reduce((sum, cost) => sum + cost.qty, 0);
+      const usd = usdQty > 0 ? usdHistory.reduce((sum, cost) => sum + cost.unitUsd! * cost.qty, 0) / usdQty : null;
+      const dates = history.map(cost => cost.date).filter(Boolean).sort();
+      const missing = history.length - covered.length;
+      const note = !history.length ? "No PO cost" : missing ? `${missing} PO(s) excluded: missing FX; THB averages cover ${coveredQty} of ${totalQty} units` : "Quantity-weighted across all PO history";
+      rows.push({ values: [
+        "SKU", group.mainName, group.color, sku.sku, sku.variantTitle, sku.currentQty,
+        history.length, totalQty, base, land, total, usd, totalQty > 0 ? coveredQty / totalQty : 0,
+        sku.effectiveSellingPrice, total != null && total > 0 && sku.effectiveSellingPrice > 0 ? (sku.effectiveSellingPrice - total) / sku.effectiveSellingPrice : null,
+        group.supplier, coveredQty, dates[0] ?? "", dates.at(-1) ?? "", note,
+      ] });
+    }
+  }
+  return rows;
+}
+
 export function costPriceMonitorXlsx(groups: CostPriceMonitorRow[], warnings: string[] = []) {
-  return xlsx(costPriceMonitorExportRows(groups, warnings));
+  return xlsx(costPriceMonitorExportRows(groups, warnings), costPriceMonitorDashboardRows(groups, warnings));
 }
