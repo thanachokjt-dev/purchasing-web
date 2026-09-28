@@ -18,7 +18,7 @@ export type PoPaymentDisplayRow = {
 };
 
 export function isProductPoPayment(type: string | null | undefined) {
-  return !["freight", "shipping", "fine", "penalty", "other", "other_cost"]
+  return !["freight", "shipping", "fine", "penalty", "other", "other_cost", "vat_import_vat", "vat"]
     .includes(String(type ?? "").trim().toLowerCase());
 }
 

@@ -525,6 +525,8 @@ const NON_PRODUCT_PAYMENT_TYPES = new Set([
   "penalty",
   "other",
   "other_cost",
+  "vat_import_vat",
+  "vat",
 ]);
 
 function isProductPaymentType(value: string | null | undefined) {

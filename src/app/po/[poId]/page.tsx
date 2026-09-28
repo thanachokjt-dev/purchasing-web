@@ -106,7 +106,7 @@ const companyLines = [
   "www.bangtaofightstore.com",
 ];
 
-const nonProductPaymentTypes = new Set(["freight", "shipping", "fine", "penalty", "other", "other_cost"]);
+const nonProductPaymentTypes = new Set(["freight", "shipping", "fine", "penalty", "other", "other_cost", "vat_import_vat", "vat"]);
 const isProductPayment = (type: string | null | undefined) =>
   !nonProductPaymentTypes.has(String(type ?? "").trim().toLowerCase());
 const activePaymentRequestStatuses = new Set([

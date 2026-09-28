@@ -275,7 +275,7 @@ function averageExchangeRate(values: string[]) {
     return null;
   }
 
-  return usableRates.reduce((sum, value) => sum + value, 0) / usableRates.length;
+  return Number((usableRates.reduce((sum, value) => sum + value, 0) / usableRates.length).toFixed(6));
 }
 
 function ActionMessage({ state }: { state: PoActionState }) {
