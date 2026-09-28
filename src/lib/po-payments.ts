@@ -17,6 +17,11 @@ export type PoPaymentDisplayRow = {
   xero_status?: string | null;
 };
 
+export function isProductPoPayment(type: string | null | undefined) {
+  return !["freight", "shipping", "fine", "penalty", "other", "other_cost"]
+    .includes(String(type ?? "").trim().toLowerCase());
+}
+
 function paymentSortDate(payment: PoPaymentDisplayRow) {
   const status = String(payment.payment_status ?? "paid").trim().toLowerCase();
   return status === "planned"

@@ -566,6 +566,8 @@ async function exchangeRateByCurrency(poId: string) {
 
 async function recalculatePoAmount(poId: string) {
   const supabase = actionClient();
+  const { error: allocationError } = await supabase.rpc("allocate_po_payment_freight", { p_po_id: poId });
+  if (allocationError) throw new Error(allocationError.message);
   const rates = await exchangeRateByCurrency(poId);
   const { data: order, error: orderReadError } = await supabase
     .from("po_orders")
@@ -580,7 +582,7 @@ async function recalculatePoAmount(poId: string) {
   const orderCurrency = String(order?.currency ?? "THB").trim().toUpperCase();
   const { data: items, error: itemError } = await supabase
     .from("po_items")
-    .select("ordered_qty,unit_price,freight_unit_cost,currency")
+    .select("ordered_qty,unit_price,freight_unit_cost,currency,source_payload")
     .eq("po_id", poId);
 
   if (itemError) {
@@ -591,12 +593,15 @@ async function recalculatePoAmount(poId: string) {
     ordered_qty: number | string | null;
     unit_price: number | string | null;
     freight_unit_cost?: number | string | null;
+    source_payload?: Record<string, unknown> | null;
     currency: string | null;
   }>).reduce(
     (sum, item) => {
       const qty = Number(item.ordered_qty ?? 0);
       const unitPrice = Number(item.unit_price ?? 0);
-      const freightUnitCost = Number(item.freight_unit_cost ?? 0);
+      // Shipping/Freight is paid separately; do not add it to merchandise due.
+      const freightUnitCost = item.source_payload?.paymentFreightAllocation
+        ? 0 : Number(item.freight_unit_cost ?? 0);
       const currency = String(item.currency ?? "THB").trim().toUpperCase();
       const landedAmount = qty * (unitPrice + freightUnitCost);
       const exchangeRate = rates.get(currency) ?? 0;
@@ -1967,6 +1972,14 @@ export async function allocatePoLandedCostAction(
     const landedCostNote = optionalText(formData, "landedCostNote");
     const totalLandedCost = freightTotal + otherLandedCostTotal;
 
+    const { data: costPayments, error: costPaymentError } = await supabase
+      .from("po_payments").select("amount,payment_type").eq("po_id", poId);
+    if (costPaymentError) throw new Error(costPaymentError.message);
+    if (costPayments?.some((payment) => Number(payment.amount) > 0 &&
+      ["shipping", "freight"].includes(String(payment.payment_type).trim().toLowerCase()))) {
+      throw new Error("Shipping/Freight is allocated from saved Payments. Edit those payment amounts to update landed cost.");
+    }
+
     const { data: items, error: itemReadError } = await supabase
       .from("po_items")
       .select("id,ordered_qty,unit_price")
@@ -2052,25 +2065,30 @@ export async function addPoPaymentAction(
       throw new Error(`PO ${poId} does not exist`);
     }
 
-    const { error } = await supabase.from("po_payments").insert({
-      po_id: poId,
-      payment_date: optionalText(formData, "paymentDate") ?? new Date().toISOString().slice(0, 10),
-      payment_type: optionalText(formData, "paymentType") ?? "payment",
-      amount,
-      currency: currencyInput || order.currency || "THB",
-      exchange_rate: exchangeRate,
-      amount_thb: amount * exchangeRate,
-      paid_by: optionalText(formData, "paidBy"),
-      reference: optionalText(formData, "reference"),
-      note: optionalText(formData, "note"),
-      xero_status: "pending",
+    const { error } = await supabase.rpc("save_po_payments", {
+      p_po_id: poId,
+      p_delete_ids: [],
+      p_expected: null,
+      p_rows: [{
+        po_id: poId,
+        payment_date: optionalText(formData, "paymentDate") ?? new Date().toISOString().slice(0, 10),
+        payment_status: "paid",
+        payment_type: optionalText(formData, "paymentType") ?? "payment",
+        amount,
+        currency: currencyInput || order.currency || "THB",
+        exchange_rate: exchangeRate,
+        amount_thb: amount * exchangeRate,
+        paid_by: optionalText(formData, "paidBy"),
+        reference: optionalText(formData, "reference"),
+        note: optionalText(formData, "note"),
+        xero_status: "pending",
+      }],
     });
 
     if (error) {
       throw new Error(error.message);
     }
 
-    await recalculatePoAmount(poId);
     refreshPoViews(poId);
     return success(`Recorded payment ${amount}`);
   } catch (error) {
@@ -2270,8 +2288,8 @@ export async function updatePoPaymentsAction(
     if (saveError) throw new Error(saveError.message);
     savedCount = paymentRowsToSave.length;
     const payments = sortPoPayments((savedPayments ?? []) as PoPaymentDisplayRow[]);
-    refreshPoViews(poId, { detail: false });
-    return { ...success(`Saved ${savedCount} payment rows`), payments };
+    refreshPoViews(poId);
+    return { ...success(`Saved ${savedCount} payment rows; Shipping/Freight allocated by merchandise value`), payments };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Save payments failed";
     const paymentErrors =

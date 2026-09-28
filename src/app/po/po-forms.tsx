@@ -31,7 +31,7 @@ import {
   sortMatrixSizes,
   type MatrixFamily,
 } from "@/lib/po-size-matrix";
-import { paymentSnapshot, sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
+import { isProductPoPayment, paymentSnapshot, sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 import { notifyPoChanged } from "@/app/po/po-live-sync";
 
 type SupplierOption = {
@@ -3594,7 +3594,7 @@ export function PaymentScheduleForm({
         setLocalPayments(sortPoPayments(nextState.payments));
         nextDraftKeyIndex.current = 0;
         setDraftKeys([initialPaymentDraftKey]);
-        notifyPoChanged({ refreshCurrent: false });
+        notifyPoChanged();
       }
       saving.current = false;
       return nextState;
@@ -3642,7 +3642,10 @@ export function PaymentScheduleForm({
         sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
       0,
     );
-  const balance = Math.max(0, poAmount - paidTotal);
+  const productPaidTotal = localPayments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned" && isProductPoPayment(payment.payment_type))
+    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const balance = Math.max(0, poAmount - productPaidTotal);
   const nextDue = sortedPayments.find(
     (payment) => (payment.payment_status ?? "paid") === "planned" && payment.due_date,
   );
@@ -3661,6 +3664,10 @@ export function PaymentScheduleForm({
       <fieldset className="contents" disabled={pending}>
       <input name="poId" type="hidden" value={poId} />
       <input name="expectedPayments" type="hidden" value={paymentSnapshot(localPayments)} />
+      <p className="text-xs text-[#64707d]">
+        Saved Shipping and Freight amounts (planned or paid) are allocated by merchandise value.
+        Draft Line Details shows the allocation per unit in each SKU&apos;s currency, added to Landed/unit.
+      </p>
       <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Paid", paidTotal],

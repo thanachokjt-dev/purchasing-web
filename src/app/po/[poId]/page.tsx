@@ -975,7 +975,10 @@ export default async function PoDetailPage({
         sum + Number(payment.amount_thb ?? Number(payment.amount ?? 0) * Number(payment.exchange_rate ?? 1)),
       0,
     );
-  const paymentBalance = Math.max(0, order.poAmountForeign - paidTotal);
+  const productPaidTotal = data.payments
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned" && isProductPayment(payment.payment_type))
+    .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
+  const paymentBalance = Math.max(0, order.poAmountForeign - productPaidTotal);
   const paymentBalanceThb = Math.max(0, order.poAmountThb - productPaidTotalThb);
   const demandTotal = data.items.reduce(
     (sum, item) => sum + Number(item.demandIndexHm ?? 0),
@@ -1322,7 +1325,7 @@ export default async function PoDetailPage({
           <PoDraftLinesForm
             items={data.items}
             key={data.items
-              .map((item) => `${item.itemUuid ?? item.poItemId}:${item.qty}:${item.unitPrice}`)
+              .map((item) => `${item.itemUuid ?? item.poItemId}:${item.qty}:${item.unitPrice}:${item.freightUnitCost}:${item.landedUnitCost}`)
               .join("|")}
             poId={order.poId}
             poReference={order.quotationReference || order.poId}
