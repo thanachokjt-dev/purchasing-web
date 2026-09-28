@@ -180,6 +180,7 @@ type ManualOverride = {
 
 export type CostPriceMonitorSkuDetail = {
   poCosts?: PoCost[];
+  dashboardPoCosts?: PoCost[];
   costCurrencySafe: boolean;
   currentQty: number;
   effectiveLandedCost: number;
@@ -1332,7 +1333,10 @@ function buildRows({
     const landedStockValue = currentQty > 0 && effectiveLandedCost > 0 ? currentQty * effectiveLandedCost : 0;
     const sellingValue = currentQty > 0 && effectiveSellingPrice > 0 ? currentQty * effectiveSellingPrice : 0;
     const skuDetail: CostPriceMonitorSkuDetail = {
-      ...(includePoCosts ? { poCosts: poCosts(skuAccumulator.lines.map(({ line, qty, timestamp }) => ({ line, qty, timestamp, order: Array.isArray(line.po_orders) ? line.po_orders[0] ?? null : line.po_orders }))) } : {}),
+      ...(includePoCosts ? {
+        poCosts: poCosts(skuAccumulator.lines.map(({ line, qty, timestamp }) => ({ line, qty, timestamp, order: Array.isArray(line.po_orders) ? line.po_orders[0] ?? null : line.po_orders }))),
+        dashboardPoCosts: poCosts(skuAccumulator.lines.filter(({ line }) => toNumber(line.unit_price) > 0).map(({ line, qty, timestamp }) => ({ line, qty, timestamp, order: Array.isArray(line.po_orders) ? line.po_orders[0] ?? null : line.po_orders }))),
+      } : {}),
       costCurrencySafe: skuAccumulator.lines.length > 0 && skuAccumulator.lines.every(({ line }) => {
         const order = Array.isArray(line.po_orders) ? line.po_orders[0] : line.po_orders;
         return (line.currency ?? order?.currency ?? "").toUpperCase() === "THB" &&

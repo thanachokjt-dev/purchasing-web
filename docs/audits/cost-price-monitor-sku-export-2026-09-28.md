@@ -21,3 +21,9 @@ The workbook now opens on an additional `SKU Dashboard` sheet, with exactly one 
 Dashboard columns include stock quantity, PO count, purchased quantity, average merchandise / freight / combined THB unit costs, known USD unit cost average, coverage percentage, current selling price, margin based on the combined average, covered quantity and PO date range. Missing FX is reported with coverage and a note, rather than silently treating unknown THB costs as zero. Source USD averages use only POs that have a saved USD price. Current stock does not weight historical cost averages.
 
 Seven export regression tests pass, including unequal PO quantities, zero freight, partial FX coverage, all missing FX, dashboard sheet relationships and preservation of the original detail sheet.
+
+### Exclude unpriced merchandise
+
+Dashboard averages now exclude zero merchandise prices and their quantities before weighting, including unpriced lines within an otherwise priced PO. Zero freight on a positively priced merchandise line remains valid and contributes to the freight average. Dashboard USD averages also include only positive saved USD prices. The detail sheet preserves original prices and quantities; dashboard coverage reports the excluded quantities.
+
+Eight regression tests pass. Read-only verification for `100CREA-5000-SMIC-500` found 7 PO lines, 92 total units, and 77 units with positive prices. The corrected average is 459.8726 THB/unit with zero freight; the 15 units in two unpriced POs no longer dilute the average.

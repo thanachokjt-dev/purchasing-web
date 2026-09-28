@@ -176,24 +176,25 @@ export function costPriceMonitorExportRows(groups: CostPriceMonitorRow[], warnin
 export function costPriceMonitorDashboardRows(groups: CostPriceMonitorRow[], warnings: string[] = []): ExportRow[] {
   const rows: ExportRow[] = [
     { kind: "title", values: ["SKU Dashboard — average unit costs (THB)"] },
-    { kind: "note", values: ["One row per SKU. THB averages = sum(PO unit cost × remaining PO quantity) / covered quantity, across all non-cancelled PO history. Missing land cost = 0. POs missing FX are excluded from both THB averages; coverage shows the included quantity. USD average uses only POs with saved USD cost." + (warnings.length ? " Data warnings: " + warnings.join("; ") : "")] },
+    { kind: "note", values: ["One row per SKU. THB averages = sum(PO unit cost × remaining PO quantity) / covered quantity, across all non-cancelled PO history. Missing land cost = 0. Zero merchandise costs and POs missing FX are excluded from both THB averages; coverage shows the included quantity. USD average uses only positive saved USD costs." + (warnings.length ? " Data warnings: " + warnings.join("; ") : "")] },
     { kind: "header", values: ["Row type", "Product family", "Color", "SKU", "Variant", "Stock qty", "PO count", "Purchased qty", "Avg cost / unit THB", "Avg land cost / unit THB", "Avg cost + land / unit THB", "Avg USD (known POs)", "Cost coverage %", "Selling / unit THB", "Margin incl. land %", "Supplier", "Qty with THB cost", "First PO date", "Latest PO date", "Note"] },
   ];
   for (const group of groups) {
     for (const sku of group.skuDetails) {
       const history = (sku.poCosts ?? []).filter(cost => cost.qty > 0);
-      const covered = history.filter(cost => cost.unitThb != null && cost.landThb != null && cost.totalThb != null);
+      const averageHistory = sku.dashboardPoCosts ?? history;
+      const covered = averageHistory.filter(cost => cost.unitThb != null && cost.unitThb > 0 && cost.landThb != null && cost.totalThb != null);
       const totalQty = history.reduce((sum, cost) => sum + cost.qty, 0);
       const coveredQty = covered.reduce((sum, cost) => sum + cost.qty, 0);
       const base = coveredQty > 0 ? covered.reduce((sum, cost) => sum + cost.unitThb! * cost.qty, 0) / coveredQty : history.length ? null : 0;
       const land = coveredQty > 0 ? covered.reduce((sum, cost) => sum + cost.landThb! * cost.qty, 0) / coveredQty : history.length ? null : 0;
       const total = base != null && land != null ? base + land : null;
-      const usdHistory = history.filter(cost => cost.unitUsd != null);
+      const usdHistory = averageHistory.filter(cost => cost.unitUsd != null && cost.unitUsd > 0);
       const usdQty = usdHistory.reduce((sum, cost) => sum + cost.qty, 0);
       const usd = usdQty > 0 ? usdHistory.reduce((sum, cost) => sum + cost.unitUsd! * cost.qty, 0) / usdQty : null;
       const dates = history.map(cost => cost.date).filter(Boolean).sort();
       const missing = history.length - covered.length;
-      const note = !history.length ? "No PO cost" : missing ? `${missing} PO(s) excluded: missing FX; THB averages cover ${coveredQty} of ${totalQty} units` : "Quantity-weighted across all PO history";
+      const note = !history.length ? "No PO cost" : coveredQty < totalQty ? `${missing > 0 ? `${missing} PO(s) excluded` : "Some PO units excluded"}: zero/missing cost or FX; THB averages cover ${coveredQty} of ${totalQty} units` : "Quantity-weighted across priced PO history";
       rows.push({ values: [
         "SKU", group.mainName, group.color, sku.sku, sku.variantTitle, sku.currentQty,
         history.length, totalQty, base, land, total, usd, totalQty > 0 ? coveredQty / totalQty : 0,

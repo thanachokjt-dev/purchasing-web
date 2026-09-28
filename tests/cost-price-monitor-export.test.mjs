@@ -145,3 +145,23 @@ test("dashboard excludes missing-FX POs from both THB averages and reports cover
   assert.deepEqual(values.slice(8, 11), [null, null, null]);
   assert.equal(values[12], 0);
 });
+
+test("zero merchandise costs never dilute dashboard averages, including lines in the same PO", () => {
+  const data = group();
+  const entries = [entry("old", 10, 100, 20), entry("new", 30, 0, 0)];
+  data.skuDetails[0].poCosts = poCosts(entries);
+  let values = costPriceMonitorDashboardRows([data])[3].values;
+  assert.deepEqual(values.slice(8, 11), [100, 20, 120]);
+  assert.equal(values[16], 10);
+  assert.equal(values[7], 40);
+  assert.match(values[19], /zero\/missing cost/);
+  // Raw PO detail remains unchanged, while dashboard weights only priced lines.
+  entries[0].line.po_id = "new";
+  entries[0].order.po_id = "new";
+  data.skuDetails[0].poCosts = poCosts(entries);
+  data.skuDetails[0].dashboardPoCosts = poCosts(entries.filter(e => e.line.unit_price > 0));
+  values = costPriceMonitorDashboardRows([data])[3].values;
+  assert.deepEqual(values.slice(8, 11), [100, 20, 120]);
+  assert.equal(values[12], 0.25);
+  assert.equal(costPriceMonitorExportRows([data])[4].values[8], 25);
+});
