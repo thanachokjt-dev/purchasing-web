@@ -14,6 +14,7 @@ import {
   deleteDraftPoAction,
   receivePoItemAction,
   repricePoDraftLinesAction,
+  loadPreviousPoUsdCostsAction,
   removePoReceiptAction,
   updatePoHeaderRefsAction,
   updatePoDraftLinesAction,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/po-size-matrix";
 import { isProductPoPayment, paymentSnapshot, sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 import { notifyPoChanged } from "@/app/po/po-live-sync";
+import { usdPaymentFxRates, usdUnitToThb } from "@/lib/po-unit-costs";
 
 type SupplierOption = {
   supplierCode: string;
@@ -73,6 +75,9 @@ type DraftLineItem = {
   fullName?: string;
   qty: number;
   unitPrice: number;
+  unitPriceUsd?: number | null;
+  appliedFxRate?: number | null;
+  usdCostSourcePoReference?: string;
   unitPriceSource?: string;
   unitPriceSourceDate?: string;
   unitPriceSourcePoReference?: string;
@@ -2024,12 +2029,14 @@ export function SmartAddPoItemForm({
 
 export function PoDraftLinesForm({
   items,
+  payments = [],
   poId,
   poReference,
   supplierCode,
   supplierName,
 }: {
   items: DraftLineItem[];
+  payments?: PaymentRowItem[];
   poId: string;
   poReference: string;
   supplierCode: string;
@@ -2068,11 +2075,16 @@ export function PoDraftLinesForm({
   );
   const [repriceState, setRepriceState] = useState<PoActionState>(initialState);
   const [repricePending, startRepriceTransition] = useTransition();
+  const [usdHistoryState, setUsdHistoryState] = useState<PoActionState>(initialState);
+  const [usdHistoryPending, startUsdHistoryTransition] = useTransition();
   const [adjustPercent, setAdjustPercent] = useState("");
   const [bulkUnitPrice, setBulkUnitPrice] = useState("");
   const [logisticCost, setLogisticCost] = useState("");
   const [vatMode, setVatMode] = useState<"none" | "include" | "exclude">("none");
-  const [exchangeRates, setExchangeRates] = useState(["", "", ""]);
+  const [exchangeRates, setExchangeRates] = useState(() => {
+    const rates = usdPaymentFxRates(payments);
+    return rates.length ? rates : ["", "", ""];
+  });
   const [exchangeMode, setExchangeMode] = useState<"none" | "thai" | "foreign">("none");
   const [xeroCsvError, setXeroCsvError] = useState("");
   const [xeroCsvMessage, setXeroCsvMessage] = useState("");
@@ -2346,6 +2358,7 @@ export function PoDraftLinesForm({
         ...line,
         unitPrice: value,
         unitPriceSource: "manual",
+        appliedFxRate: null,
       })),
     );
     setBaseUnitPriceByLine(
@@ -2435,6 +2448,7 @@ export function PoDraftLinesForm({
       current.map((line) => ({
         ...line,
         unitPrice: Number((baseUnitPriceForLine(line) * factor).toFixed(4)),
+        appliedFxRate: null,
       })),
     );
   }
@@ -2445,6 +2459,7 @@ export function PoDraftLinesForm({
       current.map((line) => ({
         ...line,
         unitPrice: baseUnitPriceForLine(line),
+        appliedFxRate: null,
       })),
     );
   }
@@ -2470,11 +2485,18 @@ export function PoDraftLinesForm({
 
     setExchangeMode(averageRate === 1 ? "thai" : "foreign");
     setLines((current) =>
-      current.map((line) => ({
-        ...line,
-        unitPrice: Number((baseUnitPriceForLine(line) * averageRate).toFixed(4)),
-      })),
+      current.map((line) => {
+        const thb = usdUnitToThb(line.unitPriceUsd, averageRate);
+        return thb === null ? line : {
+          ...line, unitPrice: thb, currency: "THB", appliedFxRate: averageRate,
+        };
+      }),
     );
+    if (formRef.current) formRef.current.dataset.dirty = "true";
+    setBaseUnitPriceByLine((current) => ({ ...current, ...Object.fromEntries(
+      lines.filter((line) => line.unitPriceUsd != null).map((line) =>
+        [draftLineKey(line), usdUnitToThb(line.unitPriceUsd, averageRate)!]),
+    ) }));
   }
 
   function applyThaiSupplierRate() {
@@ -2484,6 +2506,8 @@ export function PoDraftLinesForm({
       current.map((line) => ({
         ...line,
         unitPrice: baseUnitPriceForLine(line),
+        appliedFxRate: null,
+        currency: "THB",
       })),
     );
   }
@@ -2669,6 +2693,17 @@ export function PoDraftLinesForm({
             Exchange rate average
           </p>
           <div className="flex flex-wrap items-end gap-2">
+            <button className="h-10 rounded-md border border-[#cfd6df] bg-white px-3 text-xs font-semibold"
+              disabled={usdHistoryPending} type="button" onClick={() => startUsdHistoryTransition(async () => {
+                if (!formRef.current) return;
+                const result = await loadPreviousPoUsdCostsAction(initialState, new FormData(formRef.current));
+                setUsdHistoryState(result);
+                if (!result.ok || !result.usdUnitCosts) return;
+                setLines((current) => current.map((line) => line.unitPriceUsd != null ? line : {
+                  ...line, unitPriceUsd: result.usdUnitCosts![line.sku] ?? null, appliedFxRate: null,
+                }));
+                if (formRef.current) formRef.current.dataset.dirty = "true";
+              })}>Load previous USD costs</button>
             {exchangeRates.map((value, index) => (
               <label className={labelClass} key={`exchange-${index + 1}`}>
                 Rate {index + 1}
@@ -2699,8 +2734,10 @@ export function PoDraftLinesForm({
             </button>
           </div>
           <p className="text-xs text-[#667380]">
-            Avg {exchangeRateAverage === null ? "-" : exchangeRateAverage.toFixed(6)}; 0 or blank is ignored.
+            Avg {exchangeRateAverage === null ? "-" : exchangeRateAverage.toFixed(6)}; USD product payment rates are loaded above.
+            Apply converts saved USD/unit to THB/unit. Rows without USD/unit keep their current cost.
           </p>
+          <ActionMessage state={usdHistoryState} />
         </div>
         {vatMode !== "none" ? (
           <span className="mb-1 rounded-md bg-[#eef4f8] px-2 py-1 text-xs font-semibold text-[#255f85]">
@@ -2772,7 +2809,8 @@ export function PoDraftLinesForm({
               <th className="px-4 py-3 font-semibold">SKU</th>
               <th className="px-4 py-3 font-semibold">Product</th>
               <th className="px-4 py-3 text-right font-semibold">Qty</th>
-              <th className="px-4 py-3 text-right font-semibold">Unit</th>
+              <th className="px-4 py-3 text-right font-semibold">USD/unit</th>
+              <th className="px-4 py-3 text-right font-semibold">Unit / currency</th>
               <th className="px-4 py-3 text-right font-semibold">Freight/unit</th>
               <th className="px-4 py-3 text-right font-semibold">Landed/unit</th>
               <th className="px-4 py-3 text-right font-semibold">Line amount</th>
@@ -2782,7 +2820,7 @@ export function PoDraftLinesForm({
           </thead>
           <tbody className="divide-y divide-[#edf1f5]">
             {lines.map((item, index) => {
-              const lineAmountCurrency = exchangeMode !== "none" ? "THB" : item.currency;
+              const lineAmountCurrency = item.currency;
               return (
               <tr
                 draggable
@@ -2846,15 +2884,32 @@ export function PoDraftLinesForm({
                   />
                 </td>
                 <td className="px-4 py-3">
+                  <input className={`${inputClass} text-right font-mono`} min="0"
+                    name="unitPriceUsd" step="0.0001" type="number"
+                    aria-label={`USD/unit ${item.sku}`} value={item.unitPriceUsd ?? ""}
+                    onChange={(event) => updateLine(index, {
+                      unitPriceUsd: event.target.value === "" ? null : Number(event.target.value),
+                      appliedFxRate: null,
+                    })} />
+                  <input name="appliedFxRate" type="hidden" value={item.appliedFxRate ?? ""} />
+                  <p className="mt-1 text-[11px] text-[#667380]">
+                    {item.appliedFxRate ? `Applied FX ${item.appliedFxRate}` : item.usdCostSourcePoReference ? `Previous PO · ${item.usdCostSourcePoReference}` : "USD source cost"}
+                  </p>
+                </td>
+                <td className="px-4 py-3">
                   <input
                     className={`${inputClass} text-right font-mono`}
                     min="0"
                     name="unitPrice"
-                    onChange={(event) => updateUnitPrice(index, Number(event.target.value) || 0)}
+                    onChange={(event) => {
+                      updateUnitPrice(index, Number(event.target.value) || 0);
+                      updateLine(index, { appliedFxRate: null });
+                    }}
                     step="0.0001"
                     type="number"
                     value={item.unitPrice}
                   />
+                  <p className="text-xs text-[#64707d]">{lineAmountCurrency}/unit</p>
                   <p className="mt-1 text-[11px] text-[#667380]">
                     {item.unitPriceSource === "latest_closed_po"
                       ? `Latest closed PO${item.unitPriceSourcePoReference ? ` · ${item.unitPriceSourcePoReference}` : ""}${item.unitPriceSourceDate ? ` · ${item.unitPriceSourceDate}` : ""}`

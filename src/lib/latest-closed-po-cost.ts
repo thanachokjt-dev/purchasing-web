@@ -15,6 +15,7 @@ type CostItemRow = {
   po_id: string;
   sku: string;
   unit_price: number | string | null;
+  source_payload?: Record<string, unknown> | null;
   updated_at: string | null;
 };
 
@@ -69,6 +70,7 @@ export async function getLatestClosedPoUnitCostBySkus(
   supabase: SupabaseClient,
   skus: string[],
   targetCurrency: string | ReadonlyMap<string, string>,
+  excludedPoId?: string,
 ) {
   const cleanSkus = Array.from(new Set(skus.map((sku) => sku.trim()).filter(Boolean)));
   const result = new Map<string, LatestClosedPoUnitCost>();
@@ -78,7 +80,7 @@ export async function getLatestClosedPoUnitCostBySkus(
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("po_items")
-      .select("id,po_id,sku,unit_price,currency,legacy_received_qty,created_at,updated_at")
+      .select("id,po_id,sku,unit_price,currency,source_payload,legacy_received_qty,created_at,updated_at")
       .in("sku", cleanSkus)
       .gt("unit_price", 0)
       .order("created_at", { ascending: false })
@@ -134,6 +136,7 @@ export async function getLatestClosedPoUnitCostBySkus(
   }
 
   const candidates = items.flatMap((item) => {
+    if (item.po_id === excludedPoId) return [];
     const order = orderById.get(item.po_id);
     if (!order) return [];
     const status = statusKey(order.work_status);
@@ -148,7 +151,11 @@ export async function getLatestClosedPoUnitCostBySkus(
         ? targetCurrency
         : targetCurrency.get(item.sku),
     );
-    if ((!received && !closed) || currency !== desiredCurrency) return [];
+    const savedUsd = item.source_payload?.unitPriceUsd;
+    const unitPrice = desiredCurrency === "USD" && savedUsd != null
+      ? numeric(Number(savedUsd)) : numeric(item.unit_price);
+    const costCurrency = desiredCurrency === "USD" && savedUsd != null ? "USD" : currency;
+    if ((!received && !closed) || costCurrency !== desiredCurrency || unitPrice <= 0) return [];
 
     const receivedDate = received
       ? latestText(receipt?.date, order.actual_received_date)
@@ -162,7 +169,7 @@ export async function getLatestClosedPoUnitCostBySkus(
       item.updated_at,
       item.created_at,
     );
-    return [{ item, order, received, purchaseDate, currency }];
+    return [{ item, order, received, purchaseDate, currency: costCurrency, unitPrice }];
   });
 
   candidates.sort((a, b) =>
@@ -176,7 +183,7 @@ export async function getLatestClosedPoUnitCostBySkus(
     result.set(candidate.item.sku, {
       currency: candidate.currency,
       latestPurchaseDate: candidate.purchaseDate.slice(0, 10),
-      latestUnitPrice: numeric(candidate.item.unit_price),
+      latestUnitPrice: candidate.unitPrice,
       sourcePoId: candidate.order.po_id,
       sourcePoReference:
         candidate.order.quotation_reference?.trim() ||

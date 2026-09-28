@@ -427,6 +427,9 @@ export type PoCatalogItemOption = {
 };
 
 type PortalItem = PoPortalItem & {
+  unitPriceUsd?: number | null;
+  appliedFxRate?: number | null;
+  usdCostSourcePoReference?: string;
   demandIndexHm?: number;
   freightUnitCost?: number;
   imageUrl?: string | null;
@@ -663,6 +666,8 @@ function mapSupabaseItem(
     backorderQty: numeric(item.backorder_qty),
     outstandingQty,
     unitPrice: numeric(item.unit_price),
+    unitPriceUsd: sourcePayload.unitPriceUsd == null ? null : numeric(Number(sourcePayload.unitPriceUsd)),
+    appliedFxRate: sourcePayload.appliedFxRate == null ? null : numeric(Number(sourcePayload.appliedFxRate)),
     freightUnitCost: numeric(item.freight_unit_cost),
     landedUnitCost: numeric(item.landed_unit_cost),
     lineAmount: numeric(item.line_amount),
@@ -3115,12 +3120,18 @@ export async function getPoPortalDetailData(poId: string) {
       .filter((row) => row.po_item_uuid)
       .map((row) => [row.po_item_uuid, row]),
   );
+  const usdHistory = await getLatestClosedPoUnitCostBySkus(supabase, skus, "USD", poId);
   const items = supabaseItems.map((item) => {
     const sku = item.sku ?? "";
     const control = controlBySku.get(sku);
 
     return {
       ...mapSupabaseItem(item, receiptTotalByItemId.get(item.id), imageBySku.get(sku)),
+      unitPriceUsd: !Object.hasOwn(objectValue(item.source_payload), "unitPriceUsd")
+        ? usdHistory.get(sku)?.latestUnitPrice ?? null
+        : objectValue(item.source_payload).unitPriceUsd == null ? null
+          : numeric(Number(objectValue(item.source_payload).unitPriceUsd)),
+      usdCostSourcePoReference: usdHistory.get(sku)?.sourcePoReference ?? "",
       demandIndexHm: demandBySku.get(sku) ?? 0,
       leadTimeDays: numeric(control?.lead_time_days),
       onHand: onHandBySku.get(sku) ?? 0,

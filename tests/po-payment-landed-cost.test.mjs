@@ -20,6 +20,7 @@ before(async () => {
     "049_po_payment_xero_status_draft.sql", "20260907075713_po_save_consistency.sql",
     "20260920014529_save_po_draft_lines_transaction.sql",
     "20260928072722_payment_landed_cost_by_value.sql",
+    "20260928075655_po_dual_unit_costs_and_fx.sql",
   ]) await db.exec(await sqlFile(`migrations/${migration}`));
 });
 after(async () => { await db?.close(); });
@@ -139,4 +140,38 @@ test("allocation helper remains restricted to authorized server actions", async 
     has_function_privilege('authenticated','allocate_po_payment_freight(text)','execute') b,
     has_function_privilege('service_role','allocate_po_payment_freight(text)','execute') c`);
   assert.deepEqual(result.rows[0], { a: false, b: false, c: true });
+});
+
+test("USD source and average FX persist independently of THB costs; conversion is idempotent", async () => {
+  const id = "DUAL-COST";
+  let lines = await fixture(id, [{ unitPriceUsd: 10, appliedFxRate: 33.1, unit_price: 999 }], "USD");
+  assert.equal(Number(lines[0].unit_price), 331);
+  assert.equal(lines[0].currency, "THB");
+  assert.equal(lines[0].source_payload.unitPriceUsd, 10);
+  assert.equal(lines[0].source_payload.appliedFxRate, 33.1);
+  assert.equal(Number((await db.query("select po_amount_foreign from po_orders where po_id=$1", [id])).rows[0].po_amount_foreign), 10);
+  await savePayments(id, [payment(id, "shipping", 20), payment(id, "freight", 30)]);
+  assert.equal(Number((await db.query("select po_amount_foreign from po_orders where po_id=$1", [id])).rows[0].po_amount_foreign), 10);
+  lines = await saveLines(id, [{ ...lines[0], unitPriceUsd: 10, appliedFxRate: 33.1 }]);
+  lines = await saveLines(id, [{ ...lines[0], unitPriceUsd: 10, appliedFxRate: 33.1 }]);
+  assert.equal(Number(lines[0].unit_price), 331);
+  assert.equal(Number(lines[0].landed_unit_cost), 381);
+  lines = await saveLines(id, [{ ...lines[0], unitPriceUsd: 10, appliedFxRate: null, unit_price: 340 }]);
+  assert.equal(Number(lines[0].unit_price), 340);
+  assert.equal(lines[0].source_payload.unitPriceUsd, 10);
+  assert.equal(lines[0].source_payload.appliedFxRate, null);
+  await assert.rejects(saveLines(id, [{ ...lines[0], unitPriceUsd: null, appliedFxRate: 33.1 }]), /Applying FX requires/);
+});
+
+test("THB costing reconstructs the combined Shipping + Freight across 2,984 units", async () => {
+  const id = "THB-RECONCILE";
+  await fixture(id, [{ ordered_qty: 1370, unit_price: 478.469 }, { ordered_qty: 1614, unit_price: 488.5775 }]);
+  await savePayments(id, [payment(id, "deposit", 6980.55, { currency: "USD", exchange_rate: 32.83 }),
+    payment(id, "beforeshipments70%", 16287.95, { currency: "USD", exchange_rate: 33.37 }),
+    payment(id, "freight", 341091.26), payment(id, "shipping", 20597.4)]);
+  const lines = await items(id);
+  assert.equal(await totalAllocated(id), 361688.66);
+  assert.ok(lines.every((line) => Number(line.freight_unit_cost) > 100));
+  const reconstructed = lines.reduce((sum, line) => sum + Number(line.ordered_qty) * Number(line.freight_unit_cost), 0);
+  assert.ok(Math.abs(reconstructed - 361688.66) < 0.2);
 });

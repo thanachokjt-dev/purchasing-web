@@ -31,6 +31,8 @@ export type PoActionState = {
     sku: string;
     sortPosition: number;
     unitPrice: number;
+    unitPriceUsd?: number | null;
+    appliedFxRate?: number | null;
     unitPriceSource: string;
     unitPriceSourceDate: string;
     unitPriceSourcePoReference: string;
@@ -41,7 +43,9 @@ export type PoActionState = {
   header?: Record<string, string>;
   paymentErrors?: Record<string, string>;
   payments?: PoPaymentDisplayRow[];
+  usdUnitCosts?: Record<string, number>;
   repricedLines?: Array<{
+    appliedFxRate?: number | null;
     itemUuid: string;
     landedUnitCost: number;
     lineAmount: number;
@@ -608,7 +612,9 @@ async function recalculatePoAmount(poId: string) {
       const orderExchangeRate = rates.get(orderCurrency) ?? 0;
       const amountThb = currency === "THB" ? landedAmount : landedAmount * exchangeRate;
       const amountForeign =
-        currency === orderCurrency
+        orderCurrency === "USD" && item.source_payload?.unitPriceUsd != null
+          ? qty * Number(item.source_payload.unitPriceUsd)
+          : currency === orderCurrency
           ? landedAmount
           : currency === "THB" && orderCurrency !== "THB" && orderExchangeRate > 0
             ? landedAmount / orderExchangeRate
@@ -1663,6 +1669,8 @@ export async function updatePoDraftLinesAction(
     await requireEditPoPermission("/po");
     const supabase = actionClient();
     const poId = requiredText(formData, "poId");
+    const usdPriceValues = formData.getAll("unitPriceUsd").map((value) => String(value).trim());
+    const appliedFxValues = formData.getAll("appliedFxRate").map((value) => String(value).trim());
     const itemUuids = formData.getAll("itemUuid").map((value) => String(value).trim());
     const deleteItemUuids = new Set(
       formData.getAll("deleteItemUuid").map((value) => String(value).trim()).filter(Boolean),
@@ -1731,6 +1739,8 @@ export async function updatePoDraftLinesAction(
         variant_title_snapshot: variantTitles[index] || null,
         ordered_qty: orderedQty,
         unit_price: unitPrice,
+        unitPriceUsd: usdPriceValues[index] ? nonNegativeTextNumber(usdPriceValues[index], `Line ${index + 1} USD/unit`) : null,
+        appliedFxRate: appliedFxValues[index] ? nonNegativeTextNumber(appliedFxValues[index], `Line ${index + 1} applied FX`) : null,
         freight_unit_cost: freightUnitCost,
         landed_unit_cost: landedUnitCost,
         line_amount: orderedQty * unitPrice,
@@ -1772,6 +1782,8 @@ export async function updatePoDraftLinesAction(
         sku: String(row.sku ?? ""),
         sortPosition: Number(row.sort_position ?? 0),
         unitPrice: Number(row.unit_price ?? 0),
+        unitPriceUsd: sourcePayload.unitPriceUsd == null ? null : Number(sourcePayload.unitPriceUsd),
+        appliedFxRate: sourcePayload.appliedFxRate == null ? null : Number(sourcePayload.appliedFxRate),
         unitPriceSource: String(sourcePayload.unitPriceSource ?? ""),
         unitPriceSourceDate: String(sourcePayload.unitPriceSourceDate ?? ""),
         unitPriceSourcePoReference: String(sourcePayload.unitPriceSourcePoReference ?? ""),
@@ -1786,6 +1798,22 @@ export async function updatePoDraftLinesAction(
     };
   } catch (error) {
     return initialError(error instanceof Error ? error.message : "Save draft failed");
+  }
+}
+
+export async function loadPreviousPoUsdCostsAction(
+  _previousState: PoActionState,
+  formData: FormData,
+): Promise<PoActionState> {
+  try {
+    await requireEditPoPermission("/po");
+    const poId = requiredText(formData, "poId");
+    const skus = formData.getAll("sku").map(String);
+    const costs = await getLatestClosedPoUnitCostBySkus(actionClient(), skus, "USD", poId);
+    return { ...success(`Found previous USD costs for ${costs.size} SKUs`),
+      usdUnitCosts: Object.fromEntries(Array.from(costs, ([sku, cost]) => [sku, cost.latestUnitPrice])) };
+  } catch (error) {
+    return initialError(error instanceof Error ? error.message : "USD cost history lookup failed");
   }
 }
 
@@ -1816,7 +1844,7 @@ export async function repricePoDraftLinesAction(
       throw new Error("Only unreceived draft POs can be repriced");
     }
 
-    const currency = String(order.currency || "THB").trim().toUpperCase();
+    const orderCurrency = String(order.currency || "THB").trim().toUpperCase();
     const { data: itemRows, error: itemError } = await supabase
       .from("po_items")
       .select("id,sku,ordered_qty,legacy_received_qty,unit_price,freight_unit_cost,landed_unit_cost,line_amount,currency,line_status,source_payload,updated_at")
@@ -1826,6 +1854,7 @@ export async function repricePoDraftLinesAction(
     if (itemError) throw new Error(itemError.message);
     const items = itemRows ?? [];
     if (!items.length) throw new Error("This PO has no draft lines to reprice");
+    const currency = String(items[0].currency || orderCurrency).trim().toUpperCase();
     if (
       items.some(
         (item) =>
@@ -1903,6 +1932,7 @@ export async function repricePoDraftLinesAction(
           unitPriceSourceDate: latestCost?.latestPurchaseDate ?? null,
           unitPriceSourcePoId: latestCost?.sourcePoId ?? null,
           unitPriceSourcePoReference: latestCost?.sourcePoReference ?? null,
+          appliedFxRate: null,
         };
         const { data: updated, error: updateError } = await supabase
           .from("po_items")
@@ -1925,6 +1955,7 @@ export async function repricePoDraftLinesAction(
         repricedLines.push({
           itemUuid: String(item.id),
           landedUnitCost,
+          appliedFxRate: null,
           lineAmount,
           unitPrice,
           unitPriceSource: latestCost ? "latest_closed_po" : "no_purchase_history",

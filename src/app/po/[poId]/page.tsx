@@ -1324,8 +1324,10 @@ export default async function PoDetailPage({
         {data.source === "supabase" && allowEditPo ? (
           <PoDraftLinesForm
             items={data.items}
+            payments={data.payments}
             key={data.items
-              .map((item) => `${item.itemUuid ?? item.poItemId}:${item.qty}:${item.unitPrice}:${item.freightUnitCost}:${item.landedUnitCost}`)
+              .map((item) => `${item.itemUuid ?? item.poItemId}:${item.qty}:${item.unitPrice}:${item.unitPriceUsd}:${item.appliedFxRate}:${item.freightUnitCost}:${item.landedUnitCost}`)
+              .concat(data.payments.map((payment) => `${payment.id}:${payment.exchange_rate}:${payment.currency}:${payment.payment_type}`))
               .join("|")}
             poId={order.poId}
             poReference={order.quotationReference || order.poId}
