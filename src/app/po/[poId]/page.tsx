@@ -952,7 +952,8 @@ export default async function PoDetailPage({
     receivedDate: order.actualReceivedDate,
   });
   const paidTotal = data.payments
-    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned" &&
+      String(payment.currency).trim().toUpperCase() === order.currency.trim().toUpperCase())
     .reduce(
     (sum, payment) => sum + Number(payment.amount ?? 0),
       0,

@@ -3681,7 +3681,8 @@ export function PaymentScheduleForm({
     sortedPayments.map((payment) => payment.payment_type ?? ""),
   );
   const paidTotal = localPayments
-    .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
+    .filter((payment) => (payment.payment_status ?? "paid") !== "planned" &&
+      String(payment.currency).trim().toUpperCase() === currency.trim().toUpperCase())
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
   const paidTotalThb = localPayments
     .filter((payment) => (payment.payment_status ?? "paid") !== "planned")
