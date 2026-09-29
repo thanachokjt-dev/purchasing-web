@@ -1,9 +1,9 @@
 export const expenseCategories = [
-  { key: "new", label: "ออเดอร์สินค้าใหม่", color: "#2563eb" },
-  { key: "existing", label: "ชำระออเดอร์เดิม", color: "#0d9488" },
-  { key: "shipping", label: "ขนส่งและศุลกากร", color: "#d97706" },
+  { key: "new", label: "New product orders", color: "#2563eb" },
+  { key: "existing", label: "Existing order payments", color: "#0d9488" },
+  { key: "shipping", label: "Shipping and customs", color: "#d97706" },
   { key: "vat", label: "VAT / IMPORT VAT", color: "#7c3aed" },
-  { key: "other", label: "ค่าใช้จ่ายสินค้าอื่น ๆ", color: "#64748b" },
+  { key: "other", label: "Other product expenses", color: "#64748b" },
 ] as const;
 export type ExpenseCategory = (typeof expenseCategories)[number]["key"];
 export type PurchaseOrder = {
@@ -107,7 +107,7 @@ export function purchasingPeriod(today = new Date()) {
     const date = new Date(Date.UTC(year, month - 4 + index, 1));
     return {
       key: date.toISOString().slice(0, 7),
-      label: new Intl.DateTimeFormat("th-TH", {
+      label: new Intl.DateTimeFormat("en-GB", {
         month: "short",
         year: "numeric",
         timeZone: "UTC",
@@ -214,8 +214,8 @@ export function buildPurchasingDashboard(
     const order = orderMap.get(item.po_id)!;
     const meta = metaMap.get(item.sku) ?? {
       sku: item.sku,
-      name: item.product_title_snapshot || item.sku || "ไม่ระบุสินค้า",
-      category: "ยังไม่จัดหมวด",
+      name: item.product_title_snapshot || item.sku || "Unnamed product",
+      category: "Uncategorized",
       groupKey: item.sku || item.id,
     };
     const currency = (item.currency || order.currency).trim().toUpperCase();
@@ -322,7 +322,9 @@ export function buildPurchasingDashboard(
         : number(payment.amount) * fx,
     );
     if (gross < 0) {
-      warnings.push(`Payment ${payment.id} เป็นยอดติดลบ จึงยังไม่รวม`);
+      warnings.push(
+        `Payment ${payment.id} has a negative amount and is excluded`,
+      );
       continue;
     }
     grossPaid = money(grossPaid + gross);
@@ -340,8 +342,8 @@ export function buildPurchasingDashboard(
         paymentId: payment.id,
         date: payment.payment_date!,
         poId: payment.po_id,
-        supplier: order?.supplier_name_snapshot || "ไม่ระบุซัพ",
-        type: payment.payment_type || "ไม่ระบุประเภท",
+        supplier: order?.supplier_name_snapshot || "Unknown supplier",
+        type: payment.payment_type || "Unspecified type",
         category,
         amountThb,
         grossThb: gross,
@@ -378,14 +380,16 @@ export function buildPurchasingDashboard(
     });
   }
   if (missingFx)
-    warnings.push(`${missingFx} Payment ไม่มี FX ที่ใช้ได้ ยังไม่รวมยอด THB`);
+    warnings.push(
+      `${missingFx} payment(s) have no valid FX and are excluded from THB totals`,
+    );
   if (undatedPaid)
     warnings.push(
-      `${undatedPaid} Payment จ่ายแล้วไม่มีวันที่ จึงระบุเดือนไม่ได้`,
+      `${undatedPaid} paid payment(s) have no payment date and cannot be assigned to a month`,
     );
   if (unallocated)
     warnings.push(
-      `${unallocated} Payment ปันส่วนสินค้าใหม่/เดิมไม่ได้เพราะข้อมูลต้นทุนไม่ครบ แสดงไว้ในออเดอร์เดิมและระบุในรายละเอียด`,
+      `${unallocated} payment(s) cannot be allocated between new and existing products because merchandise costs are incomplete; included under existing orders and marked in the details`,
     );
   const missingQty = [...groups.values()].reduce(
     (sum, group) => sum + group.missingCostQty,
@@ -393,7 +397,7 @@ export function buildPurchasingDashboard(
   );
   if (missingQty)
     warnings.push(
-      `สินค้าใหม่ ${missingQty.toLocaleString()} ชิ้นไม่มีต้นทุนดิบหรือ FX มูลค่าสินค้าแสดงเฉพาะส่วนที่ทราบ`,
+      `${missingQty.toLocaleString("en-US")} first-order units have no raw cost or FX; merchandise value includes only known costs`,
     );
   const categories = expenseCategories.map((category) => {
     const monthly = period.months.map((month) =>

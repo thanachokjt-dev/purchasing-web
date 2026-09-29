@@ -411,6 +411,6 @@ test("menu and access keep financial dashboards within existing authorized roles
   );
   assert.equal(
     roleNav.navigationGroup("purchasing-dashboard"),
-    "ภาพรวมและวิเคราะห์",
+    "Overview & Analytics",
   );
 });

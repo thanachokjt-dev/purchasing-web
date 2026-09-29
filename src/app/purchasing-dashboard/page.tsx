@@ -24,10 +24,10 @@ export default async function PurchasingDashboardPage({
         <header className="border-b border-slate-200 bg-white px-4 py-6 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold">ภาพรวมจัดซื้อ</h1>
+              <h1 className="text-2xl font-semibold">Purchasing Dashboard</h1>
               <p className="mt-1 text-sm text-slate-500">
                 {data.period.months[0].label} – {data.period.months[3].label} ·
-                ถึง {data.period.end} · บาท (THB)
+                through {data.period.end} · THB
               </p>
             </div>
             <a
@@ -37,15 +37,15 @@ export default async function PurchasingDashboardPage({
               Export Excel
             </a>
           </div>
-          <nav className="mt-5 flex gap-2" aria-label="มุมมองจัดซื้อ">
+          <nav className="mt-5 flex gap-2" aria-label="Purchasing views">
             {[
               {
-                label: "ภาพรวม",
+                label: "Overview",
                 href: "/purchasing-dashboard",
                 active: !detail,
               },
               {
-                label: "รายละเอียด",
+                label: "Details",
                 href: "/purchasing-dashboard?view=details",
                 active: detail,
               },

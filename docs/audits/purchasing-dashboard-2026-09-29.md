@@ -1,6 +1,6 @@
 # Purchasing dashboard
 
-New menu: **ภาพรวมจัดซื้อ**, `/purchasing-dashboard`, in the sidebar's overview/analytics group. A separate detail view at `?view=details` includes expandable product families and a searchable, paginated payment ledger. Existing dashboards remain available.
+New menu: **Purchasing Dashboard**, `/purchasing-dashboard`, in the sidebar's overview/analytics group. A separate detail view at `?view=details` includes expandable product families and a searchable, paginated payment ledger. Existing dashboards remain available.
 
 ## Definitions
 
@@ -29,3 +29,5 @@ Page and export share the same server loader/model. Export always contains the e
 - Source coverage alerts: four unallocated merchandise payments and 390 first-order units lacking raw price or FX.
 - Excel ZIP/XML parsed; openpyxl read all four sheets, the native chart, and the exact cash reconciliation. Native sparkline references checked directly in XML because openpyxl does not support the extension. No openpyxl save/rewrite occurred.
 - Local browser used a temporary, localhost-only development preview of the actual client view with a read-only live data fixture. Verified product search, family expansion, September shipping filter (including 341,091.26 and 20,597.40), and absence of console errors after correcting SVG title hydration. Mobile document width stayed within the viewport. The preview route is removed before production build; authenticated production interaction is not claimed.
+
+English UI update: dashboard labels, sidebar groups, month/date labels, warnings, and Excel content use English. Source-data classification still recognizes existing Thai aliases. Calculation rules are unchanged.

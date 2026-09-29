@@ -15,37 +15,101 @@ export type RoleNavItem = {
 
 const navByRole: Record<UserRole, RoleNavItem[]> = {
   accounting: [
-    { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
-    { href: "/payment-requests?view=accounting", key: "accounting-desk", label: "Accounting Desk" },
-    { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
-    { href: "/payment-requests?view=accounting", key: "payments", label: "Payments" },
+    {
+      href: "/purchasing-dashboard",
+      key: "purchasing-dashboard",
+      label: "Purchasing Dashboard",
+    },
+    {
+      href: "/payment-requests?view=accounting",
+      key: "accounting-desk",
+      label: "Accounting Desk",
+    },
+    {
+      href: "/cost-price-monitor",
+      key: "cost-price-monitor",
+      label: "Cost Price Monitor",
+    },
+    {
+      href: "/payment-requests?view=accounting",
+      key: "payments",
+      label: "Payments",
+    },
     { href: "/payment-requests", key: "approvals", label: "Approval Requests" },
-    { href: "/payment-requests?view=packs", key: "payment-packs", label: "Payment Packs" },
+    {
+      href: "/payment-requests?view=packs",
+      key: "payment-packs",
+      label: "Payment Packs",
+    },
     { href: "/payment-requests?view=paid", key: "reports", label: "Reports" },
   ],
   final_approver: [
-    { href: "/payment-requests?view=my-approvals", key: "my-approvals", label: "My Approvals" },
-    { href: "/payment-requests?view=history", key: "approval-history", label: "Approval History" },
+    {
+      href: "/payment-requests?view=my-approvals",
+      key: "my-approvals",
+      label: "My Approvals",
+    },
+    {
+      href: "/payment-requests?view=history",
+      key: "approval-history",
+      label: "Approval History",
+    },
   ],
   preliminary_approver: [
-    { href: "/payment-requests?view=my-approvals", key: "my-reviews", label: "My Reviews" },
-    { href: "/payment-requests?view=history", key: "approval-history", label: "Approval History" },
+    {
+      href: "/payment-requests?view=my-approvals",
+      key: "my-reviews",
+      label: "My Reviews",
+    },
+    {
+      href: "/payment-requests?view=history",
+      key: "approval-history",
+      label: "Approval History",
+    },
   ],
   retail_manager: [
     { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
-    { href: "/payment-requests?view=retail-review", key: "retail-review", label: "Retail Review" },
-    { href: "/payment-requests?view=history", key: "review-history", label: "Review History" },
+    {
+      href: "/payment-requests?view=retail-review",
+      key: "retail-review",
+      label: "Retail Review",
+    },
+    {
+      href: "/payment-requests?view=history",
+      key: "review-history",
+      label: "Review History",
+    },
   ],
   reviewer: [
-    { href: "/payment-requests?view=my-reviews", key: "my-reviews", label: "My Reviews" },
-    { href: "/payment-requests?view=history", key: "review-history", label: "Review History" },
+    {
+      href: "/payment-requests?view=my-reviews",
+      key: "my-reviews",
+      label: "My Reviews",
+    },
+    {
+      href: "/payment-requests?view=history",
+      key: "review-history",
+      label: "Review History",
+    },
   ],
   super_admin: [
     { href: "/dashboard", key: "dashboard", label: "Dashboard" },
-    { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
-    { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
+    {
+      href: "/purchasing-dashboard",
+      key: "purchasing-dashboard",
+      label: "Purchasing Dashboard",
+    },
+    {
+      href: "/sku-dashboard",
+      key: "sku-dashboard",
+      label: "SKU Sales Dashboard",
+    },
     { href: "/po", key: "po", label: "PO Portal" },
-    { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
+    {
+      href: "/cost-price-monitor",
+      key: "cost-price-monitor",
+      label: "Cost Price Monitor",
+    },
     { href: "/purchasing-decision", key: "reorder", label: "Reorder Planning" },
     { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
     {
@@ -59,11 +123,19 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
     { href: "/po#pipeline", key: "orders", label: "Purchase Orders" },
     { href: "/po#workbench", key: "workbench", label: "Workbench" },
     { href: "/po#pipeline", key: "suppliers", label: "Suppliers" },
-    { href: "/purchasing-decision/overstock-report", key: "reports", label: "Reports" },
+    {
+      href: "/purchasing-decision/overstock-report",
+      key: "reports",
+      label: "Reports",
+    },
     { href: "/purchasing-setup", key: "settings", label: "Settings" },
   ],
   viewer: [
-    { href: "/access-denied", key: "limited-dashboard", label: "Limited Dashboard" },
+    {
+      href: "/access-denied",
+      key: "limited-dashboard",
+      label: "Limited Dashboard",
+    },
   ],
 };
 
@@ -83,15 +155,27 @@ export function navItemsForUser(profile: CurrentUserProfile) {
     return getProfileAccessRole(profile) === "warehouse_staff"
       ? [
           { href: "/po", key: "po", label: "PO Portal" },
-          { href: "/stock-count", key: "stock-count", label: "Weekly Stock Count" },
+          {
+            href: "/stock-count",
+            key: "stock-count",
+            label: "Weekly Stock Count",
+          },
         ]
       : [{ href: "/po", key: "po", label: "PO Portal" }];
   }
   if (getProfileAccessRole(profile) === "dashboard_only") {
     return [
       { href: "/dashboard", key: "dashboard", label: "Dashboard" },
-      { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
-      { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
+      {
+        href: "/purchasing-dashboard",
+        key: "purchasing-dashboard",
+        label: "Purchasing Dashboard",
+      },
+      {
+        href: "/sku-dashboard",
+        key: "sku-dashboard",
+        label: "SKU Sales Dashboard",
+      },
     ];
   }
   if (getProfileAccessRole(profile) === "executive_readonly") {
@@ -132,7 +216,10 @@ export function defaultLandingForUser(profile: CurrentUserProfile) {
 }
 
 export function canAccessAdminControlTower(profile: CurrentUserProfile) {
-  return profile.role === "super_admin" || getProfileAccessRole(profile) === "executive_readonly";
+  return (
+    profile.role === "super_admin" ||
+    getProfileAccessRole(profile) === "executive_readonly"
+  );
 }
 
 export function canAccessDashboard(profile: CurrentUserProfile) {
@@ -145,14 +232,39 @@ export function canAccessDashboard(profile: CurrentUserProfile) {
 }
 
 export function canAccessPurchasingDashboard(profile: CurrentUserProfile) {
-  return !canViewIncomingEtaOnly(profile.email) && (canAccessDashboard(profile) || canAccessCostPriceMonitor(profile));
+  return (
+    !canViewIncomingEtaOnly(profile.email) &&
+    (canAccessDashboard(profile) || canAccessCostPriceMonitor(profile))
+  );
 }
 
 export function navigationGroup(key: string) {
-  if (["dashboard", "purchasing-dashboard", "sku-dashboard", "cost-price-monitor", "limited-dashboard"].includes(key)) return "ภาพรวมและวิเคราะห์";
-  if (["po", "reorder", "stock-count", "new-product-planner", "incoming", "orders", "workbench", "suppliers", "reports"].includes(key)) return "จัดซื้อและสต็อก";
-  if (key === "settings") return "ตั้งค่าระบบ";
-  return "การเงินและอนุมัติ";
+  if (
+    [
+      "dashboard",
+      "purchasing-dashboard",
+      "sku-dashboard",
+      "cost-price-monitor",
+      "limited-dashboard",
+    ].includes(key)
+  )
+    return "Overview & Analytics";
+  if (
+    [
+      "po",
+      "reorder",
+      "stock-count",
+      "new-product-planner",
+      "incoming",
+      "orders",
+      "workbench",
+      "suppliers",
+      "reports",
+    ].includes(key)
+  )
+    return "Purchasing & Inventory";
+  if (key === "settings") return "Settings";
+  return "Payments & Approvals";
 }
 
 export function canAccessPaymentWorkbench(profile: CurrentUserProfile) {

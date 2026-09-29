@@ -35,7 +35,7 @@ export function Sparkline({
       height="40"
       viewBox="0 0 110 40"
       role="img"
-      aria-label={`แนวโน้ม 4 เดือน: ${values.map(money).join(", ")}`}
+      aria-label={`Four-month trend: ${values.map(money).join(", ")}`}
     >
       <title>{values.map(money).join(" → ")}</title>
       <path d="M6 34H102" stroke="#e2e8f0" />
@@ -65,16 +65,14 @@ function MonthlyChart({ data }: { data: PurchasingDashboardData }) {
   return (
     <div className="p-5 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold">เงินจ่ายจริง แยกตามเดือนและประเภท</h2>
-        <span className="text-xs text-slate-500">
-          เดือนล่าสุดยังไม่ครบเดือน
-        </span>
+        <h2 className="font-semibold">Actual payments by month and category</h2>
+        <span className="text-xs text-slate-500">Current month is partial</span>
       </div>
       <svg
         viewBox="0 0 760 315"
         className="mt-5 w-full"
         role="img"
-        aria-label="กราฟแท่งซ้อนยอดจ่ายจริง 4 เดือน"
+        aria-label="Four-month stacked chart of actual payments"
       >
         {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
           <g key={fraction}>
@@ -168,19 +166,19 @@ function MonthlyChart({ data }: { data: PurchasingDashboardData }) {
 function CategoryTable({ data }: { data: PurchasingDashboardData }) {
   return (
     <section className={`${panel} overflow-hidden`}>
-      <h2 className="px-5 pt-5 font-semibold">เปรียบเทียบค่าใช้จ่าย 4 เดือน</h2>
+      <h2 className="px-5 pt-5 font-semibold">Four-month expense comparison</h2>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
-              <th className="px-5 py-3 text-left">ประเภท</th>
+              <th className="px-5 py-3 text-left">Category</th>
               {data.period.months.map((month) => (
                 <th className={cell} key={month.key}>
                   {month.label}
                 </th>
               ))}
-              <th className={cell}>รวม THB</th>
-              <th className={cell}>สัดส่วน</th>
+              <th className={cell}>Total THB</th>
+              <th className={cell}>Share</th>
               <th className={cell}>Sparkline</th>
             </tr>
           </thead>
@@ -217,7 +215,7 @@ function CategoryTable({ data }: { data: PurchasingDashboardData }) {
           </tbody>
           <tfoot className="border-t bg-slate-50 font-semibold">
             <tr>
-              <td className="px-5 py-3">รวมยอดจ่ายจริง</td>
+              <td className="px-5 py-3">Total actual payments</td>
               {data.monthly.map((value, index) => (
                 <td key={index} className={cell}>
                   {money(value)}
@@ -246,34 +244,38 @@ function NewOrderComparison({ data }: { data: PurchasingDashboardData }) {
   return (
     <section className={`${panel} overflow-hidden`}>
       <div className="px-5 pt-5">
-        <h2 className="font-semibold">การสั่งสินค้าใหม่ ตามวันที่ PO</h2>
+        <h2 className="font-semibold">New product orders by PO date</h2>
         <p className="mt-1 text-xs text-slate-500">
-          มูลค่าสั่งซื้อจากต้นทุนดิบ THB แยกจากยอดเงินที่จ่ายแล้ว ·
-          มูลค่าแสดงเฉพาะรายการที่ทราบต้นทุน
+          Order value uses raw THB cost, separately from actual payments. Value
+          includes only items with known costs.
         </p>
       </div>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
-              <th className="px-5 py-3 text-left">รายการ</th>
+              <th className="px-5 py-3 text-left">Metric</th>
               {data.period.months.map((month) => (
                 <th key={month.key} className={cell}>
                   {month.label}
                 </th>
               ))}
-              <th className={cell}>รวม</th>
+              <th className={cell}>Total</th>
               <th className={cell}>Sparkline</th>
             </tr>
           </thead>
           <tbody>
             {[
               {
-                label: "จำนวนสินค้าใหม่ (ชิ้น)",
+                label: "New product quantity (units)",
                 values: quantities,
                 format: qty,
               },
-              { label: "มูลค่าสินค้าใหม่ (THB)", values: costs, format: money },
+              {
+                label: "New product value (THB)",
+                values: costs,
+                format: money,
+              },
             ].map((row) => (
               <tr key={row.label} className="border-t border-slate-100">
                 <td className="px-5 py-3 whitespace-nowrap">{row.label}</td>
@@ -314,29 +316,27 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
     <section className={`${panel} p-5 sm:p-6`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold">
-            สินค้าในออเดอร์แรก · รวมเป็นกลุ่มสินค้า
-          </h2>
+          <h2 className="font-semibold">First-order products by family</h2>
           <p className="mt-1 text-xs text-slate-500">
-            Qty และมูลค่าสินค้าตามวันที่ PO · ยอดจ่ายตามวันที่ Payment ·
-            ต้นทุนดิบไม่รวม Landed cost
+            Quantity and order value use the PO date. Payments use the payment
+            date. Raw costs exclude landed cost.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <input
             className={control}
-            aria-label="ค้นหาสินค้าใหม่"
-            placeholder="ค้นหาชื่อ / SKU"
+            aria-label="Search first-order products"
+            placeholder="Search product / SKU"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
           <select
             className={control}
-            aria-label="หมวดสินค้าใหม่"
+            aria-label="New product category"
             value={category}
             onChange={(event) => setCategory(event.target.value)}
           >
-            <option value="">ทุกหมวดสินค้า</option>
+            <option value="">All product categories</option>
             {categories.map((value) => (
               <option key={value}>{value}</option>
             ))}
@@ -352,7 +352,7 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
             return (
               <div key={value}>
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {value} · {rows.length} กลุ่ม
+                  {value} · {rows.length} families
                 </h3>
                 {rows.map((group) => (
                   <details
@@ -373,19 +373,19 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
                         </span>
                         <span className="text-sm">
                           <small className="block text-slate-500">
-                            ต้นทุนขาด
+                            Missing cost
                           </small>
-                          {qty(group.missingCostQty)} ชิ้น
+                          {qty(group.missingCostQty)} units
                         </span>
                         <span className="text-sm tabular-nums">
                           <small className="block text-slate-500">
-                            มูลค่าสินค้า THB
+                            Product value THB
                           </small>
                           {money(sum(group.costs))}
                         </span>
                         <span className="text-sm tabular-nums">
                           <small className="block text-slate-500">
-                            จ่ายจริง ไม่รวม VAT
+                            Paid, excluding VAT
                           </small>
                           {money(sum(group.paid))}
                         </span>
@@ -402,8 +402,8 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
                                 Qty {month.label}
                               </th>
                             ))}
-                            <th className={cell}>ต้นทุนดิบ / หน่วย THB</th>
-                            <th className={cell}>มูลค่าสินค้า THB</th>
+                            <th className={cell}>Raw cost / unit THB</th>
+                            <th className={cell}>Product value THB</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -432,7 +432,7 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
                               ))}
                               <td className={cell}>
                                 {line.unitThb == null
-                                  ? "ไม่มีต้นทุน / FX"
+                                  ? "Missing cost / FX"
                                   : money(line.unitThb)}
                               </td>
                               <td className={cell}>
@@ -446,8 +446,9 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
                       </table>
                       {!group.lines.length && (
                         <p className="p-4 text-xs text-slate-500">
-                          PO ครั้งแรกอยู่นอกช่วง 4 เดือนนี้ มีเฉพาะ Payment
-                          ที่จ่ายในช่วงนี้ ตรวจ PO ได้จากตารางรายการจ่ายด้านล่าง
+                          The first PO is outside this four-month period. Only
+                          payments made during this period are included. Find
+                          the PO in the payment table below.
                         </p>
                       )}
                     </div>
@@ -458,7 +459,7 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
           })}
         {!groups.length && (
           <p className="py-6 text-center text-sm text-slate-500">
-            ไม่พบสินค้าในเงื่อนไขนี้
+            No products match these filters.
           </p>
         )}
       </div>
@@ -504,13 +505,14 @@ function Payments({
   return (
     <section className={`${panel} overflow-hidden`}>
       <div className="p-5">
-        <h2 className="font-semibold">รายละเอียดเงินจ่ายจริง</h2>
+        <h2 className="font-semibold">Actual payment details</h2>
         <p className="mt-1 text-xs text-slate-500">
-          แยกส่วน VAT และปันส่วนสินค้าใหม่/เดิมตามมูลค่าสินค้าใน PO แต่ละรายการ
+          VAT is separated. New and existing products are allocated by
+          merchandise value within each PO.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <select
-            aria-label="ประเภทค่าใช้จ่าย"
+            aria-label="Expense category"
             className={control}
             value={category}
             onChange={(event) => {
@@ -518,7 +520,7 @@ function Payments({
               setPage(0);
             }}
           >
-            <option value="">ทั้ง 5 ประเภท</option>
+            <option value="">All five categories</option>
             {expenseCategories.map((item) => (
               <option value={item.key} key={item.key}>
                 {item.label}
@@ -526,7 +528,7 @@ function Payments({
             ))}
           </select>
           <select
-            aria-label="เดือนที่จ่าย"
+            aria-label="Payment month"
             className={control}
             value={month}
             onChange={(event) => {
@@ -534,7 +536,7 @@ function Payments({
               setPage(0);
             }}
           >
-            <option value="">ทั้ง 4 เดือน</option>
+            <option value="">All four months</option>
             {data.period.months.map((item) => (
               <option value={item.key} key={item.key}>
                 {item.label}
@@ -542,7 +544,7 @@ function Payments({
             ))}
           </select>
           <select
-            aria-label="ซัพพลายเออร์"
+            aria-label="Supplier"
             className={control}
             value={supplier}
             onChange={(event) => {
@@ -550,15 +552,15 @@ function Payments({
               setPage(0);
             }}
           >
-            <option value="">ทุกซัพ</option>
+            <option value="">All suppliers</option>
             {suppliers.map((item) => (
               <option key={item}>{item}</option>
             ))}
           </select>
           <input
-            aria-label="ค้นหารายการจ่าย"
+            aria-label="Search payments"
             className={control}
-            placeholder="ค้นหา PO / SKU / ประเภท"
+            placeholder="Search PO / SKU / payment type"
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
@@ -567,7 +569,7 @@ function Payments({
           />
         </div>
         <p className="mt-3 text-sm">
-          {qty(rows.length)} ส่วนรายการ · ยอดตามตัวกรอง{" "}
+          {qty(rows.length)} allocated entries · Filtered total{" "}
           <strong>
             {money(rows.reduce((total, row) => total + row.amountThb, 0))} THB
           </strong>
@@ -578,16 +580,16 @@ function Payments({
           <thead className="bg-slate-50 text-slate-500">
             <tr>
               {[
-                "วันที่จ่าย",
-                "PO / ซัพ",
-                "ประเภท Payment",
-                "หมวดค่าใช้จ่าย",
-                "สินค้า / SKU",
-                "จำนวนเงิน THB",
+                "Payment date",
+                "PO / supplier",
+                "Payment type",
+                "Expense category",
+                "Product / SKU",
+                "Amount THB",
               ].map((label) => (
                 <th
                   key={label}
-                  className={`px-4 py-3 whitespace-nowrap ${label === "จำนวนเงิน THB" ? "text-right" : "text-left"}`}
+                  className={`px-4 py-3 whitespace-nowrap ${label === "Amount THB" ? "text-right" : "text-left"}`}
                 >
                   {label}
                 </th>
@@ -625,7 +627,7 @@ function Payments({
                 <td className="px-4 py-3">
                   {row.groupName ||
                     (row.category === "existing"
-                      ? "ปันส่วนไม่ได้: ไม่พบต้นทุนครบ"
+                      ? "Unallocated: incomplete merchandise costs"
                       : "—")}
                   <small className="block text-slate-500">{row.sku}</small>
                 </td>
@@ -638,13 +640,13 @@ function Payments({
         </table>
         {!rows.length && (
           <p className="p-8 text-center text-sm text-slate-500">
-            ไม่พบรายการจ่ายในเงื่อนไขนี้
+            No payments match these filters.
           </p>
         )}
       </div>
       <div className="flex items-center justify-between border-t px-5 py-3 text-sm text-slate-500">
         <span>
-          หน้า {current + 1} / {pages}
+          Page {current + 1} / {pages}
         </span>
         <div className="flex gap-2">
           <button
@@ -652,14 +654,14 @@ function Payments({
             disabled={current === 0}
             onClick={() => setPage(current - 1)}
           >
-            ก่อนหน้า
+            Previous
           </button>
           <button
             className={`${control} disabled:opacity-40`}
             disabled={current >= pages - 1}
             onClick={() => setPage(current + 1)}
           >
-            ถัดไป
+            Next
           </button>
         </div>
       </div>
@@ -681,14 +683,15 @@ export function PurchasingDashboardView({
   return (
     <div className="space-y-6 p-4 sm:p-8">
       <p className="text-xs leading-5 text-slate-500">
-        ยอดจ่ายจริงใช้เฉพาะ Payment ที่ Paid ตามวันที่จ่าย แยก VAT
-        รวมไว้ในหมวดภาษีแล้ว · สินค้าใหม่ = SKU ใน PO ครั้งแรกจากประวัติทั้งหมด
-        รวม SKU ในตระกูลเดียวกัน · Excel ส่งออกครบทั้ง 4 เดือน
+        Actual payments include Paid rows by payment date. Included VAT is
+        separated into the tax category. New products are SKUs in their first PO
+        across all history. SKUs are grouped by product family. Excel exports
+        the full four-month period.
       </p>
       {data.warnings.length > 0 && (
         <details className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <summary className="cursor-pointer font-medium">
-            ข้อมูลที่ต้องตรวจสอบ {data.warnings.length} ข้อ
+            Data coverage notes ({data.warnings.length})
           </summary>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             {data.warnings.map((warning) => (
@@ -702,24 +705,24 @@ export function PurchasingDashboardView({
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[
               {
-                label: "จ่ายจริงรวม THB",
+                label: "Total paid THB",
                 value: money(data.grossPaid),
-                note: `${data.paymentCount} Payment · ${data.poCount} PO`,
+                note: `${data.paymentCount} payments · ${data.poCount} POs`,
               },
               {
-                label: "สินค้าใหม่ในช่วงนี้",
-                value: `${qty(newQty)} ชิ้น`,
-                note: `มูลค่าต้นทุนดิบ ${money(newValue)} THB`,
+                label: "New products ordered",
+                value: `${qty(newQty)} units`,
+                note: `Raw merchandise value ${money(newValue)} THB`,
               },
               {
-                label: "ขนส่งและศุลกากร THB",
+                label: "Shipping and customs THB",
                 value: money(data.categories[2].total),
-                note: "Shipping + Freight + ค่าพิธีการ",
+                note: "Shipping + freight + customs clearance",
               },
               {
-                label: "ภาษีรวม THB",
+                label: "Total VAT THB",
                 value: money(data.categories[3].total),
-                note: "VAT แยกจากยอดรวม + Import VAT",
+                note: "Included VAT + import VAT",
               },
             ].map((card) => (
               <article className={`${panel} p-5`} key={card.label}>
@@ -740,17 +743,17 @@ export function PurchasingDashboardView({
             className={`${panel} flex flex-wrap items-center justify-between gap-3 p-5`}
           >
             <div>
-              <h2 className="font-semibold">เปิดดูสินค้าและรายการจ่าย</h2>
+              <h2 className="font-semibold">Explore products and payments</h2>
               <p className="mt-1 text-sm text-slate-500">
-                {data.newGroups.length} กลุ่มออเดอร์แรก · เปิดดู SKU และ PO
-                ที่เกี่ยวข้อง
+                {data.newGroups.length} first-order families · Explore SKUs and
+                POs in detail
               </p>
             </div>
             <Link
               href="/purchasing-dashboard?view=details"
               className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700"
             >
-              ดูรายละเอียด →
+              View details →
             </Link>
           </div>
         </>
@@ -762,8 +765,8 @@ export function PurchasingDashboardView({
         </>
       )}
       <p className="text-xs text-slate-400">
-        ข้อมูลอ่านจาก PO / Payment ล่าสุด ·{" "}
-        {new Intl.DateTimeFormat("th-TH", {
+        Latest PO / payment data ·{" "}
+        {new Intl.DateTimeFormat("en-GB", {
           dateStyle: "medium",
           timeStyle: "short",
           timeZone: "Asia/Bangkok",

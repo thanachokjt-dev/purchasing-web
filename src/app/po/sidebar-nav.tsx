@@ -18,10 +18,10 @@ export async function PoSidebarNav({ active }: { active: SidebarNavKey }) {
           </p>
         </div>
         {[
-          "ภาพรวมและวิเคราะห์",
-          "จัดซื้อและสต็อก",
-          "การเงินและอนุมัติ",
-          "ตั้งค่าระบบ",
+          "Overview & Analytics",
+          "Purchasing & Inventory",
+          "Payments & Approvals",
+          "Settings",
         ].map((group) => {
           const items = navItems.filter(
             (item) => navigationGroup(item.key) === group,

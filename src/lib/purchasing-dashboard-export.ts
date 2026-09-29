@@ -32,11 +32,11 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
     name: "Overview",
     chart: true,
     rows: [
-      ["ภาพรวมจัดซื้อ (THB)"],
+      ["Purchasing Dashboard (THB)"],
       [
-        `${data.period.start} ถึง ${data.period.end} · Paid เท่านั้น · เดือนล่าสุดยังไม่ครบ · VAT รวมแยกออกแล้ว`,
+        `${data.period.start} through ${data.period.end} · Paid only · Current month is partial · Included VAT is separated`,
       ],
-      ["ประเภทค่าใช้จ่าย", "รวม THB", "สัดส่วน %", ...monthLabels, "Sparkline"],
+      ["Expense category", "Total THB", "Share %", ...monthLabels, "Sparkline"],
       ...data.categories.map((category) => [
         category.label,
         category.total,
@@ -45,7 +45,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
         "",
       ]),
       [
-        "รวมยอดจ่ายจริง",
+        "Total actual payments",
         data.grossPaid,
         data.grossPaid ? 100 : 0,
         ...data.monthly,
@@ -57,25 +57,25 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
   const products: Sheet = {
     name: "New products",
     rows: [
-      ["สินค้าใหม่ / ออเดอร์ครั้งแรก"],
+      ["New products / first orders"],
       [
-        "SKU ใน PO ครั้งแรกจากประวัติทั้งหมด · Qty / ต้นทุนดิบตามวันที่ PO · จ่ายจริงตามวันที่ Payment ไม่รวม VAT · ไม่รวม Landed cost · กด + เพื่อเปิด SKU · แถวกลุ่มเป็นผลรวม ห้ามรวมซ้ำกับแถว SKU",
+        "SKUs in their first PO across all history. Qty / raw value use the PO date. Paid amounts use the payment date, excluding VAT. Landed cost is excluded. Click + to expand SKUs. Family totals must not be summed again with SKU rows.",
       ],
       [
-        "หมวดสินค้า",
-        "กลุ่มสินค้า",
+        "Product category",
+        "Product family",
         "SKU",
-        "Qty รวม",
-        "มูลค่าต้นทุนดิบ THB",
-        "จ่ายจริง THB",
-        "Qty ไม่มีต้นทุน",
-        ...monthLabels.map((label) => `จ่าย ${label}`),
+        "Total qty",
+        "Raw merchandise value THB",
+        "Actual paid THB",
+        "Qty missing cost",
+        ...monthLabels.map((label) => `Paid ${label}`),
         "Sparkline",
         ...monthLabels.map((label) => `Qty ${label}`),
-        ...monthLabels.map((label) => `มูลค่าดิบ ${label}`),
+        ...monthLabels.map((label) => `Raw value ${label}`),
         "PO",
-        "วันที่ PO",
-        "ต้นทุนดิบ / หน่วย THB",
+        "PO date",
+        "Raw cost / unit THB",
       ],
     ],
     levels: [0, 0, 0],
@@ -153,17 +153,17 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
   const payments: Sheet = {
     name: "Payments",
     rows: [
-      ["รายละเอียดเงินจ่ายจริง (THB)"],
+      ["Actual payment details (THB)"],
       [
-        "Amount allocated THB คือยอดแต่ละส่วน รวมแล้วเท่ากับยอดจ่ายจริง · Gross payment THB ซ้ำเมื่อ Payment เดียวถูกแบ่งหลายส่วน ห้ามรวมคอลัมน์ Gross",
+        "Amount allocated THB is additive and reconciles to actual payments. Gross payment THB repeats when one payment is split across entries. Do not sum the Gross column.",
       ],
       [
-        "วันที่จ่าย",
+        "Payment date",
         "PO",
-        "ซัพพลายเออร์",
-        "ประเภท Payment",
-        "หมวดค่าใช้จ่าย",
-        "กลุ่มสินค้า",
+        "Supplier",
+        "Payment type",
+        "Expense category",
+        "Product family",
         "SKU",
         "Amount allocated THB",
         "Gross payment THB (reference only)",
@@ -191,53 +191,53 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
   const sources: Sheet = {
     name: "Definitions",
     rows: [
-      ["นิยามและข้อมูลที่ต้องตรวจสอบ"],
+      ["Definitions and data coverage"],
       [
-        "แหล่งข้อมูล: PO / PO items / Payments / Product catalog / Purchasing controls",
+        "Sources: PO / PO items / Payments / Product catalog / Purchasing controls",
       ],
-      ["หัวข้อ", "รายละเอียด"],
+      ["Topic", "Details"],
       [
-        "ช่วงเวลา",
-        `${data.period.start} – ${data.period.end} (Asia/Bangkok) · 4 เดือนปฏิทินรวมเดือนปัจจุบัน`,
-      ],
-      [
-        "ยอดจ่ายจริง",
-        "Paid ตาม payment_date · ไม่รวม Planned · ไม่คาดเดา FX ที่หายไป",
+        "Reporting period",
+        `${data.period.start} – ${data.period.end} (Asia/Bangkok) · Four calendar months including the current month`,
       ],
       [
-        "สินค้าใหม่",
-        "SKU ใน PO ครั้งแรกจากประวัติทั้งหมด ไม่รวม Draft / Cancelled และ Qty ที่ยกเลิก · รวม SKU ชื่อกลุ่มเดียวกัน",
+        "Actual payments",
+        "Paid by payment_date. Planned payments are excluded. Missing FX is never guessed.",
       ],
       [
-        "ต้นทุนสินค้า",
-        "Qty × Unit price THB จากแต่ละ PO ไม่รวม Freight / Landed cost และไม่ใช้ราคาประเมินหรือ Manual cost override",
+        "New products",
+        "SKUs in their first PO across all history. Draft/cancelled orders and cancelled quantity are excluded. SKUs with the same family name are grouped.",
       ],
       [
-        "FX สินค้า",
-        "THB ใช้ 1 · สกุลอื่นใช้ FX ที่ Apply ไว้ใน PO หรือค่าเฉลี่ย FX ของ Product payment ใน PO นั้น",
+        "Merchandise cost",
+        "Qty × raw unit price THB within each PO. Freight / landed cost, estimates and manual cost overrides are excluded.",
       ],
       [
-        "ใหม่ / เดิม",
-        "Payment สินค้าใน PO ผสมแบ่งตามสัดส่วนต้นทุนดิบของแต่ละ SKU ปัดเศษในระดับสตางค์ให้ตรงยอดเดิม",
+        "Merchandise FX",
+        "THB uses 1. Other currencies use applied PO FX or the average merchandise-payment FX within that PO.",
+      ],
+      [
+        "New / existing",
+        "Mixed merchandise payments are allocated by each SKU raw merchandise value. Satang rounding preserves the original payment total.",
       ],
       [
         "VAT",
-        "VAT ที่แยกไว้ใน Payment ย้ายจากหมวดเดิมมารวมกับ VAT / IMPORT VAT จึงไม่ถูกนับซ้ำ",
+        "Included payment VAT is moved from its original category into VAT / IMPORT VAT and is never double-counted.",
       ],
       [
-        "ค่าขนส่ง",
-        "Shipping / Freight / Customs / Duty / Clearance / Brokerage หรือประเภทภาษาไทยที่ระบุขนส่ง ศุลกากร หรือพิธีการ",
+        "Transport",
+        "Shipping / Freight / Customs / Duty / Clearance / Brokerage, including equivalent Thai source classifications.",
       ],
       [
-        "Other รุ่นเก่า",
-        "Other ที่ Reference / Note ระบุ VAT หรือค่าศุลกากรชัดเจน จัดเข้าหมวดนั้น โดยไม่แก้ข้อมูลต้นฉบับ",
+        "Legacy Other rows",
+        "Other rows explicitly identifying VAT or customs in Reference / Note are classified accordingly without changing source records.",
       ],
       [
-        "รายการยกเลิก",
-        "ยอด Paid ของ PO ที่ยกเลิกยังคงรวมเป็นเงินจริง แต่ไม่ปันส่วนเข้ากลุ่มสินค้าใหม่",
+        "Cancelled orders",
+        "Paid amounts on cancelled POs remain actual cash payments but are not allocated to new products.",
       ],
-      ["อัปเดตข้อมูล", data.generatedAt],
-      ...data.warnings.map((warning) => ["ข้อควรตรวจสอบ", warning]),
+      ["Data updated", data.generatedAt],
+      ...data.warnings.map((warning) => ["Coverage note", warning]),
     ],
   };
   return [summary, products, payments, sources];

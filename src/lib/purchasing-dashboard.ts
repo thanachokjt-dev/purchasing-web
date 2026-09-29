@@ -34,25 +34,25 @@ type ControlRow = {
 
 function majorCategory(source: string) {
   const value = source.toLowerCase();
-  if (/kid|child|เด็ก/.test(value)) return "สินค้าเด็ก";
-  if (/supplement|nutrition|อาหารเสริม/.test(value)) return "อาหารเสริม";
-  if (/cream|care|balm|ครีม/.test(value)) return "ผลิตภัณฑ์ดูแลร่างกาย";
+  if (/kid|child|เด็ก/.test(value)) return "Kids";
+  if (/supplement|nutrition|อาหารเสริม/.test(value)) return "Supplements";
+  if (/cream|care|balm|ครีม/.test(value)) return "Body care";
   if (/glove|shin|fight gear|protect|อุปกรณ์ฝึก/.test(value))
-    return "อุปกรณ์ฝึกและป้องกัน";
+    return "Training and protective gear";
   if (
     /apparel|fight wear|shirt|short|pants|bra|compression|rash|เสื้อผ้า/.test(
       value,
     )
   )
-    return "เสื้อผ้า";
+    return "Apparel";
   if (/accessor|bag|wrap|cap|hat|อุปกรณ์เสริม/.test(value))
-    return "อุปกรณ์เสริม";
-  return source || "ยังไม่จัดหมวด";
+    return "Accessories";
+  return source || "Uncategorized";
 }
 
 export async function getPurchasingDashboardData() {
   const client = getSupabaseServiceClient();
-  if (!client) throw new Error("ไม่สามารถเชื่อมต่อฐานข้อมูลจัดซื้อได้");
+  if (!client) throw new Error("Unable to connect to the purchasing database");
   async function all<T>(
     table: string,
     columns: string,
@@ -66,9 +66,7 @@ export async function getPurchasingDashboardData() {
         .order(order)
         .range(from, from + 999);
       if (result.error)
-        throw new Error(
-          `โหลดข้อมูล ${table} ไม่สำเร็จ: ${result.error.message}`,
-        );
+        throw new Error(`Unable to load ${table}: ${result.error.message}`);
       const batch = result.data as unknown as T[];
       rows.push(...batch);
       if (batch.length < 1000) return rows;
@@ -119,7 +117,7 @@ export async function getPurchasingDashboardData() {
             sku,
             tags: control?.tags_override?.length ? control.tags_override : tags,
           },
-          "ยังไม่จัดหมวด",
+          "Uncategorized",
         ),
     );
     metadata.set(sku, {
