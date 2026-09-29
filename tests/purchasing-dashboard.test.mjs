@@ -132,6 +132,193 @@ const meta = (sku) => ({
 const categoryTotal = (data, category) =>
   data.categories.find((row) => row.key === category).total;
 
+test("manual PO classification moves merchandise only and Auto restores first-SKU history", () => {
+  const orders = [order("first", "2026-06-01"), order("repeat", "2026-07-01")];
+  const items = [
+    line("a", "first", "A", 2, 100),
+    line("b", "repeat", "A", 3, 100),
+  ];
+  const payments = [
+    payment("a", "first", "2026-06-10"),
+    payment("b", "repeat", "2026-07-10"),
+    payment("s", "first", "2026-06-10", 50, "shipping"),
+    payment("v", "first", "2026-06-10", 30, "vat_import_vat"),
+  ];
+  const build = (classification) =>
+    buildPurchasingDashboard(
+      [
+        { ...orders[0], purchasing_order_classification: classification },
+        orders[1],
+      ],
+      items,
+      payments,
+      [meta("A")],
+      now,
+    );
+  const automatic = build("auto");
+  const existing = build("existing");
+  assert.equal(categoryTotal(automatic, "new"), 100);
+  assert.equal(categoryTotal(existing, "new"), 0);
+  assert.equal(categoryTotal(existing, "existing"), 200);
+  assert.equal(existing.newGroups.length, 0);
+  assert.equal(existing.grossPaid, automatic.grossPaid);
+  assert.equal(categoryTotal(existing, "shipping"), 50);
+  assert.equal(categoryTotal(existing, "vat"), 44);
+  assert.equal(existing.orderClassifications.first, "existing");
+  assert.deepEqual(build("auto"), automatic);
+  const forceNew = buildPurchasingDashboard(
+    [orders[0], { ...orders[1], purchasing_order_classification: "new" }],
+    items,
+    payments,
+    [meta("A")],
+    now,
+  );
+  assert.equal(categoryTotal(forceNew, "new"), 200);
+  assert.equal(categoryTotal(forceNew, "existing"), 0);
+  assert.deepEqual(forceNew.newGroups[0].quantities, [2, 3, 0, 0]);
+  assert.deepEqual(forceNew.newGroups[0].costs, [200, 300, 0, 0]);
+  assert.equal(forceNew.grossPaid, automatic.grossPaid);
+  const paymentsSheet = exporter.purchasingExportSheets(forceNew)[2];
+  const column = paymentsSheet.rows[2].indexOf("PO classification");
+  assert.ok(column >= 0);
+  assert.ok(
+    paymentsSheet.rows
+      .slice(3)
+      .filter((row) => row[1] === "repeat")
+      .every((row) => row[column] === "new"),
+  );
+});
+
+test("manual New keeps cash classified when raw SKU cost is unavailable", () => {
+  const data = buildPurchasingDashboard(
+    [order("a", "2026-06-01", { purchasing_order_classification: "new" })],
+    [line("a", "a", "A", 5, 0)],
+    [payment("p", "a", "2026-06-10")],
+    [meta("A")],
+    now,
+  );
+  assert.equal(categoryTotal(data, "new"), 100);
+  assert.equal(categoryTotal(data, "existing"), 0);
+  assert.equal(categoryTotal(data, "vat"), 7);
+  assert.equal(data.grossPaid, 107);
+  assert.deepEqual(data.newGroups[0].costs, [0, 0, 0, 0]);
+});
+
+test("classification action enforces editor access and records only the requested PO", async () => {
+  let allowed = false;
+  let writes = 0;
+  let update;
+  let selected;
+  let result = { data: { po_id: "PO-1" }, error: null };
+  const invalidations = [];
+  const action = compile("../src/app/purchasing-dashboard/actions.ts", {
+    "next/cache": { revalidatePath: (path) => invalidations.push(path) },
+    "@/lib/auth": {
+      requireUser: async () => ({
+        isActive: true,
+        email: "editor@example.test",
+        authUserId: "actor-id",
+      }),
+    },
+    "@/lib/access-control": { canEditPo: () => allowed },
+    "@/lib/role-nav": { canAccessPurchasingDashboard: () => true },
+    "@/lib/supabase/server": {
+      getSupabaseServiceClient: () => ({
+        from: (table) => {
+          assert.equal(table, "po_orders");
+          return {
+            update: (value) => {
+              writes++;
+              update = value;
+              return {
+                eq: (key, id) => {
+                  selected = [key, id];
+                  return {
+                    select: () => ({ maybeSingle: async () => result }),
+                  };
+                },
+              };
+            },
+          };
+        },
+      }),
+    },
+  });
+  assert.equal(
+    (await action.saveOrderClassification("PO-1", "existing")).ok,
+    false,
+  );
+  assert.equal(writes, 0);
+  allowed = true;
+  assert.equal((await action.saveOrderClassification("PO-1", "bad")).ok, false);
+  assert.equal(writes, 0);
+  assert.equal(
+    (await action.saveOrderClassification("PO-1", "existing")).ok,
+    true,
+  );
+  assert.deepEqual(selected, ["po_id", "PO-1"]);
+  assert.equal(update.purchasing_order_classification, "existing");
+  assert.equal(update.purchasing_classified_by, "actor-id");
+  assert.ok(!Number.isNaN(Date.parse(update.purchasing_classified_at)));
+  assert.deepEqual(invalidations, ["/purchasing-dashboard"]);
+  result = { data: null, error: null };
+  assert.equal(
+    (await action.saveOrderClassification("missing", "new")).ok,
+    false,
+  );
+  result = { data: null, error: { message: "database failure" } };
+  assert.equal(
+    (await action.saveOrderClassification("PO-1", "auto")).ok,
+    false,
+  );
+  assert.equal(invalidations.length, 1);
+});
+
+test("classification migration defaults existing POs to Auto and constrains persisted values", async () => {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const db = new PGlite();
+  try {
+    await db.exec(
+      "create table public.po_orders (po_id text primary key, total numeric); insert into public.po_orders values ('PO-1', 107);",
+    );
+    await db.exec(
+      fs.readFileSync(
+        new URL(
+          "../supabase/migrations/20260929091100_purchasing_order_classification.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    assert.deepEqual(
+      (
+        await db.query(
+          "select purchasing_order_classification, total from public.po_orders",
+        )
+      ).rows,
+      [{ purchasing_order_classification: "auto", total: "107" }],
+    );
+    await db.exec(
+      "update public.po_orders set purchasing_order_classification = 'existing'",
+    );
+    assert.equal(
+      (
+        await db.query(
+          "select purchasing_order_classification from public.po_orders",
+        )
+      ).rows[0].purchasing_order_classification,
+      "existing",
+    );
+    await assert.rejects(
+      db.exec(
+        "update public.po_orders set purchasing_order_classification = 'invalid'",
+      ),
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("four calendar months include Bangkok today and cross year boundaries", () => {
   const period = purchasingPeriod(now);
   assert.equal(period.start, "2026-06-01");

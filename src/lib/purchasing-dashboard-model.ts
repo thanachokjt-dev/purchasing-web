@@ -15,6 +15,7 @@ export type PurchaseOrder = {
   currency: string;
   supplier_name_snapshot: string;
   supplier_code: string;
+  purchasing_order_classification?: "auto" | "new" | "existing";
 };
 export type PurchaseLine = {
   id: string;
@@ -320,7 +321,10 @@ export function buildPurchasingDashboard(
     return group;
   };
   const isFirst = (line: NewProductLine) =>
-    firstPo.get(line.sku) === line.poId && Boolean(line.date);
+    orderMap.get(line.poId)?.purchasing_order_classification === "new" ||
+    (orderMap.get(line.poId)?.purchasing_order_classification !== "existing" &&
+      firstPo.get(line.sku) === line.poId &&
+      Boolean(line.date));
   for (const line of lineInfo.values()) {
     if (!isFirst(line) || !inPeriod(line.date)) continue;
     const group = groupFor(line),
@@ -407,7 +411,10 @@ export function buildPurchasingDashboard(
     }
     const lines = linesByPo.get(payment.po_id) ?? [];
     if (!lines.length || lines.some((line) => line.costThb == null)) {
-      add("existing", net);
+      add(
+        order?.purchasing_order_classification === "new" ? "new" : "existing",
+        net,
+      );
       unallocated++;
       continue;
     }
@@ -434,7 +441,7 @@ export function buildPurchasingDashboard(
     );
   if (unallocated)
     warnings.push(
-      `${unallocated} payment(s) cannot be allocated between new and existing products because merchandise costs are incomplete; included under existing orders and marked in the details`,
+      `${unallocated} payment(s) cannot be allocated to SKUs because merchandise costs are incomplete; shown under their manual PO classification, or existing orders in Auto mode`,
     );
   const missingQty = [...groups.values()].reduce(
     (sum, group) => sum + group.missingCostQty,
@@ -473,6 +480,12 @@ export function buildPurchasingDashboard(
   );
   return {
     period,
+    orderClassifications: Object.fromEntries(
+      orders.map((order) => [
+        order.po_id,
+        order.purchasing_order_classification || "auto",
+      ]),
+    ),
     categories,
     monthly,
     grossPaid,

@@ -60,7 +60,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
     rows: [
       ["New products / first orders"],
       [
-        "SKUs in their first PO across all history. Qty / raw value use the PO date. Paid amounts use the payment date, excluding VAT. Landed cost is excluded. Click + to expand SKUs. Family totals must not be summed again with SKU rows.",
+        "Auto uses each SKU's first PO across all history. Manual New / Existing classification applies to all merchandise in that PO and takes priority. Qty / raw value use the PO date. Paid amounts use the payment date, excluding VAT. Landed cost is excluded. Click + to expand SKUs. Family totals must not be summed again with SKU rows.",
       ],
       [
         "Product category",
@@ -172,6 +172,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
         "Reference",
         "Note",
         "Expense source",
+        "PO classification",
       ],
       ...data.records.map((record) => [
         record.date,
@@ -188,6 +189,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
         record.reference,
         record.note,
         expenseSourceLabel(record),
+        data.orderClassifications[record.poId] || "auto",
       ]),
     ],
   };
@@ -209,7 +211,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
       ],
       [
         "New products",
-        "SKUs in their first PO across all history. Draft/cancelled orders and cancelled quantity are excluded. SKUs with the same family name are grouped.",
+        "Auto uses each SKU's first PO across all history. Manual New / Existing classification applies to all merchandise in that PO and takes priority. Draft/cancelled orders and cancelled quantity are excluded. SKUs with the same family name are grouped.",
       ],
       [
         "Merchandise cost",

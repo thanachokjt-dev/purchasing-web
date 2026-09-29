@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
+import { saveOrderClassification } from "./actions";
 import {
   expenseCategories,
   expenseBreakdown,
@@ -452,7 +453,7 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
         <div className="flex flex-wrap gap-2">
           <input
             className={control}
-            aria-label="Search first-order products"
+            aria-label="Search new-order products"
             placeholder="Search product / SKU"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -573,9 +574,9 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
                       </table>
                       {!group.lines.length && (
                         <p className="p-4 text-xs text-slate-500">
-                          The first PO is outside this four-month period. Only
-                          payments made during this period are included. Find
-                          the PO in the payment table below.
+                          The qualifying PO is outside this four-month period.
+                          Only payments made during this period are included.
+                          Find the PO in the payment table below.
                         </p>
                       )}
                     </div>
@@ -597,10 +598,16 @@ function NewProducts({ data }: { data: PurchasingDashboardData }) {
 function Payments({
   data,
   initialCategory,
+  canClassify,
 }: {
   data: PurchasingDashboardData;
   initialCategory: string;
+  canClassify: boolean;
 }) {
+  const router = useRouter();
+  const [saving, startSaving] = useTransition();
+  const [savingPo, setSavingPo] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
   const [category, setCategory] = useState(initialCategory),
     [month, setMonth] = useState(""),
     [supplier, setSupplier] = useState(""),
@@ -630,10 +637,44 @@ function Payments({
     ...new Set(data.records.map((row) => row.supplier)),
   ].sort();
   const filteredBreakdown = expenseBreakdown(rows);
+  const visibleRows = rows.slice(current * 50, (current + 1) * 50);
+  const editableRows = new Map<string, number>();
+  visibleRows.forEach((row, index) => {
+    if (
+      (row.category === "new" || row.category === "existing") &&
+      !editableRows.has(row.poId)
+    )
+      editableRows.set(row.poId, index);
+  });
+  function classify(poId: string, value: string) {
+    setSavingPo(poId);
+    setSaveMessage("");
+    startSaving(async () => {
+      try {
+        const result = await saveOrderClassification(poId, value);
+        setSaveMessage(result.message);
+        if (result.ok) router.refresh();
+      } catch {
+        setSaveMessage("Unable to save. Please retry.");
+      } finally {
+        setSavingPo("");
+      }
+    });
+  }
   return (
     <section className={`${panel} overflow-hidden`}>
       <div className="p-5">
         <h2 className="font-semibold">Actual payment details</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          PO classification applies to all merchandise in that PO. Auto uses
+          each SKU&apos;s first PO; manual New / Existing overrides it. VAT and
+          transport stay separate.
+        </p>
+        {saveMessage && (
+          <p role="status" className="mt-2 text-sm text-slate-700">
+            {saveMessage}
+          </p>
+        )}
         <p className="mt-1 text-xs text-slate-500">
           VAT is separated. New and existing products are allocated by
           merchandise value within each PO.
@@ -734,6 +775,7 @@ function Payments({
                 "Payment type",
                 "Expense category",
                 "Product / SKU",
+                "PO classification",
                 "Amount THB",
               ].map((label) => (
                 <th
@@ -746,7 +788,7 @@ function Payments({
             </tr>
           </thead>
           <tbody>
-            {rows.slice(current * 50, (current + 1) * 50).map((row, index) => (
+            {visibleRows.map((row, index) => (
               <tr
                 key={`${row.paymentId}-${index}`}
                 className="border-t border-slate-100"
@@ -780,10 +822,42 @@ function Payments({
                 </td>
                 <td className="px-4 py-3">
                   {row.groupName ||
-                    (row.category === "existing"
+                    (row.category === "existing" || row.category === "new"
                       ? "Unallocated: incomplete merchandise costs"
                       : "—")}
                   <small className="block text-slate-500">{row.sku}</small>
+                </td>
+                <td className="px-4 py-3">
+                  {row.category === "new" || row.category === "existing" ? (
+                    canClassify && editableRows.get(row.poId) === index ? (
+                      <select
+                        aria-label={`PO classification ${row.poId}`}
+                        className={`${control} min-w-[150px] disabled:opacity-60`}
+                        disabled={saving}
+                        value={data.orderClassifications[row.poId] || "auto"}
+                        onChange={(event) =>
+                          classify(row.poId, event.target.value)
+                        }
+                      >
+                        <option value="auto">Auto (first SKU PO)</option>
+                        <option value="new">New order</option>
+                        <option value="existing">Existing order</option>
+                      </select>
+                    ) : (
+                      <span className="text-xs text-slate-500">
+                        {data.orderClassifications[row.poId] === "new"
+                          ? "Manual: New order"
+                          : data.orderClassifications[row.poId] === "existing"
+                            ? "Manual: Existing order"
+                            : "Auto"}
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                  {savingPo === row.poId && (
+                    <small className="block text-slate-500">Saving…</small>
+                  )}
                 </td>
                 <td className={`${cell} font-medium`}>
                   {money(row.amountThb)}
@@ -827,10 +901,12 @@ export function PurchasingDashboardView({
   data,
   detail = false,
   initialCategory = "",
+  canClassify = false,
 }: {
   data: PurchasingDashboardData;
   detail?: boolean;
   initialCategory?: string;
+  canClassify?: boolean;
 }) {
   const newQty = sum(data.newGroups.flatMap((group) => group.quantities)),
     newValue = sum(data.newGroups.flatMap((group) => group.costs));
@@ -838,9 +914,9 @@ export function PurchasingDashboardView({
     <div className="space-y-6 p-4 sm:p-8">
       <p className="text-xs leading-5 text-slate-500">
         Actual payments include Paid rows by payment date. Included VAT is
-        separated into the tax category. New products are SKUs in their first PO
-        across all history. SKUs are grouped by product family. Excel exports
-        the full four-month period.
+        separated into the tax category. Auto identifies SKUs in their first PO
+        across all history; manual PO classification takes priority. SKUs are
+        grouped by product family. Excel exports the full four-month period.
       </p>
       {data.warnings.length > 0 && (
         <details className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -899,7 +975,7 @@ export function PurchasingDashboardView({
             <div>
               <h2 className="font-semibold">Explore products and payments</h2>
               <p className="mt-1 text-sm text-slate-500">
-                {data.newGroups.length} first-order families · Explore SKUs and
+                {data.newGroups.length} new-order families · Explore SKUs and
                 POs in detail
               </p>
             </div>
@@ -915,7 +991,11 @@ export function PurchasingDashboardView({
         <>
           <CategoryTable data={data} />
           <NewProducts data={data} />
-          <Payments data={data} initialCategory={initialCategory} />
+          <Payments
+            data={data}
+            initialCategory={initialCategory}
+            canClassify={canClassify}
+          />
         </>
       )}
       <p className="text-xs text-slate-400">

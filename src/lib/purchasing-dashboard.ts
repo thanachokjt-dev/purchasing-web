@@ -75,7 +75,7 @@ export async function getPurchasingDashboardData() {
   const [orders, lines, payments, catalog, controls] = await Promise.all([
     all<PurchaseOrder>(
       "po_orders",
-      "po_id,po_date,created_at,work_status,cancelled_at,currency,supplier_name_snapshot,supplier_code",
+      "po_id,po_date,created_at,work_status,cancelled_at,currency,supplier_name_snapshot,supplier_code,purchasing_order_classification",
       "po_id",
     ),
     all<PurchaseLine>(

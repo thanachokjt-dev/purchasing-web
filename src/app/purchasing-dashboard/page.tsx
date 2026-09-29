@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import { canAccessPurchasingDashboard } from "@/lib/role-nav";
+import { canEditPo } from "@/lib/access-control";
 import { getPurchasingDashboardData } from "@/lib/purchasing-dashboard";
 import {
   DashboardRefresh,
@@ -71,6 +72,7 @@ export default async function PurchasingDashboardPage({
           data={data}
           detail={detail}
           initialCategory={params.category || ""}
+          canClassify={canEditPo(profile.email)}
         />
       </div>
     </main>
