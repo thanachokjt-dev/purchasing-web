@@ -1,5 +1,6 @@
 import {
   expenseCategories,
+  expenseSourceLabel,
   type PurchasingDashboardData,
 } from "./purchasing-dashboard-model";
 import { zipStore } from "./cost-price-monitor-export";
@@ -170,6 +171,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
         "Payment ID",
         "Reference",
         "Note",
+        "Expense source",
       ],
       ...data.records.map((record) => [
         record.date,
@@ -185,6 +187,7 @@ export function purchasingExportSheets(data: PurchasingDashboardData): Sheet[] {
         record.paymentId,
         record.reference,
         record.note,
+        expenseSourceLabel(record),
       ]),
     ],
   };

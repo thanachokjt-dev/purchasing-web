@@ -150,6 +150,51 @@ export function classifyPaymentExpense(
   return type;
 }
 
+/** Explain tax disclosure and transport without changing the additive expense totals. */
+export function expenseSourceLabel(
+  record: Pick<SpendRecord, "category" | "type" | "reference" | "note">,
+) {
+  if (record.category === "vat") {
+    return classifyPaymentExpense({
+      payment_type: record.type,
+      reference: record.reference,
+      note: record.note,
+    }) === "vat"
+      ? "Explicit VAT / import VAT payment"
+      : "Included VAT 7% from merchandise payment";
+  }
+  if (record.category === "shipping") {
+    return /freight/.test(norm(record.type))
+      ? "Freight payment"
+      : "Shipping / customs payment";
+  }
+  return "Merchandise / other payment";
+}
+
+export function expenseBreakdown(records: SpendRecord[]) {
+  const result = {
+    explicitVat: 0,
+    includedVat: 0,
+    freight: 0,
+    shippingCustoms: 0,
+  };
+  for (const record of records) {
+    const source = expenseSourceLabel(record);
+    const key =
+      source === "Explicit VAT / import VAT payment"
+        ? "explicitVat"
+        : source === "Included VAT 7% from merchandise payment"
+          ? "includedVat"
+          : source === "Freight payment"
+            ? "freight"
+            : source === "Shipping / customs payment"
+              ? "shippingCustoms"
+              : null;
+    if (key) result[key] = money(result[key] + record.amountThb);
+  }
+  return result;
+}
+
 /** Largest remainder allocation in satang, so every payment reconciles exactly. */
 export function allocateMoney(amount: number, weights: number[]) {
   const cents = Math.round(amount * 100);

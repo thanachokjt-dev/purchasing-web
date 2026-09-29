@@ -8,7 +8,45 @@ import {
   allocateMoney,
   classifyExpense,
   classifyPaymentExpense,
+  expenseBreakdown,
+  expenseSourceLabel,
 } from "../src/lib/purchasing-dashboard-model.ts";
+
+test("VAT and shipping source disclosures reconcile without adding cash twice", () => {
+  const record = (category, type, amountThb, reference = "") => ({
+    category,
+    type,
+    amountThb,
+    reference,
+    note: "",
+  });
+  const records = [
+    record("vat", "vat_import_vat", 120675),
+    record("vat", "vat_import_vat", 105094.55),
+    record("vat", "deposit30%", 8625.77),
+    record("vat", "vat_import_vat", 0),
+    record("shipping", "freight", 341091.26),
+    record("shipping", "shipping", 272365.3),
+    record("existing", "deposit30%", 100),
+  ];
+  const values = expenseBreakdown(records);
+  assert.equal(
+    Math.round((values.explicitVat + values.includedVat) * 100) / 100,
+    234395.32,
+  );
+  assert.equal(
+    Math.round((values.freight + values.shippingCustoms) * 100) / 100,
+    613456.56,
+  );
+  assert.equal(
+    expenseSourceLabel(record("vat", "other", 10, "VAT")),
+    "Explicit VAT / import VAT payment",
+  );
+  assert.equal(
+    expenseSourceLabel(record("vat", "deposit30%", 10)),
+    "Included VAT 7% from merchandise payment",
+  );
+});
 
 function compile(path, imports = {}) {
   const code = ts.transpileModule(
@@ -28,6 +66,7 @@ function compile(path, imports = {}) {
   return exports;
 }
 const model = {
+  expenseSourceLabel,
   expenseCategories: (await import("../src/lib/purchasing-dashboard-model.ts"))
     .expenseCategories,
 };

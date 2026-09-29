@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import {
   expenseCategories,
+  expenseBreakdown,
+  expenseSourceLabel,
   type PurchasingDashboardData,
 } from "@/lib/purchasing-dashboard-model";
 
@@ -19,6 +21,19 @@ const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 const cell = "px-4 py-3 text-right tabular-nums whitespace-nowrap";
 const panel = "rounded-xl border border-slate-200 bg-white";
 const control = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
+const monthCells = [
+  "bg-sky-50/60",
+  "bg-violet-50/60",
+  "bg-amber-50/60",
+  "bg-emerald-50/60",
+];
+const monthHeaders = [
+  "bg-sky-100 text-sky-900",
+  "bg-violet-100 text-violet-900",
+  "bg-amber-100 text-amber-900",
+  "bg-emerald-100 text-emerald-900",
+];
+const totalCell = `${cell} bg-red-50 font-semibold text-red-800`;
 const compactMoney = (value: number) =>
   new Intl.NumberFormat("en-US", {
     notation: "compact",
@@ -247,6 +262,21 @@ function MonthlyChart({ data }: { data: PurchasingDashboardData }) {
 }
 
 function CategoryTable({ data }: { data: PurchasingDashboardData }) {
+  const breakdowns = data.period.months.map((month) =>
+    expenseBreakdown(
+      data.records.filter((record) => record.date.startsWith(month.key)),
+    ),
+  );
+  const overallBreakdown = expenseBreakdown(data.records);
+  const breakdownText = (
+    key: string,
+    values: ReturnType<typeof expenseBreakdown>,
+  ) =>
+    key === "vat"
+      ? `Explicit ${money(values.explicitVat)} · Included 7% ${money(values.includedVat)}`
+      : key === "shipping"
+        ? `Freight ${money(values.freight)} · Shipping/customs ${money(values.shippingCustoms)}`
+        : "";
   return (
     <section className={`${panel} overflow-hidden`}>
       <h2 className="px-5 pt-5 font-semibold">Four-month expense comparison</h2>
@@ -255,12 +285,15 @@ function CategoryTable({ data }: { data: PurchasingDashboardData }) {
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
               <th className="px-5 py-3 text-left">Category</th>
-              {data.period.months.map((month) => (
-                <th className={cell} key={month.key}>
+              {data.period.months.map((month, index) => (
+                <th
+                  className={`${cell} ${monthHeaders[index]}`}
+                  key={month.key}
+                >
                   {month.label}
                 </th>
               ))}
-              <th className={cell}>Total THB</th>
+              <th className={`${cell} bg-red-100 text-red-900`}>Total THB</th>
               <th className={cell}>Share</th>
               <th className={cell}>Sparkline</th>
             </tr>
@@ -277,12 +310,22 @@ function CategoryTable({ data }: { data: PurchasingDashboardData }) {
                   </Link>
                 </td>
                 {category.monthly.map((value, index) => (
-                  <td className={cell} key={index}>
+                  <td className={`${cell} ${monthCells[index]}`} key={index}>
                     {money(value)}
+                    {breakdownText(category.key, breakdowns[index]) && (
+                      <small className="mt-1 block max-w-[220px] whitespace-normal text-[10px] font-normal text-slate-500">
+                        {breakdownText(category.key, breakdowns[index])}
+                      </small>
+                    )}
                   </td>
                 ))}
-                <td className={`${cell} font-semibold`}>
+                <td className={totalCell}>
                   {money(category.total)}
+                  {breakdownText(category.key, overallBreakdown) && (
+                    <small className="mt-1 block max-w-[220px] whitespace-normal text-[10px] font-normal text-red-700">
+                      {breakdownText(category.key, overallBreakdown)}
+                    </small>
+                  )}
                 </td>
                 <td className={cell}>
                   {data.grossPaid > 0
@@ -300,11 +343,11 @@ function CategoryTable({ data }: { data: PurchasingDashboardData }) {
             <tr>
               <td className="px-5 py-3">Total actual payments</td>
               {data.monthly.map((value, index) => (
-                <td key={index} className={cell}>
+                <td key={index} className={`${cell} ${monthCells[index]}`}>
                   {money(value)}
                 </td>
               ))}
-              <td className={cell}>{money(data.grossPaid)}</td>
+              <td className={totalCell}>{money(data.grossPaid)}</td>
               <td className={cell}>{data.grossPaid ? "100%" : "0%"}</td>
               <td className={cell}>
                 <Sparkline values={data.monthly} color="#0d233f" />
@@ -338,12 +381,15 @@ function NewOrderComparison({ data }: { data: PurchasingDashboardData }) {
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
               <th className="px-5 py-3 text-left">Metric</th>
-              {data.period.months.map((month) => (
-                <th key={month.key} className={cell}>
+              {data.period.months.map((month, index) => (
+                <th
+                  key={month.key}
+                  className={`${cell} ${monthHeaders[index]}`}
+                >
                   {month.label}
                 </th>
               ))}
-              <th className={cell}>Total</th>
+              <th className={`${cell} bg-red-100 text-red-900`}>Total</th>
               <th className={cell}>Sparkline</th>
             </tr>
           </thead>
@@ -363,13 +409,11 @@ function NewOrderComparison({ data }: { data: PurchasingDashboardData }) {
               <tr key={row.label} className="border-t border-slate-100">
                 <td className="px-5 py-3 whitespace-nowrap">{row.label}</td>
                 {row.values.map((value, index) => (
-                  <td key={index} className={cell}>
+                  <td key={index} className={`${cell} ${monthCells[index]}`}>
                     {row.format(value)}
                   </td>
                 ))}
-                <td className={`${cell} font-semibold`}>
-                  {row.format(sum(row.values))}
-                </td>
+                <td className={totalCell}>{row.format(sum(row.values))}</td>
                 <td className={cell}>
                   <Sparkline values={row.values} />
                 </td>
@@ -585,6 +629,7 @@ function Payments({
   const suppliers = [
     ...new Set(data.records.map((row) => row.supplier)),
   ].sort();
+  const filteredBreakdown = expenseBreakdown(rows);
   return (
     <section className={`${panel} overflow-hidden`}>
       <div className="p-5">
@@ -657,6 +702,27 @@ function Payments({
             {money(rows.reduce((total, row) => total + row.amountThb, 0))} THB
           </strong>
         </p>
+        {(category === "vat" || category === "shipping") && (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            {(category === "vat"
+              ? [
+                  ["Explicit VAT / import VAT", filteredBreakdown.explicitVat],
+                  ["Included VAT 7%", filteredBreakdown.includedVat],
+                ]
+              : [
+                  ["Freight", filteredBreakdown.freight],
+                  ["Shipping / customs", filteredBreakdown.shippingCustoms],
+                ]
+            ).map(([label, value]) => (
+              <span
+                key={label}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+              >
+                {label}: <strong>{money(Number(value))} THB</strong>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -706,6 +772,11 @@ function Payments({
                     expenseCategories.find((item) => item.key === row.category)
                       ?.label
                   }
+                  {(row.category === "vat" || row.category === "shipping") && (
+                    <small className="mt-1 block text-slate-500">
+                      {expenseSourceLabel(row)}
+                    </small>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {row.groupName ||
