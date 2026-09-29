@@ -1,6 +1,8 @@
 export type PoPaymentDisplayRow = {
   amount: number | string | null;
   amount_thb?: number | string | null;
+  vat_rate?: number | string | null;
+  vat_amount_thb?: number | string | null;
   created_at?: string | null;
   currency: string | null;
   due_date?: string | null;

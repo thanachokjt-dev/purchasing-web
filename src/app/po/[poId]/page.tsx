@@ -1223,6 +1223,8 @@ export default async function PoDetailPage({
             <div className="p-5">
               {allowManagePayments ? (
                   <PaymentScheduleForm
+                    supplierName={order.supplierName}
+                    supplierCode={order.supplierCode}
                     currency={order.currency}
                     payments={sortedPayments}
                     paymentTerms={order.paymentTerms}

@@ -34,6 +34,7 @@ import {
 } from "@/lib/po-size-matrix";
 import { isProductPoPayment, paymentSnapshot, sortPoPayments, type PoPaymentDisplayRow } from "@/lib/po-payments";
 import { notifyPoChanged } from "@/app/po/po-live-sync";
+import { includedPaymentVat, paymentVatRate } from "@/lib/po-payment-vat";
 import { usdPaymentFxRates, usdUnitToThb } from "@/lib/po-unit-costs";
 
 type SupplierOption = {
@@ -3371,6 +3372,10 @@ export function LandedCostAllocationForm({
 }
 
 function PaymentAmountFields({
+  paymentType = "",
+  paymentTypeName,
+  supplierName = "",
+  supplierCode = "",
   amount,
   amountThb,
   amountName = "amount",
@@ -3379,6 +3384,10 @@ function PaymentAmountFields({
   exchangeRateName = "exchangeRate",
   isDraftRow = false,
 }: {
+  paymentType?: string;
+  paymentTypeName?: string;
+  supplierName?: string;
+  supplierCode?: string;
   amount: number | string | null | undefined;
   amountThb?: number | string | null | undefined;
   amountName?: string;
@@ -3388,6 +3397,20 @@ function PaymentAmountFields({
   isDraftRow?: boolean;
 }) {
   const normalizedCurrency = String(currency || "THB").trim().toUpperCase();
+  const amountInput = useRef<HTMLInputElement>(null);
+  const [typeState, setTypeState] = useState({ source: paymentType, value: paymentType });
+  if (typeState.source !== paymentType) setTypeState({ source: paymentType, value: paymentType });
+  useEffect(() => {
+    const row = amountInput.current?.closest("tr");
+    function onTypeChange(event: Event) {
+      const target = event.target;
+      if (target instanceof HTMLSelectElement && target.name === paymentTypeName) {
+        setTypeState(current => ({ ...current, value: target.value }));
+      }
+    }
+    row?.addEventListener("change", onTypeChange);
+    return () => row?.removeEventListener("change", onTypeChange);
+  }, [paymentTypeName]);
   const savedExchangeRate = Number(exchangeRate ?? 0);
   const nextAmountValue = amount === null || amount === undefined ? "" : String(amount);
   const inferredRate =
@@ -3431,6 +3454,7 @@ function PaymentAmountFields({
     : savedExchangeRate > 0
       ? `Last saved FX: ${savedExchangeRate}`
       : "No saved FX yet";
+  const vat = includedPaymentVat(thbAmount, paymentVatRate(typeState.value, supplierName, supplierCode));
 
   return (
     <>
@@ -3439,6 +3463,7 @@ function PaymentAmountFields({
           className={`${inputClass} text-right font-mono`}
           min="0"
           name={amountName}
+          ref={amountInput}
           onChange={(event) =>
             setAmountState((current) => ({ ...current, value: event.target.value }))
           }
@@ -3472,6 +3497,9 @@ function PaymentAmountFields({
         ) : (
           `${formatMoney(thbAmount)} THB`
         )}
+      </td>
+      <td className="px-3 py-3 text-right font-mono font-semibold">
+        {vat == null ? null : hasInvalidForeignFx ? <span className="text-[#b42318]">FX required</span> : `${formatMoney(vat)} THB`}
       </td>
     </>
   );
@@ -3616,12 +3644,16 @@ export function AddPaymentForm({
 }
 
 export function PaymentScheduleForm({
+  supplierName,
+  supplierCode,
   currency,
   payments,
   paymentTerms,
   poAmount,
   poId,
 }: {
+  supplierName: string;
+  supplierCode: string;
   currency: string;
   payments: PaymentRowItem[];
   paymentTerms?: string;
@@ -3768,6 +3800,7 @@ export function PaymentScheduleForm({
               <th className="px-3 py-3 text-right font-semibold">Amount</th>
               <th className="px-3 py-3 text-right font-semibold">Exchange rate</th>
               <th className="px-3 py-3 text-right font-semibold">THB paid</th>
+              <th className="px-3 py-3 text-right font-semibold">VAT 7% (included)</th>
               <th className="px-3 py-3 font-semibold">Currency</th>
               <th className="px-3 py-3 font-semibold">Reference</th>
               <th className="px-3 py-3 font-semibold">Note</th>
@@ -3839,6 +3872,10 @@ export function PaymentScheduleForm({
                   />
                 </td>
                 <PaymentAmountFields
+                  paymentType={payment?.payment_type ?? ""}
+                  paymentTypeName={`paymentType:${rowKey}`}
+                  supplierName={supplierName}
+                  supplierCode={supplierCode}
                   amount={payment?.amount ?? ""}
                   amountThb={payment?.amount_thb}
                   amountName={`amount:${rowKey}`}

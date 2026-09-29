@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { includedPaymentVat, paymentVatRate } from "../src/lib/po-payment-vat.ts";
 
 let db;
 const sqlFile = (name) => readFile(new URL(`../supabase/${name}`, import.meta.url), "utf8");
@@ -21,9 +22,54 @@ before(async () => {
     "20260920014529_save_po_draft_lines_transaction.sql",
     "20260928072722_payment_landed_cost_by_value.sql",
     "20260928075655_po_dual_unit_costs_and_fx.sql",
+    "20260929093000_po_payment_included_vat.sql",
   ]) await db.exec(await sqlFile(`migrations/${migration}`));
 });
 after(async () => { await db?.close(); });
+
+test("included VAT policy matches PostgreSQL for domestic and exempt suppliers / types", async () => {
+  const cases = [
+    ["deposit30%", "Domestic", "DOM001", 7], ["fine", "Domestic", "DOM001", 7],
+    ["other", "Domestic", "DOM001", 7], ["SHIPPING", "Domestic", "DOM001", null],
+    ["Freight", "Domestic", "DOM001", null], ["VAT / IMPORT VAT", "Domestic", "DOM001", null],
+    ["deposit50%", "CSD FASHION(Weyes Clothing LTD)", "", null],
+    ["deposit50%", "Renamed supplier", "CSD001", null],
+    ["deposit50%", "Engage Global", "", null], ["deposit50%", "engage", "", null],
+    ["deposit50%", "Renamed supplier", "ENGAGE001", null], ["", "Domestic", "DOM001", null],
+  ];
+  for (const [type, name, code, expected] of cases) {
+    const rate = (await db.query("select po_payment_vat_rate($1,$2,$3) rate", [type, name, code])).rows[0].rate;
+    assert.equal(rate == null ? null : Number(rate), expected);
+    assert.equal(paymentVatRate(type, name, code), expected);
+  }
+  assert.equal(includedPaymentVat(107, 7), 7);
+  assert.equal(includedPaymentVat(100, 7), 6.54);
+  assert.equal(includedPaymentVat(107, null), null);
+  for (const amount of [0, 0.535, 1.605, 100, 107, 22927.68, 755436.0899]) {
+    const expected = (await db.query("select round($1::numeric * 7 / 107,2) vat", [amount])).rows[0].vat;
+    assert.equal(includedPaymentVat(amount, 7), Number(expected));
+  }
+});
+
+test("payment saves persist included VAT, retain gross totals and follow supplier / type changes", async () => {
+  await db.exec("insert into po_suppliers(supplier_code,supplier_name) values ('CSD001','CSD FASHION'),('DOM001','Domestic')");
+  await fixture("VAT-TEST", [{ ordered_qty: 1, unit_price: 100 }]);
+  const saved = await savePayments("VAT-TEST", [payment("VAT-TEST", "deposit30%", 107)]);
+  assert.equal(Number(saved[0].vat_rate), 7);
+  assert.equal(Number(saved[0].vat_amount_thb), 7);
+  assert.equal(Number(saved[0].amount_thb), 107);
+  const updated = await savePayments("VAT-TEST", [{ ...saved[0], amount: 214, amount_thb: 214, vat_amount_thb: 999 }], [], saved);
+  assert.equal(Number(updated[0].vat_amount_thb), 14);
+  await db.query("update po_orders set supplier_code='CSD001' where po_id='VAT-TEST'");
+  let row = (await db.query("select * from po_payments where po_id='VAT-TEST'")).rows[0];
+  assert.equal(row.vat_rate, null);
+  assert.equal(row.vat_amount_thb, null);
+  assert.equal(Number(row.amount_thb), 214);
+  await db.query("update po_orders set supplier_code='DOM001' where po_id='VAT-TEST'");
+  await db.query("update po_payments set payment_type='shipping' where po_id='VAT-TEST'");
+  row = (await db.query("select * from po_payments where po_id='VAT-TEST'")).rows[0];
+  assert.equal(row.vat_amount_thb, null);
+});
 
 async function fixture(id, lines, currency = "THB") {
   await db.query("insert into po_orders(po_id,currency) values ($1,$2)", [id, currency]);
