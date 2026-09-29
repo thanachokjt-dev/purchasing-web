@@ -15,6 +15,7 @@ export type RoleNavItem = {
 
 const navByRole: Record<UserRole, RoleNavItem[]> = {
   accounting: [
+    { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
     { href: "/payment-requests?view=accounting", key: "accounting-desk", label: "Accounting Desk" },
     { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
     { href: "/payment-requests?view=accounting", key: "payments", label: "Payments" },
@@ -41,6 +42,7 @@ const navByRole: Record<UserRole, RoleNavItem[]> = {
   ],
   super_admin: [
     { href: "/dashboard", key: "dashboard", label: "Dashboard" },
+    { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
     { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
     { href: "/po", key: "po", label: "PO Portal" },
     { href: "/cost-price-monitor", key: "cost-price-monitor", label: "Cost Price Monitor" },
@@ -88,6 +90,7 @@ export function navItemsForUser(profile: CurrentUserProfile) {
   if (getProfileAccessRole(profile) === "dashboard_only") {
     return [
       { href: "/dashboard", key: "dashboard", label: "Dashboard" },
+      { href: "/purchasing-dashboard", key: "purchasing-dashboard", label: "ภาพรวมจัดซื้อ" },
       { href: "/sku-dashboard", key: "sku-dashboard", label: "SKU Sales Dashboard" },
     ];
   }
@@ -139,6 +142,17 @@ export function canAccessDashboard(profile: CurrentUserProfile) {
     accessRole === "executive_readonly" ||
     accessRole === "dashboard_only"
   );
+}
+
+export function canAccessPurchasingDashboard(profile: CurrentUserProfile) {
+  return !canViewIncomingEtaOnly(profile.email) && (canAccessDashboard(profile) || canAccessCostPriceMonitor(profile));
+}
+
+export function navigationGroup(key: string) {
+  if (["dashboard", "purchasing-dashboard", "sku-dashboard", "cost-price-monitor", "limited-dashboard"].includes(key)) return "ภาพรวมและวิเคราะห์";
+  if (["po", "reorder", "stock-count", "new-product-planner", "incoming", "orders", "workbench", "suppliers", "reports"].includes(key)) return "จัดซื้อและสต็อก";
+  if (key === "settings") return "ตั้งค่าระบบ";
+  return "การเงินและอนุมัติ";
 }
 
 export function canAccessPaymentWorkbench(profile: CurrentUserProfile) {

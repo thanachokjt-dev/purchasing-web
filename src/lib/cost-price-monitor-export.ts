@@ -53,7 +53,7 @@ function dosDateTime(date: Date) {
   return { dosDate, dosTime };
 }
 
-function zipStore(files: Array<{ name: string; content: string }>) {
+export function zipStore(files: Array<{ name: string; content: string }>) {
   const now = dosDateTime(new Date());
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];

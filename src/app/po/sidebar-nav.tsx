@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getCurrentUserProfile } from "@/lib/auth";
-import { navItemsForUser } from "@/lib/role-nav";
+import { navigationGroup, navItemsForUser } from "@/lib/role-nav";
 
 type SidebarNavKey = "po" | "reorder" | string;
 
@@ -17,20 +17,37 @@ export async function PoSidebarNav({ active }: { active: SidebarNavKey }) {
             Procurement Control Tower
           </p>
         </div>
-        {navItems.map((item) => (
-          <Link
-            className={`block rounded-md px-2.5 py-1.5 font-medium ${
-              item.key === active
-                ? "bg-white text-[#0d233f] shadow-sm"
-                : "text-slate-300 hover:bg-white/10 hover:text-white"
-            }`}
-            href={item.href}
-            key={`${item.href}-${item.label}`}
-            prefetch={false}
-          >
-            {item.label}
-          </Link>
-        ))}
+        {[
+          "ภาพรวมและวิเคราะห์",
+          "จัดซื้อและสต็อก",
+          "การเงินและอนุมัติ",
+          "ตั้งค่าระบบ",
+        ].map((group) => {
+          const items = navItems.filter(
+            (item) => navigationGroup(item.key) === group,
+          );
+          return items.length ? (
+            <div key={group} className="mt-2">
+              <p className="px-2.5 pb-2 pt-2 text-[10px] font-semibold tracking-wide text-slate-400">
+                {group}
+              </p>
+              {items.map((item) => (
+                <Link
+                  className={`block rounded-md px-2.5 py-1.5 font-medium ${
+                    item.key === active
+                      ? "bg-white text-[#0d233f] shadow-sm"
+                      : "text-slate-300 hover:bg-white/10 hover:text-white"
+                  }`}
+                  href={item.href}
+                  key={`${item.href}-${item.label}`}
+                  prefetch={false}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          ) : null;
+        })}
       </nav>
     </aside>
   );
