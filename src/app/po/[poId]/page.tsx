@@ -1,3 +1,4 @@
+import { groupQuotePrintRows } from "@/lib/po-quote-print-rows";
 import Link from "next/link";
 import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
@@ -1858,8 +1859,9 @@ function PrintMatrixDocument({
                     <th>Total</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {group.rows.map((row) => (
+                {groupQuotePrintRows(group.rows).map((productRows) => (
+                <tbody className="print-product-row-group" key={productRows[0].productName}>
+                  {productRows.map((row) => (
                     <tr key={`${group.label}-${row.productName}`}>
                       <td>
                         <span>{row.productName}</span>
@@ -1893,6 +1895,7 @@ function PrintMatrixDocument({
                     </tr>
                   ))}
                 </tbody>
+                ))}
               </table>
               </section>
             ))}
