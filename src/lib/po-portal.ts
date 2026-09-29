@@ -2291,13 +2291,11 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
           .order("actual_received_date", { ascending: false, nullsFirst: false })
           .limit(250)
       : Promise.resolve({ data: [], error: null }),
-    supabase
-      .from("po_payment_timeline_events")
-      .select(
-        "event_date,po_id,po_reference,payment_id,payment_label,payment_type,payment_status,series,amount_original,exchange_rate,amount_thb,currency,supplier_code,supplier_name,latest_supplier_comment,po_detail_href",
-      )
-      .order("event_date", { ascending: true })
-      .limit(500),
+    fetchAllRows<PoPaymentTimelineEventRow>(
+      "po_payment_timeline_events",
+      "event_date,po_id,po_reference,payment_id,payment_label,payment_type,payment_status,series,amount_original,exchange_rate,amount_thb,currency,supplier_code,supplier_name,latest_supplier_comment,po_detail_href",
+      "payment_id",
+    ),
     orderQuery
       .order(sortColumn, { ascending: dir === "asc", nullsFirst: false })
       .order("po_id", { ascending: false })
@@ -2350,7 +2348,9 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
   logPoPortalQueryError("po_incoming_eta_daily", etaDailyResult.error);
   logPoPortalQueryError("po_incoming_eta_unscheduled_events", etaUnscheduledResult.error);
   logPoPortalQueryError("po_order_summary received history", incomingReceivedHistoryResult.error);
-  logPoPortalQueryError("po_payment_timeline_events", paymentTimelineResult.error);
+  if (paymentTimelineResult === null) {
+    logPoPortalQueryError("po_payment_timeline_events", new Error("Payment history query failed"));
+  }
 
   const etaDailyRows = etaDailyResult.error
     ? []
@@ -2365,11 +2365,7 @@ async function getSupabasePoPortalData(options: PoPortalListOptions = {}) {
     : ((incomingReceivedHistoryResult.data ?? []) as unknown as PoIncomingReceivedHistoryRow[]).map(
         mapIncomingReceivedHistoryRow,
       );
-  const paymentTimelineRows = paymentTimelineResult.error
-    ? []
-    : ((paymentTimelineResult.data ?? []) as PoPaymentTimelineEventRow[]).map(
-        mapPaymentTimelineEventRow,
-      );
+  const paymentTimelineRows = (paymentTimelineResult ?? []).map(mapPaymentTimelineEventRow);
   const chartPoIds = collectChartPoIds(
     etaDailyRows,
     etaUnscheduledRows,

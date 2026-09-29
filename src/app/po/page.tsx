@@ -308,7 +308,7 @@ function isMonthBoundary(index: number, dates: string[]) {
 }
 
 const PAYMENT_VIEW_OPTIONS = ["daily", "weekly", "monthly"] as const;
-const PAYMENT_RANGE_OPTIONS = ["30", "60", "90", "180", "all"] as const;
+const PAYMENT_RANGE_OPTIONS = ["past4months", "30", "60", "90", "180", "all"] as const;
 const INCOMING_VIEW_OPTIONS = ["active", "all"] as const;
 
 type PaymentTimelineView = (typeof PAYMENT_VIEW_OPTIONS)[number];
@@ -463,7 +463,7 @@ function hasValidFxRate(event: {
   currency: string;
   exchangeRate?: number;
 }) {
-  return isThbCurrency(event.currency) || (event.exchangeRate ?? 0) > 1;
+  return isThbCurrency(event.currency) || (event.exchangeRate ?? 0) > 0;
 }
 
 function cashflowAmountThb(event: {
@@ -473,9 +473,9 @@ function cashflowAmountThb(event: {
   exchangeRate?: number;
 }) {
   if (isThbCurrency(event.currency)) {
-    return event.amountThb || event.amountOriginal || 0;
+    return Math.round(event.amountThb * 100) / 100;
   }
-  return hasValidFxRate(event) ? event.amountThb : 0;
+  return hasValidFxRate(event) ? Math.round(event.amountThb * 100) / 100 : 0;
 }
 
 function cashflowTotalThb<T extends { amountOriginal?: number; amountThb: number; currency: string; exchangeRate?: number }>(
@@ -621,8 +621,9 @@ function paymentBucketRange(value: string, view: PaymentTimelineView) {
   }
 
   if (view === "weekly") {
-    const start = startOfUtcWeek(value);
-    const end = endOfUtcWeek(value);
+    // Split cross-month weeks so every cash amount stays in its payment month.
+    const start = [startOfUtcWeek(value), startOfUtcMonth(value)].sort().at(-1)!;
+    const end = [endOfUtcWeek(value), endOfUtcMonth(value)].sort()[0];
     return {
       end,
       key: start,
@@ -1621,10 +1622,17 @@ export default async function PoPortalPage({
     supplierInvoiceNo: string;
     supplierName: string;
   };
-  const paymentEvents = data.paymentTimeline as PaymentTimelineEvent[];
+  const paymentEvents = (data.paymentTimeline as PaymentTimelineEvent[])
+    .filter((event) => event.series !== "paid" || event.eventDate <= today);
+  const historyStartDate = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
+  historyStartDate.setUTCMonth(historyStartDate.getUTCMonth() - 3);
+  const paymentHistoryStart = historyStartDate.toISOString().slice(0, 10);
   const paymentRangeEnd =
     paymentRange === "all" ? "" : addUtcDays(today, Number(paymentRange));
   const filteredPaymentEvents = paymentEvents.filter((event) => {
+    if (paymentRange === "past4months") {
+      return event.eventDate >= paymentHistoryStart && event.eventDate <= today;
+    }
     if (paymentRange === "all") {
       return true;
     }
@@ -1727,7 +1735,7 @@ export default async function PoPortalPage({
     ? `${formatCurrency(overdueAmountThb, "THB")} overdue`
     : formatCurrency(0, "THB");
   const paymentMonthBucketSpans = monthSpansForPaymentBuckets(paymentChartBuckets);
-  const paymentRangeLabel = paymentRange === "all" ? "All" : `${paymentRange} days`;
+  const paymentRangeLabel = paymentRange === "all" ? "All" : paymentRange === "past4months" ? "Last 4 months" : `${paymentRange} days`;
   const paymentViewLabel = `${paymentView[0].toUpperCase()}${paymentView.slice(1)}`;
   const defaultPaymentActionCount = 7;
   const dueThisWeekEnd = endOfUtcWeek(today);
@@ -1738,14 +1746,14 @@ export default async function PoPortalPage({
     (event) => event.series === "planned" && event.eventDate >= today && event.eventDate <= addUtcDays(today, 30),
   );
   const paidTimelineAmountThb = cashflowTotalThb(
-    paymentEvents.filter((event) => event.series === "paid"),
+    filteredPaymentEvents.filter((event) => event.series === "paid"),
   );
   const plannedTimelineAmountThb = cashflowTotalThb(
-    paymentEvents.filter((event) => event.series === "planned"),
+    filteredPaymentEvents.filter((event) => event.series === "planned"),
   );
-  const paidMissingFxCount = missingFxCount(paymentEvents.filter((event) => event.series === "paid"));
+  const paidMissingFxCount = missingFxCount(filteredPaymentEvents.filter((event) => event.series === "paid"));
   const plannedMissingFxCount = missingFxCount(
-    paymentEvents.filter((event) => event.series === "planned"),
+    filteredPaymentEvents.filter((event) => event.series === "planned"),
   );
   const dueThisWeekAmountThb = cashflowTotalThb(dueThisWeekEvents);
   const dueNext30AmountThb = cashflowTotalThb(dueNext30Events);
@@ -3688,7 +3696,7 @@ export default async function PoPortalPage({
               <div className="min-w-0">
                 <h2 className="text-base font-semibold">Payment Timeline</h2>
                 <p className="mt-1 text-xs text-[#667380]">
-                  Paid, planned, and overdue payment events for active purchase orders.
+                  Actual paid history includes closed and cancelled POs. Planned and overdue payments include active POs only. Amounts are gross THB including VAT, using recorded FX.
                 </p>
               </div>
               <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:w-full xl:max-w-[820px]">
@@ -3800,14 +3808,14 @@ export default async function PoPortalPage({
                       href={buildPaymentTimelineHref({ paymentRange: option })}
                       key={option}
                     >
-                      {option === "all" ? "All" : `${option} days`}
+                      {option === "all" ? "All" : option === "past4months" ? "Last 4 months" : `${option} days`}
                     </Link>
                   ))}
                 </div>
               </div>
               <p className="text-xs text-[#667380] lg:col-span-2">
                 {paymentViewLabel} view | {paymentRangeLabel} range | showing{" "}
-                {formatNumber(paymentChartBuckets.length)} visible buckets. Date range covers today forward; overdue planned payments before today stay visible for follow-up.
+                {formatNumber(paymentChartBuckets.length)} visible buckets. {paymentRange === "past4months" ? `${paymentHistoryStart} through ${today}, matching Purchasing Dashboard. ` : paymentRange === "all" ? "All recorded history and active plans. " : "Date range covers today forward; overdue plans stay visible. "} Paid and planned totals follow the selected range. Weekly buckets split at month boundaries.
               </p>
             </div>
             <details className="group mb-3 rounded-md border border-[#dfe4ea] bg-white">
