@@ -202,7 +202,7 @@ export function StockCountEditor({
           <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export`}>
             <Download size={16} /> Export CSV
           </a>
-          <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export-pdf`}>
+          <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export-pdf${systemQty ? "?showQty=1" : ""}`}>
             <Download size={16} /> Export PDF
           </a>
           <a
@@ -237,7 +237,7 @@ export function StockCountEditor({
           ) : null}
         </div>
         {message ? <p className="w-full whitespace-pre-line rounded-md bg-[#f3f6f8] px-3 py-2 text-sm text-[#364252]">{message}</p> : null}
-        {systemQty ? <p className="w-full text-xs text-[#667380]">Current system on-hand · {session.locationType === "warehouse" ? "Warehouse" : "Retail"} only · Snapshot {systemQty.snapshotDate}{systemQty.syncedAt ? ` · Synced ${new Date(systemQty.syncedAt).toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} ICT` : ""}. This is current stock, not the historical week balance. — means unavailable. CSV/PDF remain blank counting sheets.</p> : null}
+        {systemQty ? <p className="w-full text-xs text-[#667380]">Current system on-hand · {session.locationType === "warehouse" ? "Warehouse" : "Retail"} only · Snapshot {systemQty.snapshotDate}{systemQty.syncedAt ? ` · Synced ${new Date(systemQty.syncedAt).toLocaleString("en-GB", { timeZone: "Asia/Bangkok" })} ICT` : ""}. This is current stock, not the historical week balance. — means unavailable. PDF includes current system qty in red while Show Qty is enabled; CSV remains a blank counting sheet.</p> : null}
       </div>
 
       {sections.map((section) => (

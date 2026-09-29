@@ -1,11 +1,11 @@
 import { getCurrentUserProfile } from "@/lib/auth";
 import { createStockCountPdf } from "@/lib/stock-count-pdf";
-import { canAccessStockCounts, getStockCountSession } from "@/lib/stock-counts";
+import { canAccessStockCounts, canEditStockCountLocation, getStockCountSession, getStockCountSystemQty } from "@/lib/stock-counts";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
   const profile = await getCurrentUserProfile();
@@ -14,10 +14,23 @@ export async function GET(
   const { sessionId } = await params;
   const data = await getStockCountSession(sessionId);
   if (!data) return Response.json({ error: "Not found" }, { status: 404 });
+  const showQty = new URL(request.url).searchParams.get("showQty") === "1";
+  if (showQty && !canEditStockCountLocation(profile, data.session.locationType)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+  let inventory;
+  if (showQty) {
+    try {
+      inventory = await getStockCountSystemQty(profile, data.session);
+    } catch {
+      return Response.json({ error: "Unable to load system quantities. Please try again." }, { status: 503 });
+    }
+  }
   const pdf = await createStockCountPdf({
     lines: data.lines,
     locationType: data.session.locationType,
     weekStart: data.session.weekStart,
+    systemQuantities: inventory?.quantities,
   });
   const filename = `stock-count-${data.session.locationType}-${data.session.weekStart}.pdf`;
   return new Response(Buffer.from(pdf), {

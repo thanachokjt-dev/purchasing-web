@@ -111,20 +111,22 @@ function drawCell(
   page.drawRectangle({ x, y: top - height, width, height, color: fill, borderColor: border, borderWidth: 0.6 });
 }
 
-function drawCenteredText(page: PDFPage, font: PDFFont, value: string, size: number, x: number, y: number, width: number) {
+function drawCenteredText(page: PDFPage, font: PDFFont, value: string, size: number, x: number, y: number, width: number, color = ink) {
   const text = fitText(font, value, size, width - 6);
   const textWidth = font.widthOfTextAtSize(text, size);
-  page.drawText(text, { x: x + Math.max(3, (width - textWidth) / 2), y, size, font, color: ink });
+  page.drawText(text, { x: x + Math.max(3, (width - textWidth) / 2), y, size, font, color });
 }
 
 export async function createStockCountPdf({
   lines,
   locationType,
   weekStart,
+  systemQuantities,
 }: {
   lines: StockCountLine[];
   locationType: StockCountLocation;
   weekStart: string;
+  systemQuantities?: Record<string, number | null>;
 }) {
   const document = await PDFDocument.create();
   document.registerFontkit(fontkit);
@@ -197,7 +199,7 @@ export async function createStockCountPdf({
         font: bold,
         color: ink,
       });
-      page.drawText("Write counted quantity in the matching size cell", {
+      page.drawText(systemQuantities ? "Current system qty in red; write counted qty in cell" : "Write counted quantity in the matching size cell", {
         x: MARGIN + 6,
         y: cursorY - 26,
         size: 5.2,
@@ -209,6 +211,12 @@ export async function createStockCountPdf({
         const line = product.linesBySize.get(size);
         drawCell(page, x, cursorY, dimensions.sizeWidth, ROW_HEIGHT, line ? rowFill : unavailableFill);
         if (line) {
+          if (systemQuantities) {
+            const quantity = systemQuantities[line.sku];
+            const label = quantity == null ? "—" : String(quantity);
+            const quantitySize = fittingFontSize(bold, label, 11, 6, dimensions.sizeWidth - 6);
+            drawCenteredText(page, bold, label, quantitySize, x, cursorY - 15, dimensions.sizeWidth, rgb(0.8, 0.08, 0.08));
+          }
           const skuSize = fittingFontSize(regular, line.sku, Math.min(5.2, dimensions.sizeWidth / 9), 3.25, dimensions.sizeWidth - 6);
           drawCenteredText(page, regular, line.sku, skuSize, x, cursorY - ROW_HEIGHT + 5, dimensions.sizeWidth);
         } else {
