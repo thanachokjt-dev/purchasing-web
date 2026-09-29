@@ -4,7 +4,10 @@ import { PoSidebarNav } from "@/app/po/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import { canAccessPurchasingDashboard } from "@/lib/role-nav";
 import { getPurchasingDashboardData } from "@/lib/purchasing-dashboard";
-import { PurchasingDashboardView } from "./purchasing-dashboard-view";
+import {
+  DashboardRefresh,
+  PurchasingDashboardView,
+} from "./purchasing-dashboard-view";
 
 export const dynamic = "force-dynamic";
 export default async function PurchasingDashboardPage({
@@ -30,12 +33,15 @@ export default async function PurchasingDashboardPage({
                 through {data.period.end} · THB
               </p>
             </div>
-            <a
-              href="/api/purchasing-dashboard/export"
-              className="rounded-lg bg-[#0d233f] px-4 py-2.5 text-sm font-semibold text-white"
-            >
-              Export Excel
-            </a>
+            <div className="flex items-center gap-2">
+              <DashboardRefresh />
+              <a
+                href="/api/purchasing-dashboard/export"
+                className="rounded-lg bg-[#0d233f] px-4 py-2.5 text-sm font-semibold text-white"
+              >
+                Export Excel
+              </a>
+            </div>
           </div>
           <nav className="mt-5 flex gap-2" aria-label="Purchasing views">
             {[

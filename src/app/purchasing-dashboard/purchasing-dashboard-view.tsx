@@ -1,6 +1,8 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { RefreshCw } from "lucide-react";
 import {
   expenseCategories,
   type PurchasingDashboardData,
@@ -17,6 +19,28 @@ const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 const cell = "px-4 py-3 text-right tabular-nums whitespace-nowrap";
 const panel = "rounded-xl border border-slate-200 bg-white";
 const control = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
+const compactMoney = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(value);
+
+export function DashboardRefresh() {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() => startTransition(() => router.refresh())}
+      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+      aria-label="Refresh latest PO and payment data"
+    >
+      <RefreshCw className={`size-4 ${pending ? "animate-spin" : ""}`} />
+      {pending ? "Refreshing…" : "Refresh"}
+    </button>
+  );
+}
 
 export function Sparkline({
   values,
@@ -60,105 +84,164 @@ export function Sparkline({
 }
 
 function MonthlyChart({ data }: { data: PurchasingDashboardData }) {
-  const max = Math.max(...data.monthly, 1),
-    height = 225;
+  const highest = Math.max(...data.monthly, 1);
+  const step = 10 ** Math.floor(Math.log10(highest));
+  const max = Math.ceil(highest / step) * step;
+  const height = 210;
   return (
-    <div className="p-5 sm:p-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold">Actual payments by month and category</h2>
-        <span className="text-xs text-slate-500">Current month is partial</span>
-      </div>
-      <svg
-        viewBox="0 0 760 315"
-        className="mt-5 w-full"
-        role="img"
-        aria-label="Four-month stacked chart of actual payments"
-      >
-        {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
-          <g key={fraction}>
-            <line
-              x1="85"
-              x2="745"
-              y1={260 - fraction * height}
-              y2={260 - fraction * height}
-              stroke="#e2e8f0"
-              strokeDasharray="3 4"
-            />
-            <text
-              x="75"
-              y={264 - fraction * height}
-              textAnchor="end"
-              fill="#64748b"
-              fontSize="12"
-            >
-              {qty(max * fraction)}
-            </text>
-          </g>
-        ))}
-        {data.period.months.map((month, index) => {
-          let bottom = 260;
-          const x = 125 + index * 160;
-          return (
-            <g key={month.key}>
-              {data.categories.map((category) => {
-                const value = category.monthly[index],
-                  h = (value / max) * height;
-                bottom -= h;
-                return (
-                  <Link
-                    key={category.key}
-                    href={`/purchasing-dashboard?view=details&category=${category.key}`}
-                  >
-                    <rect
-                      x={x}
-                      y={bottom}
-                      width="86"
-                      height={h}
-                      fill={category.color}
-                    >
-                      <title>{`${month.label} · ${category.label}: ${money(value)} THB`}</title>
-                    </rect>
-                  </Link>
-                );
-              })}
+    <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="min-w-0 p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight">
+              Monthly payment activity
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Actual paid · THB including VAT
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">
+            Current month is partial
+          </span>
+        </div>
+        <svg
+          viewBox="0 0 760 315"
+          className="mx-auto mt-3 h-[240px] w-full max-w-[920px] sm:h-[290px]"
+          role="img"
+          aria-label="Four-month stacked chart of actual payments"
+        >
+          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => (
+            <g key={fraction}>
+              <line
+                x1="85"
+                x2="745"
+                y1={260 - fraction * height}
+                y2={260 - fraction * height}
+                stroke="#e2e8f0"
+                strokeDasharray="3 4"
+              />
               <text
-                x={x + 43}
-                y={250 - (data.monthly[index] / max) * height}
-                textAnchor="middle"
-                fill="#172026"
-                fontSize="12"
-                fontWeight="600"
-              >
-                {money(data.monthly[index])}
-              </text>
-              <text
-                x={x + 43}
-                y="292"
-                textAnchor="middle"
+                x="75"
+                y={264 - fraction * height}
+                textAnchor="end"
                 fill="#64748b"
-                fontSize="13"
+                fontSize="12"
               >
-                {month.label}
+                {compactMoney(max * fraction)}
               </text>
             </g>
-          );
-        })}
-      </svg>
-      <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600">
-        {data.categories.map((category) => (
-          <Link
-            key={category.key}
-            href={`/purchasing-dashboard?view=details&category=${category.key}`}
-            className="flex items-center gap-2"
-          >
-            <span
-              className="size-2.5 rounded-full"
-              style={{ background: category.color }}
-            />
-            {category.label}
-          </Link>
-        ))}
+          ))}
+          {data.period.months.map((month, index) => {
+            let bottom = 260;
+            const x = 125 + index * 160;
+            return (
+              <g key={month.key}>
+                {data.categories.map((category) => {
+                  const value = category.monthly[index],
+                    h = (value / max) * height;
+                  bottom -= h;
+                  return (
+                    <Link
+                      key={category.key}
+                      href={`/purchasing-dashboard?view=details&category=${category.key}`}
+                    >
+                      <rect
+                        x={x + 14}
+                        y={bottom}
+                        width="58"
+                        height={h}
+                        fill={category.color}
+                        className="transition-opacity hover:opacity-75"
+                      >
+                        <title>{`${month.label} · ${category.label}: ${money(value)} THB`}</title>
+                      </rect>
+                    </Link>
+                  );
+                })}
+                <text
+                  x={x + 43}
+                  y={250 - (data.monthly[index] / max) * height}
+                  textAnchor="middle"
+                  fill="#172026"
+                  fontSize="12"
+                  fontWeight="600"
+                >
+                  <title>{`${month.label}: ${money(data.monthly[index])} THB`}</title>
+                  {compactMoney(data.monthly[index])}
+                </text>
+                <text
+                  x={x + 43}
+                  y="292"
+                  textAnchor="middle"
+                  fill="#64748b"
+                  fontSize="13"
+                >
+                  {month.label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+        <p className="text-center text-[11px] text-slate-400">
+          Hover for exact amounts · Select a category to explore payments
+        </p>
       </div>
+      <aside
+        className="border-t border-slate-100 bg-slate-50/60 p-5 lg:border-t-0 lg:border-l sm:p-6"
+        aria-label="Four-month payment breakdown"
+      >
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+          Four-month total
+        </p>
+        <div className="mt-2 flex items-baseline gap-2">
+          <p className="text-2xl font-semibold tracking-tight tabular-nums text-slate-900">
+            {money(data.grossPaid)}
+          </p>
+          <span className="text-xs text-slate-400">THB</span>
+        </div>
+        <p className="mt-1 text-[11px] text-slate-500">
+          {data.paymentCount} paid payments · {data.poCount} POs
+        </p>
+        <div className="mt-5 space-y-3.5">
+          {data.categories.map((category) => (
+            <Link
+              key={category.key}
+              href={`/purchasing-dashboard?view=details&category=${category.key}`}
+              className="group block rounded-md outline-offset-4"
+            >
+              <div className="flex items-start justify-between gap-2 text-xs">
+                <span className="flex min-w-0 items-center gap-2 text-slate-600 group-hover:text-slate-900">
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ background: category.color }}
+                  />
+                  {category.label}
+                </span>
+                <span className="shrink-0 font-medium tabular-nums text-slate-800">
+                  {money(category.total)}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="h-1 flex-1 overflow-hidden rounded-full bg-slate-200/70">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      background: category.color,
+                      width: `${data.grossPaid ? (category.total / data.grossPaid) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <span className="w-9 text-right text-[10px] tabular-nums text-slate-400">
+                  {data.grossPaid
+                    ? ((category.total / data.grossPaid) * 100).toFixed(1)
+                    : "0.0"}
+                  %
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </aside>
     </div>
   );
 }
@@ -734,7 +817,7 @@ export function PurchasingDashboardView({
               </article>
             ))}
           </div>
-          <section className={panel}>
+          <section className={`${panel} overflow-hidden shadow-sm`}>
             <MonthlyChart data={data} />
           </section>
           <CategoryTable data={data} />

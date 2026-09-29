@@ -490,6 +490,7 @@ function refreshPoViews(
   { detail = true }: { detail?: boolean } = {},
 ) {
   revalidatePath("/po");
+  revalidatePath("/purchasing-dashboard");
   revalidatePath("/");
   if (poId && detail) {
     revalidatePath(`/po/${encodeURIComponent(poId)}`);
