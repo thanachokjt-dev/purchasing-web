@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Download, Eye, EyeOff, Save, Trash2, Upload } from "lucide-react";
 import {
@@ -13,6 +14,7 @@ import { matrixSectionLabel, sortMatrixSizes, type MatrixFamily } from "@/lib/po
 import type { StockCountLine, StockCountSession } from "@/lib/stock-counts";
 
 type ProductRow = {
+  imageUrl: string | null;
   key: string;
   productName: string;
   tags: string[];
@@ -42,9 +44,11 @@ function buildSections(lines: StockCountLine[]) {
         key: line.productGroupKey,
         productName: line.productName,
         tags: line.tags,
+        imageUrl: line.imageUrl ?? null,
         linesBySize: new Map(),
       };
       row.linesBySize.set(line.size, line);
+      row.imageUrl ||= line.imageUrl ?? null;
       products.set(line.productGroupKey, row);
     }
     return {
@@ -205,6 +209,9 @@ export function StockCountEditor({
           <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export-pdf${systemQty ? "?showQty=1" : ""}`}>
             <Download size={16} /> Export PDF
           </a>
+          {canEdit ? <a className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} href={`/api/stock-count/${session.id}/export-pdf?qtyScope=all`} title="Current Warehouse + Retail on-hand, combined per SKU">
+            <Download size={16} /> Export PDF · Total On-hand
+          </a> : null}
           <a
             className={`${buttonClass} border border-[#8bc6a2] bg-[#edf8f1] text-[#1f6b3d]`}
             href={`/api/stock-count/${session.id}/export-shopify`}
@@ -258,8 +265,13 @@ export function StockCountEditor({
                 {section.rows.map((row) => (
                   <tr className="hover:bg-[#fbfcfd]" key={row.key}>
                     <td className="sticky left-0 z-10 border-r border-[#e4e9ef] bg-white px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {row.imageUrl ? <Image alt={row.productName} className="size-12 rounded-md border border-[#dfe4ea] object-cover" height={48} width={48} src={row.imageUrl} /> : <div className="grid size-12 shrink-0 place-items-center rounded-md border border-[#dfe4ea] bg-[#f3f5f7] text-xs text-[#7a8794]">SKU</div>}
+                        <div>
                       <p className="font-semibold text-[#172026]">{row.productName}</p>
                       <p className="mt-1 max-w-[300px] truncate text-xs text-[#778390]" title={row.tags.join(", ")}>{row.tags.join(" · ") || "Untagged"}</p>
+                        </div>
+                      </div>
                     </td>
                     {section.sizes.map((size) => {
                       const line = row.linesBySize.get(size);

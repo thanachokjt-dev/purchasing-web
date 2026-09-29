@@ -8,7 +8,7 @@ import {
   type StockCountCatalogRow,
 } from "@/lib/stock-count-catalog";
 import { getSupabaseServiceClient } from "@/lib/supabase/server";
-import { stockCountLocationIds, summarizeStockCountInventory } from "@/lib/stock-count-inventory";
+import { combinedStockCountInventory, stockCountLocationIds, summarizeStockCountInventory } from "@/lib/stock-count-inventory";
 
 export type StockCountLocation = "warehouse" | "retail";
 export type StockCountStatus = "draft" | "completed";
@@ -25,6 +25,7 @@ export type StockCountSession = {
 };
 
 export type StockCountLine = {
+  imageUrl?: string | null;
   id: string;
   sku: string;
   productGroupKey: string;
@@ -163,7 +164,19 @@ async function fetchStockCountLines(sessionId: string) {
     rows.push(...page);
     if (page.length < pageSize) break;
   }
-  return rows.map(mapLine);
+  const images = new Map<string, string>();
+  const skus = [...new Set(rows.map(row => row.sku))];
+  for (let from = 0; from < skus.length; from += 100) {
+    const { data, error } = await supabase.from("product_variants")
+      .select("sku,variant_image_url,products(product_image_url)").in("sku", skus.slice(from, from + 100));
+    if (error) throw new Error(error.message);
+    for (const variant of data ?? []) {
+      const product = Array.isArray(variant.products) ? variant.products[0] : variant.products;
+      const url = variant.variant_image_url || product?.product_image_url;
+      if (url) images.set(variant.sku, url);
+    }
+  }
+  return rows.map(row => ({ ...mapLine(row), imageUrl: images.get(row.sku) ?? null }));
 }
 
 export async function getStockCountSession(sessionId: string) {
@@ -258,10 +271,24 @@ export async function deleteStockCountDraft(profile: CurrentUserProfile, session
   if (!data?.length) throw new Error("Draft no longer exists or has already been completed.");
 }
 
-export async function getStockCountSystemQty(profile: CurrentUserProfile, session: StockCountSession) {
+export async function getStockCountSystemQty(profile: CurrentUserProfile, session: StockCountSession, scope: "location" | "all" = "location") {
   if (!canEditStockCountLocation(profile, session.locationType)) throw new Error("You cannot view quantities for this location.");
+  if (scope === "all") {
+    const [warehouse, retail] = await Promise.all([
+      readStockCountInventory("warehouse"), readStockCountInventory("retail"),
+    ]);
+    return {
+      quantities: combinedStockCountInventory(warehouse.quantities, retail.quantities),
+      snapshotDate: warehouse.snapshotDate === retail.snapshotDate ? warehouse.snapshotDate : `${warehouse.snapshotDate} / ${retail.snapshotDate}`,
+      syncedAt: [warehouse.syncedAt, retail.syncedAt].filter((value): value is string => Boolean(value)).sort()[0] ?? null,
+    };
+  }
+  return readStockCountInventory(session.locationType);
+}
+
+async function readStockCountInventory(location: StockCountLocation) {
   const supabase = requireSupabase();
-  const locationId = stockCountLocationIds[session.locationType];
+  const locationId = stockCountLocationIds[location];
   const { data: latest, error: latestError } = await supabase.from("inventory_snapshots")
     .select("snapshot_date,synced_at").eq("location_id", locationId)
     .order("snapshot_date", { ascending: false }).order("synced_at", { ascending: false }).limit(1).maybeSingle();

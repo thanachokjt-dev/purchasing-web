@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
+import sharp from "sharp";
 import { PageSizes, PDFDocument, PDFFont, PDFPage, rgb } from "pdf-lib";
 import { matrixSectionLabel, sortMatrixSizes, type MatrixFamily } from "@/lib/po-size-matrix";
 import type { StockCountLine, StockCountLocation } from "@/lib/stock-counts";
 
 type PdfProductRow = {
+  imageUrl: string | null;
   key: string;
   productName: string;
   linesBySize: Map<string, StockCountLine>;
@@ -59,9 +61,11 @@ function buildSections(lines: StockCountLine[]) {
       const product = products.get(line.productGroupKey) ?? {
         key: line.productGroupKey,
         productName: line.productName,
+        imageUrl: line.imageUrl ?? null,
         linesBySize: new Map(),
       };
       product.linesBySize.set(line.size, line);
+      product.imageUrl ||= line.imageUrl ?? null;
       products.set(line.productGroupKey, product);
     }
     return {
@@ -122,11 +126,13 @@ export async function createStockCountPdf({
   locationType,
   weekStart,
   systemQuantities,
+  quantityScope = "location",
 }: {
   lines: StockCountLine[];
   locationType: StockCountLocation;
   weekStart: string;
   systemQuantities?: Record<string, number | null>;
+  quantityScope?: "location" | "all";
 }) {
   const document = await PDFDocument.create();
   document.registerFontkit(fontkit);
@@ -137,6 +143,28 @@ export async function createStockCountPdf({
   const regular = await document.embedFont(regularBytes, { subset: true });
   const bold = await document.embedFont(boldBytes, { subset: true });
   const sections = buildSections(lines);
+  const images = new Map<string, Awaited<ReturnType<PDFDocument["embedPng"]>>>();
+  const imageUrls = [...new Set(sections.flatMap(section => section.rows.map(row => row.imageUrl)).filter((url): url is string => Boolean(url)))];
+  let nextImage = 0;
+  const imageDeadline = Date.now() + 15000;
+  await Promise.all(Array.from({ length: Math.min(6, imageUrls.length) }, async () => {
+    while (nextImage < imageUrls.length && Date.now() < imageDeadline) {
+      const imageUrl = imageUrls[nextImage++];
+      try {
+        const url = new URL(imageUrl);
+        if (url.protocol !== "https:" || url.hostname !== "cdn.shopify.com") continue;
+        url.searchParams.set("width", "96");
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error" });
+        if (!response.ok || Number(response.headers.get("content-length")) > 2_000_000) continue;
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length > 2_000_000) continue;
+        const png = await sharp(bytes, { limitInputPixels: 20_000_000 }).resize(96, 96, { fit: "inside", withoutEnlargement: true }).png().toBuffer();
+        images.set(imageUrl, await document.embedPng(png));
+      } catch {
+        // An unavailable product image must not prevent printing the count sheet.
+      }
+    }
+  }));
   const locationLabel = locationType === "warehouse" ? "WAREHOUSE STOCK" : "RETAIL STOCK";
   let page!: PDFPage;
   let cursorY = 0;
@@ -150,7 +178,7 @@ export async function createStockCountPdf({
       font: bold,
       color: ink,
     });
-    page.drawText(`WEEK OF ${weekStart}`, { x: MARGIN, y: PAGE_HEIGHT - 47, size: 8, font: bold, color: muted });
+    page.drawText(`WEEK OF ${weekStart}${quantityScope === "all" ? " | ON-HAND: WAREHOUSE + RETAIL" : ""}`, { x: MARGIN, y: PAGE_HEIGHT - 47, size: 8, font: bold, color: muted });
     const countLine = "COUNTED BY: ____________________________________    DATE: ____________________";
     const countWidth = regular.widthOfTextAtSize(countLine, 7);
     page.drawText(countLine, { x: PAGE_WIDTH - MARGIN - countWidth, y: PAGE_HEIGHT - 47, size: 7, font: regular, color: muted });
@@ -192,15 +220,23 @@ export async function createStockCountPdf({
       }
       const rowFill = rowIndex % 2 ? rgb(0.99, 0.995, 1) : rgb(1, 1, 1);
       drawCell(page, MARGIN, cursorY, dimensions.productWidth, ROW_HEIGHT, rowFill);
-      page.drawText(fitText(bold, product.productName, 7.2, dimensions.productWidth - 12), {
-        x: MARGIN + 6,
+      const image = product.imageUrl ? images.get(product.imageUrl) : undefined;
+      if (image) {
+        const scale = Math.min(28 / image.width, 28 / image.height);
+        page.drawImage(image, { x: MARGIN + 3 + (28 - image.width * scale) / 2, y: cursorY - 31 + (28 - image.height * scale) / 2, width: image.width * scale, height: image.height * scale });
+      } else {
+        drawCell(page, MARGIN + 3, cursorY - 3, 28, 28, headerFill);
+        drawCenteredText(page, regular, "SKU", 5, MARGIN + 3, cursorY - 19, 28);
+      }
+      page.drawText(fitText(bold, product.productName, 7.2, dimensions.productWidth - 44), {
+        x: MARGIN + 38,
         y: cursorY - 14,
         size: 7.2,
         font: bold,
         color: ink,
       });
-      page.drawText(systemQuantities ? "Current system qty in red; write counted qty in cell" : "Write counted quantity in the matching size cell", {
-        x: MARGIN + 6,
+      page.drawText(fitText(regular, systemQuantities ? "Current system qty in red; write counted qty in cell" : "Write counted quantity in the matching size cell", 5.2, dimensions.productWidth - 44), {
+        x: MARGIN + 38,
         y: cursorY - 26,
         size: 5.2,
         font: regular,
