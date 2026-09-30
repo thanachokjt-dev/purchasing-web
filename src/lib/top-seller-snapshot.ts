@@ -9,6 +9,12 @@ import { getSupabaseServiceClient } from "@/lib/supabase/server";
 const PAGE_SIZE = 1000;
 const UPSERT_SIZE = 250;
 const SNAPSHOT_TABLE = "top_seller_product_design_snapshot";
+const SIZE_RANK = new Map(
+  ["2XS", "XXS", "XS", "S", "M", "L", "XL", "2XL", "3XL"].map((size, index) => [
+    size,
+    index,
+  ]),
+);
 
 const COLOR_TOKENS = [
   "Black/White",
@@ -110,6 +116,7 @@ type TopSellerSnapshotDbRow = {
   item_statuses: string[] | null;
   refreshed_at: string | null;
   sku_count: number | string | null;
+  sku_details: TopSellerSkuDetail[] | null;
   sold_30: number | string | null;
   sold_90: number | string | null;
   suppliers: string[] | null;
@@ -128,6 +135,7 @@ type GroupAccumulator = {
   imageUrl: string | null;
   itemStatuses: Set<string>;
   skus: Set<string>;
+  skuDetails: Map<string, TopSellerSkuDetail>;
   sold30: number;
   sold90: number;
   suppliers: Set<string>;
@@ -147,6 +155,7 @@ export type TopSellerProductDesignRow = {
   imageUrl: string | null;
   itemStatuses: string[];
   skuCount: number;
+  skuDetails: TopSellerSkuDetail[];
   sold30: number;
   sold90: number;
   suppliers: string[];
@@ -154,6 +163,64 @@ export type TopSellerProductDesignRow = {
   totalSale: number;
   visibilities: Array<"active" | "hidden">;
 };
+
+export type TopSellerSkuDetail = {
+  sku: string;
+  size: string;
+  sold30: number;
+  sold90: number;
+  totalSale: number;
+  demandIndex30: number;
+  demandIndex90: number;
+  demandIndexLifetime: number;
+};
+
+export function summarizeTopSellerSkuDetails(details: TopSellerSkuDetail[]) {
+  return details.reduce(
+    (total, detail) => ({
+      sold30: total.sold30 + detail.sold30,
+      sold90: total.sold90 + detail.sold90,
+      totalSale: total.totalSale + detail.totalSale,
+      demandIndex30: total.demandIndex30 + detail.demandIndex30,
+      demandIndex90: total.demandIndex90 + detail.demandIndex90,
+      demandIndexLifetime:
+        total.demandIndexLifetime + detail.demandIndexLifetime,
+    }),
+    {
+      sold30: 0,
+      sold90: 0,
+      totalSale: 0,
+      demandIndex30: 0,
+      demandIndex90: 0,
+      demandIndexLifetime: 0,
+    },
+  );
+}
+
+function variantSize(
+  row: VariantMetadataRow | undefined,
+  sku: string,
+  productName: string,
+) {
+  const options = row
+    ? [
+        { name: row.option1_name, value: row.option1_value },
+        { name: row.option2_name, value: row.option2_value },
+        { name: row.option3_name, value: row.option3_value },
+      ]
+    : [];
+  const explicit = options.find((option) =>
+    /size/i.test(compactText(option.name)),
+  );
+  if (compactText(explicit?.value)) return compactText(explicit?.value);
+  for (const value of [row?.variant_title, sku, productName]) {
+    const match = compactText(value).match(
+      /(?:^|[\s/_-])(2XS|XXS|XS|S|M|L|XL|2XL|3XL)(?:$|[\s/_-])/i,
+    );
+    if (match) return match[1].toUpperCase();
+  }
+  return compactText(row?.variant_title) || "—";
+}
 
 export type TopSellerProductDesignData = {
   refreshedAt: string | null;
@@ -274,7 +341,9 @@ function variantColor(row: VariantMetadataRow | undefined, designName: string) {
     { name: row.option2_name, value: row.option2_value },
     { name: row.option3_name, value: row.option3_value },
   ];
-  const explicit = options.find((option) => /colou?r/i.test(compactText(option.name)));
+  const explicit = options.find((option) =>
+    /colou?r/i.test(compactText(option.name)),
+  );
   const explicitColor = explicitVariantColor(compactText(explicit?.value));
   if (explicitColor) {
     return explicitColor;
@@ -290,7 +359,11 @@ function variantColor(row: VariantMetadataRow | undefined, designName: string) {
     row.variant_title,
     designName,
   ];
-  return candidates.map((value) => normalizeColor(compactText(value))).find(Boolean) || "No color";
+  return (
+    candidates
+      .map((value) => normalizeColor(compactText(value)))
+      .find(Boolean) || "No color"
+  );
 }
 
 function stripTrailingColor(value: string, color: string) {
@@ -306,8 +379,9 @@ function stripTrailingColor(value: string, color: string) {
   }
   const colorPattern = escapedColors.join("\\s*(?:/|\\+|&|and|-)\\s*");
   return (
-    value.replace(new RegExp(`\\s*(?:-|/|,)\\s*${colorPattern}\\s*$`, "i"), "").trim() ||
-    value.trim()
+    value
+      .replace(new RegExp(`\\s*(?:-|/|,)\\s*${colorPattern}\\s*$`, "i"), "")
+      .trim() || value.trim()
   );
 }
 
@@ -334,7 +408,9 @@ async function fetchAll<T>(
   }
 }
 
-function rowFromDb(row: TopSellerSnapshotDbRow): TopSellerProductDesignRow | null {
+function rowFromDb(
+  row: TopSellerSnapshotDbRow,
+): TopSellerProductDesignRow | null {
   const groupKey = compactText(row.group_key);
   const designName = compactText(row.design_name);
   if (!groupKey || !designName) {
@@ -351,6 +427,7 @@ function rowFromDb(row: TopSellerSnapshotDbRow): TopSellerProductDesignRow | nul
     imageUrl: compactText(row.image_url) || null,
     itemStatuses: (row.item_statuses ?? []).map(compactText).filter(Boolean),
     skuCount: Math.max(0, Math.round(numeric(row.sku_count))),
+    skuDetails: Array.isArray(row.sku_details) ? row.sku_details : [],
     sold30: numeric(row.sold_30),
     sold90: numeric(row.sold_90),
     suppliers: (row.suppliers ?? []).map(compactText).filter(Boolean),
@@ -358,7 +435,9 @@ function rowFromDb(row: TopSellerSnapshotDbRow): TopSellerProductDesignRow | nul
     totalSale: numeric(row.total_sale),
     visibilities: (row.visibilities ?? []).flatMap((value) => {
       const normalized = compactText(value).toLowerCase();
-      return normalized === "active" || normalized === "hidden" ? [normalized] : [];
+      return normalized === "active" || normalized === "hidden"
+        ? [normalized]
+        : [];
     }),
   };
 }
@@ -382,7 +461,7 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
           supabase
             .from(SNAPSHOT_TABLE)
             .select(
-              "group_key,category,design_name,color,suppliers,tags,image_url,item_statuses,visibilities,sku_count,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
+              "group_key,category,design_name,color,suppliers,tags,image_url,item_statuses,visibilities,sku_count,sku_details,sold_30,sold_90,total_sale,demand_index_30,demand_index_90,demand_index_lifetime,refreshed_at",
             )
             .order("category", { ascending: true })
             .order("demand_index_30", { ascending: false })
@@ -390,16 +469,28 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
       );
     let rows = await readSnapshotRows();
     const snapshotRefreshedAt =
-      rows.map((row) => row.refreshed_at).filter(Boolean).sort().at(-1) ?? null;
+      rows
+        .map((row) => row.refreshed_at)
+        .filter(Boolean)
+        .sort()
+        .at(-1) ?? null;
     const latestDemandResult = await supabase
       .from("demand_index_current")
       .select("updated_at")
       .order("updated_at", { ascending: false })
       .limit(1);
-    const latestDemandAt = compactText(latestDemandResult.data?.[0]?.updated_at);
+    const latestDemandAt = compactText(
+      latestDemandResult.data?.[0]?.updated_at,
+    );
     const snapshotIsStale =
       !snapshotRefreshedAt ||
-      (latestDemandAt && new Date(latestDemandAt) > new Date(snapshotRefreshedAt));
+      rows.some(
+        (row) =>
+          !Array.isArray(row.sku_details) ||
+          row.sku_details.length !== numeric(row.sku_count),
+      ) ||
+      (latestDemandAt &&
+        new Date(latestDemandAt) > new Date(snapshotRefreshedAt));
 
     if (!latestDemandResult.error && snapshotIsStale) {
       await refreshTopSellerProductDesignSnapshot(supabase);
@@ -408,7 +499,11 @@ export async function getTopSellerProductDesignData(): Promise<TopSellerProductD
 
     return {
       refreshedAt:
-        rows.map((row) => row.refreshed_at).filter(Boolean).sort().at(-1) ?? null,
+        rows
+          .map((row) => row.refreshed_at)
+          .filter(Boolean)
+          .sort()
+          .at(-1) ?? null,
       rows: rows.flatMap((row) => {
         const mapped = rowFromDb(row);
         return mapped ? [mapped] : [];
@@ -461,12 +556,16 @@ export async function refreshTopSellerProductDesignSnapshot(
   ]);
 
   if (reorderData.mode !== "supabase") {
-    throw new Error("Reorder Planning data is unavailable; Top Seller snapshot was not replaced.");
+    throw new Error(
+      "Reorder Planning data is unavailable; Top Seller snapshot was not replaced.",
+    );
   }
 
   const catalogLines = reorderData.lines;
   if (catalogLines.length === 0) {
-    throw new Error("No Reorder Planning lines were found; Top Seller snapshot was not replaced.");
+    throw new Error(
+      "No Reorder Planning lines were found; Top Seller snapshot was not replaced.",
+    );
   }
 
   const variantsBySku = new Map(
@@ -482,49 +581,66 @@ export async function refreshTopSellerProductDesignSnapshot(
   const categoryByTag = new Map(
     setupData.tags
       .filter((tag) => tag.isActive)
-      .map((tag) => [tag.tag.toLowerCase(), compactText(tag.category) || "Uncategorized"]),
+      .map((tag) => [
+        tag.tag.toLowerCase(),
+        compactText(tag.category) || "Uncategorized",
+      ]),
   );
   const groups = new Map<string, GroupAccumulator>();
 
   for (const line of catalogLines) {
     const variant = variantsBySku.get(line.sku);
     const color = variantColor(variant, line.mainName);
-    const designName = stripTrailingColor(line.mainName, color) || line.mainName;
+    const designName =
+      stripTrailingColor(line.mainName, color) || line.mainName;
     const category =
-      line.tags.map((tag) => categoryByTag.get(tag.toLowerCase())).find(Boolean) ||
-      "Uncategorized";
+      line.tags
+        .map((tag) => categoryByTag.get(tag.toLowerCase()))
+        .find(Boolean) || "Uncategorized";
     const groupKey = [
       normalizedGroupKeyPart(category),
       normalizedGroupKeyPart(designName),
       normalizedGroupKeyPart(color),
     ].join("::");
     const demand = demandBySku.get(line.sku);
-    const group =
-      groups.get(groupKey) ??
-      {
-        category,
-        color,
-        demandIndex30: 0,
-        demandIndex90: 0,
-        demandIndexLifetime: 0,
-        designName,
-        imageUrl: line.imageUrl,
-        itemStatuses: new Set<string>(),
-        skus: new Set<string>(),
-        sold30: 0,
-        sold90: 0,
-        suppliers: new Set<string>(),
-        tags: new Set<string>(),
-        totalSale: 0,
-        visibilities: new Set<string>(),
-      };
+    const group = groups.get(groupKey) ?? {
+      category,
+      color,
+      demandIndex30: 0,
+      demandIndex90: 0,
+      demandIndexLifetime: 0,
+      designName,
+      imageUrl: line.imageUrl,
+      itemStatuses: new Set<string>(),
+      skus: new Set<string>(),
+      skuDetails: new Map<string, TopSellerSkuDetail>(),
+      sold30: 0,
+      sold90: 0,
+      suppliers: new Set<string>(),
+      tags: new Set<string>(),
+      totalSale: 0,
+      visibilities: new Set<string>(),
+    };
 
-    group.demandIndex30 += numeric(demand?.avg_daily_30);
-    group.demandIndex90 += numeric(demand?.avg_daily_90);
-    group.demandIndexLifetime += Math.max(0, numeric(demand?.demand_index_hm));
-    group.sold30 += numeric(demand?.sold_30);
-    group.sold90 += numeric(demand?.sold_90);
-    group.totalSale += numeric(demand?.total_sale);
+    if (!group.skuDetails.has(line.sku)) {
+      const detail: TopSellerSkuDetail = {
+        sku: line.sku,
+        size: variantSize(variant, line.sku, line.productName),
+        sold30: numeric(demand?.sold_30),
+        sold90: numeric(demand?.sold_90),
+        totalSale: numeric(demand?.total_sale),
+        demandIndex30: numeric(demand?.avg_daily_30),
+        demandIndex90: numeric(demand?.avg_daily_90),
+        demandIndexLifetime: Math.max(0, numeric(demand?.demand_index_hm)),
+      };
+      group.skuDetails.set(line.sku, detail);
+      group.demandIndex30 += detail.demandIndex30;
+      group.demandIndex90 += detail.demandIndex90;
+      group.demandIndexLifetime += detail.demandIndexLifetime;
+      group.sold30 += detail.sold30;
+      group.sold90 += detail.sold90;
+      group.totalSale += detail.totalSale;
+    }
     group.skus.add(line.sku);
     if (line.itemStatus) {
       group.itemStatuses.add(line.itemStatus);
@@ -555,22 +671,35 @@ export async function refreshTopSellerProductDesignSnapshot(
     design_name: group.designName,
     group_key: groupKey,
     image_url: group.imageUrl,
-    item_statuses: Array.from(group.itemStatuses).sort((a, b) => a.localeCompare(b)),
+    item_statuses: Array.from(group.itemStatuses).sort((a, b) =>
+      a.localeCompare(b),
+    ),
     refreshed_at: refreshedAt,
     sku_count: group.skus.size,
+    sku_details: Array.from(group.skuDetails.values()).sort(
+      (a, b) =>
+        (SIZE_RANK.get(a.size.toUpperCase()) ?? 99) -
+          (SIZE_RANK.get(b.size.toUpperCase()) ?? 99) ||
+        a.size.localeCompare(b.size, undefined, { numeric: true }) ||
+        a.sku.localeCompare(b.sku),
+    ),
     snapshot_token: snapshotToken,
     sold_30: group.sold30,
     sold_90: group.sold90,
     suppliers: Array.from(group.suppliers).sort((a, b) => a.localeCompare(b)),
     tags: Array.from(group.tags).sort((a, b) => a.localeCompare(b)),
     total_sale: group.totalSale,
-    visibilities: Array.from(group.visibilities).sort((a, b) => a.localeCompare(b)),
+    visibilities: Array.from(group.visibilities).sort((a, b) =>
+      a.localeCompare(b),
+    ),
   }));
 
   for (let index = 0; index < rows.length; index += UPSERT_SIZE) {
     const { error } = await supabase
       .from(SNAPSHOT_TABLE)
-      .upsert(rows.slice(index, index + UPSERT_SIZE), { onConflict: "group_key" });
+      .upsert(rows.slice(index, index + UPSERT_SIZE), {
+        onConflict: "group_key",
+      });
     if (error) {
       throw new Error(
         `Top Seller snapshot upsert failed. Apply migrations 063-065 first: ${error.message}`,
@@ -583,7 +712,9 @@ export async function refreshTopSellerProductDesignSnapshot(
     .delete()
     .neq("snapshot_token", snapshotToken);
   if (staleDeleteError) {
-    throw new Error(`Top Seller stale-row cleanup failed: ${staleDeleteError.message}`);
+    throw new Error(
+      `Top Seller stale-row cleanup failed: ${staleDeleteError.message}`,
+    );
   }
 
   return {

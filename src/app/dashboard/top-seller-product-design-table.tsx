@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type {
   TopSellerProductDesignData,
   TopSellerProductDesignRow,
+  TopSellerSkuDetail,
 } from "@/lib/top-seller-snapshot";
 
 type WindowKey = "30d" | "90d" | "lifetime";
@@ -64,7 +65,18 @@ function toggleSelection(values: string[], value: string) {
     : [...values, value].sort((a, b) => a.localeCompare(b));
 }
 
-function metricForWindow(row: TopSellerProductDesignRow, window: WindowKey) {
+function metricForWindow(
+  row: Pick<
+    TopSellerProductDesignRow,
+    | "sold30"
+    | "sold90"
+    | "totalSale"
+    | "demandIndex30"
+    | "demandIndex90"
+    | "demandIndexLifetime"
+  >,
+  window: WindowKey,
+) {
   if (window === "30d") {
     return {
       demandIndex: row.demandIndex30,
@@ -144,7 +156,18 @@ export function TopSellerProductDesignTable({
   const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
-  const [selectedVisibilities, setSelectedVisibilities] = useState<string[]>([]);
+  const [selectedVisibilities, setSelectedVisibilities] = useState<string[]>(
+    [],
+  );
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+
+  function toggleGroup(groupKey: string) {
+    setExpandedGroups((current) =>
+      current.includes(groupKey)
+        ? current.filter((key) => key !== groupKey)
+        : [...current, groupKey],
+    );
+  }
 
   const supplierOptions = useMemo(
     () =>
@@ -154,8 +177,8 @@ export function TopSellerProductDesignTable({
     [data.rows],
   );
   const tagOptions = useMemo(() => {
-    const tags = Array.from(new Set(data.rows.flatMap((row) => row.tags))).sort((a, b) =>
-      a.localeCompare(b),
+    const tags = Array.from(new Set(data.rows.flatMap((row) => row.tags))).sort(
+      (a, b) => a.localeCompare(b),
     );
     return [
       ...(data.rows.some((row) => row.tags.length === 0)
@@ -183,17 +206,21 @@ export function TopSellerProductDesignTable({
     const visibilitySet = new Set(selectedVisibilities);
     return data.rows.filter((row) => {
       const matchesSupplier =
-        supplierSet.size === 0 || row.suppliers.some((supplier) => supplierSet.has(supplier));
+        supplierSet.size === 0 ||
+        row.suppliers.some((supplier) => supplierSet.has(supplier));
       const matchesTag =
         tagSet.size === 0 ||
         (tagSet.has("__untagged") && row.tags.length === 0) ||
         row.tags.some((tag) => tagSet.has(tag));
       const matchesStatus =
-        statusSet.size === 0 || row.itemStatuses.some((status) => statusSet.has(status));
+        statusSet.size === 0 ||
+        row.itemStatuses.some((status) => statusSet.has(status));
       const matchesVisibility =
         visibilitySet.size === 0 ||
         row.visibilities.some((visibility) => visibilitySet.has(visibility));
-      return matchesSupplier && matchesTag && matchesStatus && matchesVisibility;
+      return (
+        matchesSupplier && matchesTag && matchesStatus && matchesVisibility
+      );
     });
   }, [
     data.rows,
@@ -225,7 +252,8 @@ export function TopSellerProductDesignTable({
   }, [activeWindow, filteredRows]);
 
   const activeWindowLabel =
-    windowOptions.find((option) => option.key === activeWindow)?.shortLabel ?? "";
+    windowOptions.find((option) => option.key === activeWindow)?.shortLabel ??
+    "";
   const hasActiveFilters =
     selectedSuppliers.length > 0 ||
     selectedTags.length > 0 ||
@@ -243,12 +271,12 @@ export function TopSellerProductDesignTable({
             Top Seller Product by Design
           </h2>
           <p className="mt-2 max-w-4xl text-sm text-[#5c6875]">
-            Sizes are combined into one design and colors stay separate. Every calendar day
-            counts, including zero-sale days. New products divide only by days since first
-            stock or first sale; All Time blends 35% lifetime demand with 65% recent 30-day
-            calculated demand. Manual SKU overrides in Reorder Planning do not distort this
-            ranking. Status and Visibility filters use the values saved in Purchasing
-            Decision.
+            Sizes are combined into one design and colors stay separate. Every
+            calendar day counts, including zero-sale days. New products divide
+            only by days since first stock or first sale; All Time blends 35%
+            lifetime demand with 65% recent 30-day calculated demand. Manual SKU
+            overrides in Reorder Planning do not distort this ranking. Status
+            and Visibility filters use the values saved in Purchasing Decision.
           </p>
         </div>
         <div className="rounded-md border border-[#dfe4ea] bg-[#f9fafb] px-3 py-2 text-xs font-medium text-[#5d6a78]">
@@ -286,7 +314,9 @@ export function TopSellerProductDesignTable({
         <MultiSelectFilter
           label="Tags"
           onClear={() => setSelectedTags([])}
-          onToggle={(value) => setSelectedTags((current) => toggleSelection(current, value))}
+          onToggle={(value) =>
+            setSelectedTags((current) => toggleSelection(current, value))
+          }
           options={tagOptions}
           selected={selectedTags}
         />
@@ -303,7 +333,9 @@ export function TopSellerProductDesignTable({
           label="Visibility"
           onClear={() => setSelectedVisibilities([])}
           onToggle={(value) =>
-            setSelectedVisibilities((current) => toggleSelection(current, value))
+            setSelectedVisibilities((current) =>
+              toggleSelection(current, value),
+            )
           }
           options={visibilityOptions}
           selected={selectedVisibilities}
@@ -337,7 +369,9 @@ export function TopSellerProductDesignTable({
         {categoryGroups.length > 0 ? (
           categoryGroups.map((group) => {
             const categoryClass =
-              categoryHeaderClasses[categoryHash(group.category) % categoryHeaderClasses.length];
+              categoryHeaderClasses[
+                categoryHash(group.category) % categoryHeaderClasses.length
+              ];
             return (
               <section
                 className="overflow-hidden rounded-lg border border-[#dfe4ea]"
@@ -355,12 +389,16 @@ export function TopSellerProductDesignTable({
                   <table className="min-w-[1060px] text-left text-xs">
                     <thead className="bg-[#f9fafb] text-[#5d6a78]">
                       <tr className="border-b border-[#dfe4ea]">
-                        <th className="w-16 px-3 py-2.5 text-center font-semibold">Rank</th>
+                        <th className="w-16 px-3 py-2.5 text-center font-semibold">
+                          Rank
+                        </th>
                         <th className="px-3 py-2.5 font-semibold">Design</th>
                         <th className="px-3 py-2.5 font-semibold">Color</th>
                         <th className="px-3 py-2.5 font-semibold">Supplier</th>
                         <th className="px-3 py-2.5 font-semibold">Tags</th>
-                        <th className="px-3 py-2.5 text-right font-semibold">SKUs</th>
+                        <th className="px-3 py-2.5 text-right font-semibold">
+                          SKUs
+                        </th>
                         <th className="px-3 py-2.5 text-right font-semibold">
                           Qty Sold ({activeWindowLabel})
                         </th>
@@ -372,75 +410,192 @@ export function TopSellerProductDesignTable({
                     <tbody>
                       {group.rows.map((row, index) => {
                         const metric = metricForWindow(row, activeWindow);
+                        const expanded = expandedGroups.includes(row.groupKey);
                         return (
-                          <tr
-                            className="border-b border-[#e6ebf0] last:border-b-0"
-                            key={row.groupKey}
-                          >
-                            <td className="px-3 py-3 text-center align-top">
-                              <span
-                                className={`inline-flex size-7 items-center justify-center rounded-full font-semibold ${
-                                  index < 3
-                                    ? "bg-[#172026] text-white"
-                                    : "bg-[#eef1f4] text-[#52606d]"
-                                }`}
-                              >
-                                {index + 1}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3 align-top">
-                              <div className="flex items-start gap-3">
-                                {row.imageUrl ? (
-                                  <div
-                                    aria-label={`${row.designName} product image`}
-                                    className="size-11 shrink-0 rounded-md border border-[#dfe4ea] bg-white bg-contain bg-center bg-no-repeat"
-                                    role="img"
-                                    style={{ backgroundImage: `url("${row.imageUrl}")` }}
-                                  />
-                                ) : (
-                                  <div className="grid size-11 shrink-0 place-items-center rounded-md border border-[#dfe4ea] bg-[#f4f6f8] text-[10px] font-semibold text-[#8a96a3]">
-                                    No image
-                                  </div>
-                                )}
-                                <span className="max-w-[260px] font-semibold leading-5 text-[#172026]">
-                                  {row.designName}
+                          <Fragment key={row.groupKey}>
+                            <tr className="border-b border-[#e6ebf0] last:border-b-0">
+                              <td className="px-3 py-3 text-center align-top">
+                                <span
+                                  className={`inline-flex size-7 items-center justify-center rounded-full font-semibold ${
+                                    index < 3
+                                      ? "bg-[#172026] text-white"
+                                      : "bg-[#eef1f4] text-[#52606d]"
+                                  }`}
+                                >
+                                  {index + 1}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 align-top font-medium text-[#44515f]">
-                              {row.color === "No color" ? "—" : row.color}
-                            </td>
-                            <td className="max-w-[220px] px-3 py-3 align-top text-[#44515f]">
-                              {row.suppliers.length > 0 ? row.suppliers.join(", ") : "Unmapped"}
-                            </td>
-                            <td className="max-w-[300px] px-3 py-3 align-top">
-                              <div className="flex flex-wrap gap-1">
-                                {row.tags.length > 0 ? (
-                                  row.tags.map((tag) => (
-                                    <span
-                                      className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-800"
-                                      key={tag}
-                                    >
-                                      {tag}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <div className="flex items-start gap-3">
+                                  {row.imageUrl ? (
+                                    <div
+                                      aria-label={`${row.designName} product image`}
+                                      className="size-11 shrink-0 rounded-md border border-[#dfe4ea] bg-white bg-contain bg-center bg-no-repeat"
+                                      role="img"
+                                      style={{
+                                        backgroundImage: `url("${row.imageUrl}")`,
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="grid size-11 shrink-0 place-items-center rounded-md border border-[#dfe4ea] bg-[#f4f6f8] text-[10px] font-semibold text-[#8a96a3]">
+                                      No image
+                                    </div>
+                                  )}
+                                  <div className="max-w-[260px]">
+                                    <span className="font-semibold leading-5 text-[#172026]">
+                                      {row.designName}
                                     </span>
-                                  ))
-                                ) : (
-                                  <span className="text-[#8a96a3]">Untagged</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right align-top text-[#44515f]">
-                              {numberFormatter.format(row.skuCount)}
-                            </td>
-                            <td className="px-3 py-3 text-right align-top font-semibold text-[#172026]">
-                              {numberFormatter.format(metric.soldQty)}
-                            </td>
-                            <td className="px-3 py-3 text-right align-top">
-                              <span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 font-semibold text-emerald-800">
-                                {demandFormatter.format(metric.demandIndex)}
-                              </span>
-                            </td>
-                          </tr>
+                                    <button
+                                      aria-controls={`top-seller-skus-${row.groupKey}`}
+                                      aria-expanded={expanded}
+                                      className="mt-1 block rounded text-left text-xs font-semibold text-blue-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                                      onClick={() => toggleGroup(row.groupKey)}
+                                      type="button"
+                                    >
+                                      {expanded ? "− Hide SKUs" : "+ Show SKUs"}
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 align-top font-medium text-[#44515f]">
+                                {row.color === "No color" ? "—" : row.color}
+                              </td>
+                              <td className="max-w-[220px] px-3 py-3 align-top text-[#44515f]">
+                                {row.suppliers.length > 0
+                                  ? row.suppliers.join(", ")
+                                  : "Unmapped"}
+                              </td>
+                              <td className="max-w-[300px] px-3 py-3 align-top">
+                                <div className="flex flex-wrap gap-1">
+                                  {row.tags.length > 0 ? (
+                                    row.tags.map((tag) => (
+                                      <span
+                                        className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-800"
+                                        key={tag}
+                                      >
+                                        {tag}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-[#8a96a3]">
+                                      Untagged
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-right align-top text-[#44515f]">
+                                {numberFormatter.format(row.skuCount)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top font-semibold text-[#172026]">
+                                {numberFormatter.format(metric.soldQty)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top">
+                                <span className="inline-flex rounded-md bg-emerald-50 px-2 py-1 font-semibold text-emerald-800">
+                                  {demandFormatter.format(metric.demandIndex)}
+                                </span>
+                              </td>
+                            </tr>
+                            {expanded && (
+                              <tr className="border-b border-[#dfe4ea] bg-[#f8fafc]">
+                                <td
+                                  colSpan={8}
+                                  id={`top-seller-skus-${row.groupKey}`}
+                                  className="px-4 py-4 sm:pl-20"
+                                >
+                                  <div className="overflow-x-auto rounded-md border border-[#dfe4ea] bg-white">
+                                    <table className="w-full min-w-[650px] text-xs">
+                                      <thead className="bg-[#f1f5f9] text-[#52606d]">
+                                        <tr>
+                                          <th className="px-3 py-2 text-left">
+                                            Size
+                                          </th>
+                                          <th className="px-3 py-2 text-left">
+                                            SKU
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Qty Sold ({activeWindowLabel})
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Total Sold (All time)
+                                          </th>
+                                          <th className="px-3 py-2 text-right">
+                                            Demand Index / day
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {row.skuDetails.map(
+                                          (detail: TopSellerSkuDetail) => {
+                                            const skuMetric = metricForWindow(
+                                              detail,
+                                              activeWindow,
+                                            );
+                                            return (
+                                              <tr
+                                                className="border-t border-[#edf1f5]"
+                                                key={detail.sku}
+                                              >
+                                                <td className="px-3 py-2.5 font-semibold">
+                                                  {detail.size}
+                                                </td>
+                                                <td className="px-3 py-2.5 font-mono text-[#52606d]">
+                                                  {detail.sku}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-right font-medium">
+                                                  {numberFormatter.format(
+                                                    skuMetric.soldQty,
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-right">
+                                                  {numberFormatter.format(
+                                                    detail.totalSale,
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-right font-semibold text-emerald-800">
+                                                  {demandFormatter.format(
+                                                    skuMetric.demandIndex,
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          },
+                                        )}
+                                      </tbody>
+                                      <tfoot className="border-t border-[#dfe4ea] bg-[#f8fafc] font-semibold">
+                                        <tr>
+                                          <td
+                                            colSpan={2}
+                                            className="px-3 py-2.5"
+                                          >
+                                            Design total ·{" "}
+                                            {numberFormatter.format(
+                                              row.skuDetails.length,
+                                            )}{" "}
+                                            SKUs
+                                          </td>
+                                          <td className="px-3 py-2.5 text-right">
+                                            {numberFormatter.format(
+                                              metric.soldQty,
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-right">
+                                            {numberFormatter.format(
+                                              row.totalSale,
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-right">
+                                            {demandFormatter.format(
+                                              metric.demandIndex,
+                                            )}
+                                          </td>
+                                        </tr>
+                                      </tfoot>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         );
                       })}
                     </tbody>
