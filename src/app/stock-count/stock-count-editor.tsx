@@ -125,6 +125,21 @@ export function StockCountEditor({
     setMessage("");
   }
 
+  function fillRemainingWithZero() {
+    if (!isEditable || isPending || isUploading) return;
+    const blankIds = lines
+      .filter((line) => (values[line.id] ?? "") === "")
+      .map((line) => line.id);
+    if (!blankIds.length) return;
+    setValues((current) => {
+      const next = { ...current };
+      for (const lineId of blankIds) next[lineId] = "0";
+      return next;
+    });
+    setDirty((current) => new Set([...current, ...blankIds]));
+    setMessage(`Filled ${blankIds.length.toLocaleString()} blank count cells with 0. Save to keep these changes.`);
+  }
+
   function save() {
     if (!dirty.size) return;
     const payload = Array.from(dirty, (lineId) => ({
@@ -171,7 +186,7 @@ export function StockCountEditor({
       return;
     }
     if (counted !== lines.length) {
-      setMessage(`Complete every cell first (${counted}/${lines.length}). Blank means not counted; use 0 when none.`);
+      setMessage(`Complete every cell first (${counted}/${lines.length}). Enter counts or use Fill remaining with 0, then Save before completing.`);
       return;
     }
     if (!window.confirm("Complete and lock this weekly stock count?")) return;
@@ -230,6 +245,15 @@ export function StockCountEditor({
               />
               <button className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`} disabled={isPending || isUploading} onClick={() => uploadRef.current?.click()} type="button">
                 <Upload size={16} /> {isUploading ? "Importing..." : "Import CSV"}
+              </button>
+              <button
+                className={`${buttonClass} border border-[#cfd6df] bg-white text-[#364252]`}
+                disabled={isPending || isUploading || counted === lines.length}
+                onClick={fillRemainingWithZero}
+                title="Fill every uncounted SKU with 0. Existing counts are preserved. Save to keep the changes."
+                type="button"
+              >
+                Fill remaining with 0
               </button>
               <button className={`${buttonClass} bg-[#172026] text-white`} disabled={isPending || isUploading || !dirty.size} onClick={save} type="button">
                 <Save size={16} /> {isPending ? "Saving..." : `Save${dirty.size ? ` (${dirty.size})` : ""}`}
